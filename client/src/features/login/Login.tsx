@@ -67,7 +67,7 @@ export default function Login() {
           </div>
 
           <div className="flex flex-col gap-4">
-            <h2 className="m-0 text-2xl font-bold leading-snug text-white">Todo lo que vendés por WhatsApp, ordenado en un solo lugar.</h2>
+            <h2 className="m-0 text-2xl font-bold leading-snug text-white">Tu Whatsapp con superpoderes.</h2>
             <div className="flex flex-col gap-2.5">
               {CARACTERISTICAS.map((texto) => (
                 <div key={texto} className="flex items-start gap-2.5">
