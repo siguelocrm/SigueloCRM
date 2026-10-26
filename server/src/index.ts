@@ -1,6 +1,7 @@
 import { iniciarProgramadorDeMensajes } from './whatsapp/programados.js';
 import { iniciarCierreAutomatico } from './whatsapp/cierre-automatico.js';
 import { iniciarSeguimiento } from './siguelo/index.js';
+import { iaRouter } from './siguelo/ia/rutas.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,6 +39,7 @@ app.use(lineasRouter);
 app.use(usuariosRouter);
 app.use(empresasRouter);
 app.use(botRouter);
+app.use(iaRouter);
 
 // Para saber si el CRM arrancó bien: el despliegue la consulta después de
 // publicar una versión nueva y, si no responde, vuelve a la anterior.

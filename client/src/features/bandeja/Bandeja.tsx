@@ -32,6 +32,8 @@ import Configuracion from '../configuracion/Configuracion';
 import Programados from '../programados/Programados';
 import Seguimiento from '../seguimiento/Seguimiento';
 import Negocios from '../negocios/Negocios';
+import IA from '../ia/IA';
+import Inscripciones from '../inscripciones/Inscripciones';
 import { soloDelNegocio, useNegocios } from '../negocios/useNegocios';
 import Oportunidades from '../oportunidades/Oportunidades';
 import { EstadoVacio, useToast } from '../../components/ui';
@@ -211,6 +213,8 @@ export default function Bandeja() {
     if (seccion === 'programados') return <Programados />;
     if (seccion === 'seguimiento') return <Seguimiento />;
     if (seccion === 'negocios') return <Negocios />;
+    if (seccion === 'ia') return <IA onAbrirChat={abrirChatDeContacto} />;
+    if (seccion === 'inscripciones') return <Inscripciones onAbrirChat={abrirChatDeContacto} />;
     if (seccion === 'oportunidades') return <Oportunidades onAbrirChat={abrirChatDeContacto} />;
     return <EstadoVacio icono={seccionActual.icon} titulo={seccionActual.label} texto="Esta sección todavía no está construida." />;
   };

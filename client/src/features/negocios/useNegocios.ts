@@ -16,6 +16,18 @@ export interface Negocio {
   info_ia: string;
   // null = usa el embudo principal.
   embudo_id: string | null;
+  // Fase 3: la IA responde en este negocio, zonas que atiende y grupos a los que puede invitar.
+  ia_activa?: boolean;
+  zonas?: string | null;
+  grupos?: GrupoNegocio[];
+}
+
+export interface GrupoNegocio {
+  id: string;
+  nombre: string;
+  link: string;
+  // Cuándo ofrecerlo (para la IA).
+  cuando: string;
 }
 
 export interface Embudo {

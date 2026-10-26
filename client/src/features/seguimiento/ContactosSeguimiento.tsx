@@ -8,7 +8,7 @@ import type { EtapaVenta } from '../../lib/tipos';
 import type { EtapaSeguimiento, SeguimientoContacto } from './tipos';
 import { claseCampo, estiloCampo } from './estilos';
 
-type Filtro = 'todos' | 'respondieron' | 'pausados';
+type Filtro = 'todos' | 'respondieron' | 'revisar' | 'pausados';
 
 interface Props {
   etapas: EtapaVenta[];
@@ -27,7 +27,7 @@ export default function ContactosSeguimiento({ etapas, configs }: Props) {
   const cargar = useCallback(async () => {
     const { data } = await supabase
       .from('siguelo_seguimientos')
-      .select('contacto_id, rec, react, respondio, pausado, ultimo_automatico, actualizado_en, contactos(nombre, telefono, etapa_id)')
+      .select('*, contactos(nombre, telefono, etapa_id)')
       .order('actualizado_en', { ascending: false })
       .limit(500)
       .returns<SeguimientoContacto[]>();
@@ -44,14 +44,25 @@ export default function ContactosSeguimiento({ etapas, configs }: Props) {
   const etapaPorId = useMemo(() => Object.fromEntries(etapas.map((e) => [e.id, e])), [etapas]);
 
   const visibles = filas.filter((f) => {
-    if (!f.contactos?.etapa_id || !configs[f.contactos.etapa_id]) return false;
+    const reciente = !!f.deshacer && Date.now() - f.deshacer.ts < 7 * 24 * 3600 * 1000;
+    if (!f.contactos?.etapa_id || (!configs[f.contactos.etapa_id] && !f.revisar && !reciente)) return false;
+    if (filtro === 'revisar' && !f.revisar) return false;
     if (filtro === 'respondieron' && !f.respondio) return false;
     if (filtro === 'pausados' && !f.pausado) return false;
     const q = busqueda.trim().toLowerCase();
     return !q || (f.contactos.nombre || '').toLowerCase().includes(q) || f.contactos.telefono.includes(q);
   });
 
-  const cambiar = async (f: SeguimientoContacto, cambios: Partial<Pick<SeguimientoContacto, 'pausado' | 'respondio'>>, aviso: string) => {
+  // Pasa al contacto a otra etapa (desde "Revisar" o "Deshacer") y limpia esa marca.
+  const moverA = async (f: SeguimientoContacto, etapaId: string, desde: string | null, aviso: string) => {
+    const { error } = await supabase.from('contactos').update({ etapa_id: etapaId, etapa_actualizada_en: desde ?? new Date().toISOString() }).eq('id', f.contacto_id);
+    if (error) return toast('No se pudo cambiar la etapa.', 'error');
+    await supabase.from('siguelo_seguimientos').update({ revisar: null, deshacer: null }).eq('contacto_id', f.contacto_id);
+    toast(aviso, 'ok');
+    setFilas((prev) => prev.map((x) => (x.contacto_id === f.contacto_id ? { ...x, revisar: null, deshacer: null, contactos: x.contactos && { ...x.contactos, etapa_id: etapaId } } : x)));
+  };
+
+  const cambiar = async (f: SeguimientoContacto, cambios: Partial<Pick<SeguimientoContacto, 'pausado' | 'respondio' | 'revisar'>>, aviso: string) => {
     const { error } = await supabase.from('siguelo_seguimientos').update(cambios).eq('contacto_id', f.contacto_id);
     if (error) return toast('No se pudo guardar el cambio.', 'error');
     toast(aviso, 'ok');
@@ -77,6 +88,7 @@ export default function ContactosSeguimiento({ etapas, configs }: Props) {
   const FILTROS: { id: Filtro; texto: string }[] = [
     { id: 'todos', texto: 'Todos' },
     { id: 'respondieron', texto: `Respondieron (${filas.filter((f) => f.respondio).length})` },
+    { id: 'revisar', texto: `Para revisar (${filas.filter((f) => f.revisar).length})` },
     { id: 'pausados', texto: 'En pausa' },
   ];
 
@@ -116,7 +128,21 @@ export default function ContactosSeguimiento({ etapas, configs }: Props) {
                   {etapa && <Etiqueta color={colorEtiquetaWhatsapp(etapa.color)}>{etapa.nombre}</Etiqueta>}
                   {f.respondio && <Etiqueta color="var(--warn)">Respondió: atender</Etiqueta>}
                   {f.pausado && <Etiqueta color="var(--fg-2)">En pausa</Etiqueta>}
+                  {f.revisar && <Etiqueta color="#8b6bd6">Revisar</Etiqueta>}
                 </div>
+                {f.revisar && (
+                  <div className="flex items-center gap-1.5 flex-wrap mt-1.5 text-[12.5px]" style={{ color: TEXTO_PRIMARIO }}>
+                    Escribió “{f.revisar.texto}”. ¿Pasa a “{etapaPorId[f.revisar.etapa_id]?.nombre ?? 'otra etapa'}”? Sus mensajes automáticos esperan.
+                    <Boton tamano="sm" onClick={() => moverA(f, f.revisar!.etapa_id, null, 'Listo: cambió de etapa')}>Pasar</Boton>
+                    <Boton tamano="sm" variante="fantasma" onClick={() => cambiar(f, { revisar: null }, 'Sigue normal')}>Seguir normal</Boton>
+                  </div>
+                )}
+                {f.deshacer && Date.now() - f.deshacer.ts < 7 * 24 * 3600 * 1000 && (
+                  <div className="flex items-center gap-1.5 flex-wrap mt-1.5 text-[12px]" style={{ color: TEXTO_SECUNDARIO }}>
+                    Se movió solo: {f.deshacer.descripcion}
+                    <Boton tamano="sm" variante="fantasma" onClick={() => moverA(f, f.deshacer!.etapa_antes, f.deshacer!.desde_antes, 'Deshecho: volvió a su etapa')}>Deshacer</Boton>
+                  </div>
+                )}
                 {lineas(f).map((l) => (
                   <div key={l} className="text-[12.5px] mt-1" style={{ color: TEXTO_SECUNDARIO }}>{l}</div>
                 ))}

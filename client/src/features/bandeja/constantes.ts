@@ -15,6 +15,8 @@ import {
   CalendarClock,
   Repeat,
   Store,
+  Sparkles,
+  GraduationCap,
   type LucideIcon,
   Settings,
 } from 'lucide-react';
@@ -42,6 +44,8 @@ export const SECCIONES: Seccion[] = [
   { id: 'respuestas', icon: Reply, label: 'Respuestas rápidas', grupo: 'Automatizar' },
   { id: 'programados', icon: CalendarClock, label: 'Programados', grupo: 'Automatizar' },
   { id: 'seguimiento', icon: Repeat, label: 'Seguimiento', grupo: 'Automatizar', soloAdmin: true },
+  { id: 'ia', icon: Sparkles, label: 'IA', grupo: 'Automatizar', soloAdmin: true },
+  { id: 'inscripciones', icon: GraduationCap, label: 'Inscripciones', grupo: 'Automatizar', soloAdmin: true },
   { id: 'reportes', icon: LineChart, label: 'Reportes', grupo: 'Administrar' },
   { id: 'usuarios', icon: UserCog, label: 'Usuarios', grupo: 'Administrar', soloAdmin: true },
   { id: 'conexiones', icon: Smartphone, label: 'Conexiones', grupo: 'Administrar' },

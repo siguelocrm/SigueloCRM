@@ -4,6 +4,8 @@ import * as C from './calculo.js';
 import { agregarPie, elegirVariante } from './textos.js';
 import { registrar } from './registro.js';
 import { variablesDeLinea } from './negocios.js';
+import { avanzarCita, citaVigente, variablesCita } from './citas.js';
+import { adaptarMensaje } from './ia/adaptar.js';
 import { obtenerSesion } from '../whatsapp/sesiones.js';
 import { construirContenidoWA } from '../whatsapp/contenido.js';
 import { marcarEnviadoPorCRM } from '../whatsapp/mensajes-enviados-por-crm.js';
@@ -103,7 +105,7 @@ async function cerrar(
   if (!seg) return;
   const est = estadoContacto(seg);
   const cambios: Partial<SeguimientoRow> = {};
-  if (C.avanzar(est, item.tipo, item.paso, item.token, Date.now(), !!extra.atrasado)) {
+  if (item.tipo !== 'cita' && C.avanzar(est, item.tipo, item.paso, item.token, Date.now(), !!extra.atrasado)) {
     cambios.rec = est.rec;
     cambios.react = est.react;
   }
@@ -149,8 +151,9 @@ async function intentar(item: ColaRow, aj: AjustesRow, franja: Franja, ahora: nu
   }
   if (seg.pausado) return 'sigue'; // queda pendiente hasta que lo reanudes
   const est = estadoContacto(seg);
-  const st = item.tipo === 'rec' ? est.rec : est.react;
-  if (!st || C.tokenDe(item.tipo, est) !== item.token || st.paso !== item.paso || (item.tipo === 'react' && !est.react?.activo)) {
+  const tipo = item.tipo === 'rec' ? 'rec' : 'react';
+  const st = tipo === 'rec' ? est.rec : est.react;
+  if (!st || C.tokenDe(tipo, est) !== item.token || st.paso !== item.paso || (item.tipo === 'react' && !est.react?.activo)) {
     await cancelarInterno(item, 'Ya no corresponde');
     return 'sigue';
   }
@@ -179,13 +182,20 @@ async function intentar(item: ColaRow, aj: AjustesRow, franja: Franja, ahora: nu
     await registrar(aj.empresa_id, item.contacto_id, 'error', `${contacto.nombre || contacto.telefono}: no salió "${item.nombre}" (${motivo}).`);
     return 'sigue';
   }
-  const texto = agregarPie(elegido.texto, aj.pie, contacto.nombre, variables);
-
   // Reclama el mensaje: si otra vuelta ya lo tomó, no devuelve nada.
   const { data: reclamado } = await db.from('siguelo_cola').update({ estado: 'enviando' }).eq('id', item.id).eq('estado', 'pendiente').select('id');
   if (!reclamado?.length) return 'sigue';
 
   const e = estadoLinea(aj, item.linea_id);
+  // Si está activo, la IA lo adapta a la conversación (si falla, sale el que escribiste).
+  const adaptado = await adaptarMensaje(aj, item, contacto.nombre, elegido.texto).catch(() => null);
+  if (adaptado && 'omitir' in adaptado) {
+    await cerrar(item, 'cancelado', `La IA no lo mandó: ${adaptado.omitir}`);
+    await registrar(aj.empresa_id, item.contacto_id, 'cola', `${contacto.nombre || contacto.telefono}: la IA no mandó "${item.nombre}" (${adaptado.omitir}).`);
+    return 'sigue';
+  }
+  const texto = agregarPie(adaptado ? adaptado.texto : elegido.texto, aj.pie, contacto.nombre, variables);
+
   try {
     const jid = item.telefono.includes('@') ? item.telefono : `${item.telefono}@s.whatsapp.net`;
     const resultado = await sesion.sock.sendMessage(jid, await construirContenidoWA({ tipo: 'texto', texto }));
@@ -198,7 +208,7 @@ async function intentar(item: ColaRow, aj: AjustesRow, franja: Franja, ahora: nu
       .single();
     await cerrar(item, 'enviado', null, { texto, mensaje_id: mensaje?.id ?? null, whatsapp_id: whatsappId });
     await sumarEnviado(aj.empresa_id, item.linea_id, fechaDe(ahora, franja.zona));
-    await registrar(aj.empresa_id, item.contacto_id, 'enviado', `${contacto.nombre || contacto.telefono}: salió "${item.nombre}".`);
+    await registrar(aj.empresa_id, item.contacto_id, 'enviado', `${contacto.nombre || contacto.telefono}: salió "${item.nombre}"${adaptado ? ' (adaptado por la IA a la conversación)' : ''}.`);
     e.erroresSeguidos = 0;
     e.proximo = Date.now() + azarMs(aj);
     return 'enviado';
@@ -217,12 +227,69 @@ async function intentar(item: ColaRow, aj: AjustesRow, franja: Franja, ahora: nu
   }
 }
 
+// Mensaje de una cita: con prioridad, en su franja, sin contar para el tope ni el mínimo por persona.
+async function intentarCita(item: ColaRow, aj: AjustesRow, franja: Franja, ahora: number): Promise<Resultado> {
+  const cita = await citaVigente(item);
+  if (!cita) {
+    await cancelarInterno(item, 'La cita cambió o se quitó');
+    return 'sigue';
+  }
+  if (item.max_atraso_ms && ahora - ajustar(C.ms(item.vence), franja) > item.max_atraso_ms) {
+    await cancelarInterno(item, 'Demasiado atrasado');
+    await avanzarCita(item, false);
+    return 'sigue';
+  }
+  const { data: contacto } = await db.from('contactos').select('id, nombre, telefono, etapa_id').eq('id', item.contacto_id).maybeSingle();
+  if (!contacto) {
+    await cancelarInterno(item, 'El contacto ya no existe');
+    return 'sigue';
+  }
+  const sesion = obtenerSesion(item.linea_id);
+  if (!sesion || sesion.estado !== 'activo') return 'sigue';
+  const { data: seg } = await db.from('siguelo_seguimientos').select('ultimo_texto_auto').eq('contacto_id', item.contacto_id).maybeSingle();
+  const variables = { ...(await variablesDeLinea(item.linea_id)), ...variablesCita(cita, aj.zona_horaria) };
+  const elegido = elegirVariante(item.variantes, contacto.nombre, seg?.ultimo_texto_auto, variables);
+  if (!elegido.texto) {
+    await cancelarInterno(item, elegido.faltan.length ? `Falta completar ${elegido.faltan.join(', ')} para este número` : 'El mensaje no tiene texto');
+    await avanzarCita(item, false);
+    return 'sigue';
+  }
+  const { data: reclamado } = await db.from('siguelo_cola').update({ estado: 'enviando' }).eq('id', item.id).eq('estado', 'pendiente').select('id');
+  if (!reclamado?.length) return 'sigue';
+  const e = estadoLinea(aj, item.linea_id);
+  try {
+    const jid = item.telefono.includes('@') ? item.telefono : `${item.telefono}@s.whatsapp.net`;
+    const resultado = await sesion.sock.sendMessage(jid, { text: elegido.texto });
+    const whatsappId = resultado?.key?.id || null;
+    if (whatsappId) marcarEnviadoPorCRM(whatsappId);
+    const { data: mensaje } = await db
+      .from('mensajes')
+      .insert({ conversacion_id: item.conversacion_id, remitente: 'agente', agente_id: null, tipo: 'texto', contenido: elegido.texto, whatsapp_id: whatsappId })
+      .select('id')
+      .single();
+    await cerrar(item, 'enviado', null, { texto: elegido.texto, mensaje_id: mensaje?.id ?? null, whatsapp_id: whatsappId });
+    await avanzarCita(item, true);
+    await registrar(aj.empresa_id, item.contacto_id, 'enviado', `${contacto.nombre || contacto.telefono}: salió "${item.nombre}".`);
+    e.proximo = Date.now() + (5 + Math.random() * 15) * 1000; // después de una cita, una pausa corta
+    return 'enviado';
+  } catch (err) {
+    const motivo = (err as Error).message.slice(0, 200);
+    await cerrar(item, 'error', motivo);
+    await avanzarCita(item, false);
+    e.proximo = Date.now() + azarMs(aj);
+    return 'error';
+  }
+}
+
 // Una vuelta de la cola: cada número manda como mucho un mensaje.
 export async function procesarCola(aj: AjustesRow): Promise<void> {
   if (aj.pausado) return;
   const ahora = Date.now();
   const franja: Franja = { zona: aj.zona_horaria, desde: aj.hora_inicio, hasta: aj.hora_fin };
-  if (!enFranja(ahora, franja)) return;
+  // Los mensajes de las citas tienen su propia franja (por ejemplo 7:00 a 21:00).
+  const franjaCitas: Franja = { zona: aj.zona_horaria, desde: aj.citas?.desde || '07:00', hasta: aj.citas?.hasta || '21:00' };
+  const enHorario = enFranja(ahora, franja);
+  if (!enHorario && !enFranja(ahora, franjaCitas)) return;
   const fecha = fechaDe(ahora, franja.zona);
 
   const { data: vencidos } = await db
@@ -235,15 +302,19 @@ export async function procesarCola(aj: AjustesRow): Promise<void> {
     .order('creado_en')
     .limit(50);
   if (!vencidos?.length) return;
+  // Las citas primero: tienen hora fija.
+  vencidos.sort((a, b) => Number(b.tipo === 'cita') - Number(a.tipo === 'cita'));
 
   const listas = new Set<string>(); // números que ya terminaron esta vuelta
   const usados = new Map<string, number>();
   for (const item of vencidos) {
     const linea = item.linea_id;
     const e = estadoLinea(aj, linea);
-    if (listas.has(linea) || ahora < e.proximo || !arranco(e, ahora, franja, fecha)) continue;
+    const esCita = item.tipo === 'cita';
+    if (listas.has(linea) || ahora < e.proximo) continue;
+    if (esCita ? !enFranja(ahora, franjaCitas) : !enHorario || !arranco(e, ahora, franja, fecha)) continue;
     if (!usados.has(linea)) usados.set(linea, await enviadosHoy(aj.empresa_id, linea, fecha));
-    const r = await intentar(item, aj, franja, ahora, usados.get(linea)!);
+    const r = esCita ? await intentarCita(item, aj, franjaCitas, ahora) : await intentar(item, aj, franja, ahora, usados.get(linea)!);
     if (r !== 'sigue') listas.add(linea);
   }
 }

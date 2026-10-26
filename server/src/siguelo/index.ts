@@ -2,6 +2,10 @@ import { db } from './db.js';
 import { procesarCola } from './cola.js';
 import { revisarEmpresa } from './motor.js';
 import { limpiarRegistroViejo } from './registro.js';
+import { empresasConIA } from './ia/config.js';
+import { leerPendientes } from './ia/lector.js';
+import { procesarSalida } from './ia/salida.js';
+import { revisarPagos } from './pagos/inscripcion.js';
 import type { AjustesRow } from './tipos.js';
 
 // Seguimiento automático por etapa (SígueloCRM). Se prende desde la pantalla
@@ -63,7 +67,45 @@ async function vueltaDeLaCola(): Promise<void> {
   for (const aj of await ajustesActivos()) await procesarCola(aj);
 }
 
+// La IA (Fase 3) lleva sus propios candados: una lectura puede tardar varios
+// segundos (espera a OpenAI) y no debe frenar al seguimiento ni a sus envíos.
+function candado(nombre: string): (tarea: () => Promise<void>) => Promise<void> {
+  let enUso = false;
+  return async (tarea) => {
+    if (enUso) return;
+    enUso = true;
+    try {
+      await tarea();
+    } catch (err) {
+      console.error(`Error en ${nombre}:`, (err as Error).message);
+    } finally {
+      enUso = false;
+    }
+  };
+}
+const conCandadoLector = candado('la lectura de la IA');
+const conCandadoSalida = candado('los envíos de la IA');
+const conCandadoPagos = candado('los pagos');
+
+export function iniciarIA(): void {
+  db.from('siguelo_ia_salida')
+    .update({ estado: 'pendiente' })
+    .eq('estado', 'enviando')
+    .then(() => undefined, () => undefined);
+  setInterval(() => conCandadoLector(async () => {
+    for (const c of await empresasConIA()) await leerPendientes(c);
+  }), 10_000);
+  setInterval(() => conCandadoSalida(async () => {
+    for (const c of await empresasConIA()) await procesarSalida(c);
+  }), 5_000);
+  // Fase 5: comprobantes de pago e inscripciones.
+  setInterval(() => conCandadoPagos(async () => {
+    for (const c of await empresasConIA()) await revisarPagos(c);
+  }), 10_000);
+}
+
 export function iniciarSeguimiento(): void {
+  iniciarIA();
   // Un mensaje que quedó "enviando" por un reinicio a mitad de camino vuelve a la cola.
   db.from('siguelo_cola')
     .update({ estado: 'pendiente' })

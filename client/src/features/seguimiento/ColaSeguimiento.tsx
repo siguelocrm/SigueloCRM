@@ -188,7 +188,7 @@ export default function ColaSeguimiento({ ajustes }: { ajustes: AjustesSeguimien
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[13.5px] font-semibold" style={{ color: TEXTO_PRIMARIO }}>{nombreDe(item)}</span>
-                    <Etiqueta color={item.tipo === 'react' ? 'var(--warn)' : 'var(--accent)'}>{item.nombre}</Etiqueta>
+                    <Etiqueta color={item.tipo === 'react' ? 'var(--warn)' : item.tipo === 'cita' ? 'var(--ok)' : 'var(--accent)'}>{item.nombre}</Etiqueta>
                     {varias && <Etiqueta color="var(--fg-2)">{nombreLinea(item.linea_id)}</Etiqueta>}
                     <span className="text-[12px]" style={{ color: TEXTO_SECUNDARIO }}>
                       {item.estado === 'enviando' ? 'Enviando…' : est === null ? 'Contacto en pausa' : `≈ ${formatear(est ?? ms(item.vence), zona)}`}

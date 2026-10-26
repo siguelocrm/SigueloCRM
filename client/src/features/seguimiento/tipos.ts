@@ -24,7 +24,14 @@ export interface AjustesSeguimiento {
   atraso_max_reactivacion_horas: number;
   ciclos_reactivacion_cada_horas: number;
   pie: Pie;
+  // Fase 4 (sin la Fase 4 pegada, no viene).
+  stop?: Stop;
+  citas?: ConfigCitas;
+  // La IA adapta cada recordatorio y reactivación a la conversación (sin la última versión del SQL, no viene).
+  adaptar?: Adaptar;
 }
+
+export type Adaptar = { activo: boolean; recordatorios: boolean; reactivaciones: boolean; instrucciones: string };
 
 export interface EtapaSeguimiento {
   id?: string;
@@ -35,7 +42,15 @@ export interface EtapaSeguimiento {
   recordatorios: Secuencia;
   reactivacion: Secuencia;
   al_terminar: AlTerminar;
+  // Fase 4: palabras que lo pasan a esta etapa.
+  palabras?: { cliente: string[]; parecidas: string[]; tuyas: string[]; respuesta: string } | null;
 }
+
+export type Stop = { activo: boolean; palabras: string[]; parecidas: string[]; respuesta: string };
+
+// Citas (Fase 4): cada mensaje sale unas horas antes/después del inicio o del fin.
+export type PasoCita = { ref: 'inicio' | 'fin'; horas: number; variantes: string[] };
+export type ConfigCitas = { activa: boolean; desde: string; hasta: string; max_atraso_min: number; pasos: PasoCita[] };
 
 export interface EstadoRec {
   etapa_id: string;
@@ -63,6 +78,9 @@ export interface SeguimientoContacto {
   pausado: boolean;
   ultimo_automatico: string | null;
   actualizado_en: string;
+  // Fase 4: espera que lo revises / lo último que se movió solo.
+  revisar?: { etapa_id: string; texto: string; ts: number } | null;
+  deshacer?: { etapa_antes: string; desde_antes: string | null; descripcion: string; ts: number } | null;
   contactos: { nombre: string | null; telefono: string; etapa_id: string | null } | null;
 }
 
@@ -72,7 +90,7 @@ export interface ItemCola {
   id: string;
   contacto_id: string;
   linea_id: string;
-  tipo: 'rec' | 'react';
+  tipo: 'rec' | 'react' | 'cita';
   nombre: string;
   variantes: string[];
   vence: string;

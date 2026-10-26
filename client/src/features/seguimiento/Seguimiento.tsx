@@ -11,13 +11,15 @@ import EtapasSeguimiento from './EtapasSeguimiento';
 import ColaSeguimiento from './ColaSeguimiento';
 import ContactosSeguimiento from './ContactosSeguimiento';
 import AjustesSeguimiento from './AjustesSeguimiento';
+import CitasSeguimiento from './CitasSeguimiento';
 import { useNegocios } from '../negocios/useNegocios';
 
-type Pestana = 'etapas' | 'cola' | 'contactos' | 'ajustes';
+type Pestana = 'etapas' | 'cola' | 'contactos' | 'citas' | 'ajustes';
 const PESTANAS: { id: Pestana; texto: string }[] = [
   { id: 'etapas', texto: 'Mensajes por etapa' },
   { id: 'cola', texto: 'Cola' },
   { id: 'contactos', texto: 'Contactos' },
+  { id: 'citas', texto: 'Citas' },
   { id: 'ajustes', texto: 'Ajustes' },
 ];
 
@@ -102,7 +104,7 @@ export default function Seguimiento() {
         </Tarjeta>
       )}
 
-      <div role="tablist" className="flex gap-1 overflow-x-auto" style={{ borderBottom: `1px solid ${BORDE}` }}>
+      <div role="tablist" className="flex gap-1 overflow-x-auto shrink-0" style={{ borderBottom: `1px solid ${BORDE}` }}>
         {PESTANAS.map((p) => (
           <button
             key={p.id}
@@ -135,6 +137,7 @@ export default function Seguimiento() {
       )}
       {pestana === 'cola' && <ColaSeguimiento ajustes={ajustes} />}
       {pestana === 'contactos' && <ContactosSeguimiento etapas={etapasOrdenadas} configs={configs} />}
+      {pestana === 'citas' && <CitasSeguimiento ajustes={ajustes} existe={existe} puedeEditar={puedeEditar} onGuardado={cargar} />}
       {pestana === 'ajustes' && <AjustesSeguimiento ajustes={ajustes} existe={existe} puedeEditar={puedeEditar} onGuardado={cargar} />}
     </div>
   );

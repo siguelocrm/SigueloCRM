@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Power, Clock, Gauge, MessageSquareText } from 'lucide-react';
+import { Power, Clock, Gauge, MessageSquareText, OctagonX, Sparkles } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import { TEXTO_PRIMARIO, TEXTO_SECUNDARIO, TEXTO_TERCIARIO } from '../../lib/tema';
 import { etiquetaDeZona, formatearEnZona, listaDeZonas } from '../../lib/zonaHoraria';
@@ -39,6 +39,17 @@ function Numero({ etiqueta, ayuda, valor, onCambiar, deshabilitado, unidad }: { 
   );
 }
 
+const ADAPTAR_INICIAL = { activo: false, recordatorios: true, reactivaciones: true, instrucciones: '' };
+
+// "stop" (Fase 4) mientras lo editas: una palabra o frase por línea.
+const aStop = (aj: Ajustes) => ({
+  activo: aj.stop?.activo ?? true,
+  palabras: (aj.stop?.palabras ?? ['stop']).join('\n'),
+  parecidas: (aj.stop?.parecidas ?? []).join('\n'),
+  respuesta: aj.stop?.respuesta ?? '',
+});
+const lineas = (t: string) => t.split('\n').map((x) => x.trim()).filter(Boolean);
+
 const CAMPOS_NUMERO = [
   'pausa_min_seg',
   'pausa_max_seg',
@@ -58,6 +69,8 @@ export default function AjustesSeguimiento({ ajustes, existe, puedeEditar, onGua
   const [numeros, setNumeros] = useState<Record<CampoNumero, string>>(() => Object.fromEntries(CAMPOS_NUMERO.map((c) => [c, String(ajustes[c])])) as Record<CampoNumero, string>);
   const [pieActivo, setPieActivo] = useState(ajustes.pie?.activo ?? false);
   const [pieTexto, setPieTexto] = useState(variantesATexto(ajustes.pie?.variantes ?? []));
+  const [stop, setStop] = useState(() => aStop(ajustes));
+  const [adaptar, setAdaptar] = useState(() => ajustes.adaptar ?? ADAPTAR_INICIAL);
   const [guardando, setGuardando] = useState(false);
 
   // Si los ajustes cambian desde afuera (otra pestaña, el servidor), se recargan.
@@ -68,6 +81,8 @@ export default function AjustesSeguimiento({ ajustes, existe, puedeEditar, onGua
     setNumeros(Object.fromEntries(CAMPOS_NUMERO.map((c) => [c, String(ajustes[c])])) as Record<CampoNumero, string>);
     setPieActivo(ajustes.pie?.activo ?? false);
     setPieTexto(variantesATexto(ajustes.pie?.variantes ?? []));
+    setStop(aStop(ajustes));
+    setAdaptar(ajustes.adaptar ?? ADAPTAR_INICIAL);
   }, [ajustes]);
 
   const zonas = useMemo(() => [...new Set([...listaDeZonas(), zona])].sort((a, b) => a.localeCompare(b)), [zona]);
@@ -110,7 +125,10 @@ export default function AjustesSeguimiento({ ajustes, existe, puedeEditar, onGua
     const desconocidas = variablesDesconocidas(pieTexto);
     if (desconocidas.length) return toast(`Esa variable no existe: ${desconocidas.map((v) => `{${v}}`).join(', ')}. Puedes usar ${TEXTO_VARIABLES}.`, 'error');
     setGuardando(true);
-    await guardarCambios({ ...valores, zona_horaria: zona, hora_inicio: horaInicio, hora_fin: horaFin, pie: { activo: pieActivo, variantes } }, 'Ajustes guardados');
+    // "stop" solo si la Fase 4 de database/siguelo.sql está pegada (si no, la columna no existe).
+    const conStop = ajustes.stop ? { stop: { activo: stop.activo, palabras: lineas(stop.palabras), parecidas: lineas(stop.parecidas), respuesta: stop.respuesta.trim() } } : {};
+    const conAdaptar = ajustes.adaptar ? { adaptar: { ...adaptar, instrucciones: adaptar.instrucciones.trim() } } : {};
+    await guardarCambios({ ...valores, zona_horaria: zona, hora_inicio: horaInicio, hora_fin: horaFin, pie: { activo: pieActivo, variantes }, ...conStop, ...conAdaptar }, 'Ajustes guardados');
     setGuardando(false);
   };
 
@@ -166,11 +184,84 @@ export default function AjustesSeguimiento({ ajustes, existe, puedeEditar, onGua
         </div>
       </Bloque>
 
+      <Bloque icono={Sparkles} titulo="La IA adapta cada mensaje a la conversación">
+        {!ajustes.adaptar ? (
+          <span className="text-[12.5px]" style={{ color: 'var(--warn)' }}>Para usarlo, vuelve a pegar database/siguelo.sql en Supabase (trae esta opción).</span>
+        ) : (
+          <>
+            <div className="flex items-start gap-3">
+              <p className="flex-1 m-0 text-[12.5px] leading-relaxed" style={{ color: TEXTO_SECUNDARIO }}>
+                Justo antes de enviar cada recordatorio o reactivación, la IA lo reescribe para que siga la conversación que tuvieron
+                (retoma lo que preguntó o lo que quedó pendiente) con la información de su negocio, y termina con una pregunta fácil de
+                responder. Tu texto es la base: dice qué mensaje es. Si la IA ve que ya no corresponde (por ejemplo, ya compró), no lo manda
+                y queda anotado en la Cola. Necesita la IA activa con su clave (Automatizar → IA); si la IA falla, sale tu texto tal cual.
+              </p>
+              <Interruptor activo={adaptar.activo} onCambiar={(v) => setAdaptar({ ...adaptar, activo: v })} etiqueta="La IA adapta los mensajes" deshabilitado={!puedeEditar} />
+            </div>
+            {adaptar.activo && (
+              <>
+                <div className="flex gap-4 flex-wrap">
+                  <label className="flex items-center gap-2 text-[12.5px]" style={{ color: TEXTO_SECUNDARIO }}>
+                    <input type="checkbox" checked={adaptar.recordatorios} disabled={!puedeEditar} onChange={(e) => setAdaptar({ ...adaptar, recordatorios: e.target.checked })} /> Recordatorios
+                  </label>
+                  <label className="flex items-center gap-2 text-[12.5px]" style={{ color: TEXTO_SECUNDARIO }}>
+                    <input type="checkbox" checked={adaptar.reactivaciones} disabled={!puedeEditar} onChange={(e) => setAdaptar({ ...adaptar, reactivaciones: e.target.checked })} /> Reactivaciones
+                  </label>
+                </div>
+                <label className="flex flex-col gap-1 text-[12px] font-semibold" style={{ color: 'var(--fg-2)' }}>
+                  Indicaciones para la IA (opcional)
+                  <textarea
+                    value={adaptar.instrucciones}
+                    disabled={!puedeEditar}
+                    onChange={(e) => setAdaptar({ ...adaptar, instrucciones: e.target.value })}
+                    rows={2}
+                    placeholder="Ej.: menciona que los cupos son limitados; nunca ofrezcas descuentos."
+                    className="rounded-lg outline-none text-[13px] font-normal bg-[var(--surface)]"
+                    style={estiloArea}
+                  />
+                </label>
+                <span className="text-[11.5px]" style={{ color: TEXTO_TERCIARIO }}>Cada mensaje adaptado cuenta como una consulta a la IA (se ve en IA → Resumen).</span>
+              </>
+            )}
+          </>
+        )}
+      </Bloque>
+
+      <Bloque icono={OctagonX} titulo="Cuando piden no recibir más mensajes (stop)">
+        {!ajustes.stop ? (
+          <span className="text-[12.5px]" style={{ color: 'var(--warn)' }}>Para usarlo, vuelve a pegar database/siguelo.sql en Supabase (trae la Fase 4).</span>
+        ) : (
+          <>
+            <div className="flex items-start gap-3">
+              <p className="flex-1 m-0 text-[12.5px] leading-relaxed" style={{ color: TEXTO_SECUNDARIO }}>
+                Si el cliente escribe una de estas palabras en un mensaje corto, pasa a la etapa "perdida" de su embudo, se le confirma y
+                no recibe más mensajes automáticos. Las frases parecidas (o la palabra dentro de un mensaje largo) no actúan solas: te lo
+                dejan en Contactos → Para revisar.
+              </p>
+              <Interruptor activo={stop.activo} onCambiar={(v) => setStop({ ...stop, activo: v })} etiqueta="Activar stop" deshabilitado={!puedeEditar} />
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-[12px] font-semibold" style={{ color: 'var(--fg-2)' }}>
+                Palabras (actúan solas)
+                <textarea value={stop.palabras} disabled={!puedeEditar} onChange={(e) => setStop({ ...stop, palabras: e.target.value })} rows={3} className="rounded-lg outline-none text-[13px] font-normal bg-[var(--surface)]" style={estiloArea} />
+              </label>
+              <label className="flex flex-col gap-1 text-[12px] font-semibold" style={{ color: 'var(--fg-2)' }}>
+                Frases parecidas (piden revisar)
+                <textarea value={stop.parecidas} disabled={!puedeEditar} onChange={(e) => setStop({ ...stop, parecidas: e.target.value })} rows={3} className="rounded-lg outline-none text-[13px] font-normal bg-[var(--surface)]" style={estiloArea} />
+              </label>
+            </div>
+            <label className="flex flex-col gap-1 text-[12px] font-semibold" style={{ color: 'var(--fg-2)' }}>
+              Respuesta (vacía = no se le responde)
+              <input value={stop.respuesta} disabled={!puedeEditar} onChange={(e) => setStop({ ...stop, respuesta: e.target.value })} className={`${claseCampo} font-normal`} style={estiloCampo} />
+            </label>
+          </>
+        )}
+      </Bloque>
+
       <Bloque icono={MessageSquareText} titulo="Pie de mensaje">
         <div className="flex items-start gap-3">
           <p className="flex-1 m-0 text-[12.5px] leading-relaxed" style={{ color: TEXTO_SECUNDARIO }}>
-            Se agrega al final de cada mensaje automático (una variante al azar). Por ahora, cuando el contacto responde cualquier cosa, sus
-            mensajes automáticos se detienen hasta que lo atiendas; que "stop" o "ya estoy" lo cambien de etapa solo llega en la Fase 2.
+            Se agrega al final de cada mensaje automático (una variante al azar), por ejemplo para decir cómo dejar de recibirlos.
           </p>
           <Interruptor activo={pieActivo} onCambiar={setPieActivo} etiqueta="Activar el pie de mensaje" deshabilitado={!puedeEditar} />
         </div>

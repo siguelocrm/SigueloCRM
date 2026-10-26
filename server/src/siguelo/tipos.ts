@@ -9,6 +9,11 @@ export type Pie = { activo: boolean; variantes: string[] };
 
 export type TipoSecuencia = 'rec' | 'react';
 
+// Fase 4: citas y sus mensajes.
+export type PasoCita = { ref: 'inicio' | 'fin'; horas: number; variantes: string[] };
+export type ConfigCitas = { activa: boolean; desde: string; hasta: string; max_atraso_min: number; pasos: PasoCita[] };
+export type CitaRow = { id: string; empresa_id: string; contacto_id: string; inicio: string; fin: string; nota: string | null; estado: 'agendada' | 'cancelada'; paso: number; creado_en: string; actualizado_en: string };
+
 // Estado de cada contacto. Los tiempos van en milisegundos (Date.now()).
 export type EstadoRec = {
   etapa_id: string;
@@ -45,8 +50,17 @@ export type AjustesRow = {
   atraso_max_reactivacion_horas: number;
   ciclos_reactivacion_cada_horas: number;
   pie: Pie;
+  // Fase 4: "stop" (sin la Fase 4 pegada, no viene).
+  stop?: Stop | null;
+  citas?: ConfigCitas | null;
+  // La IA adapta cada recordatorio y reactivación a la conversación.
+  adaptar?: Adaptar | null;
   actualizado_en: string;
 };
+export type Stop = { activo: boolean; palabras: string[]; parecidas: string[]; respuesta: string };
+export type PalabrasEtapa = { cliente: string[]; parecidas: string[]; tuyas: string[]; respuesta: string };
+export type Revisar = { etapa_id: string; texto: string; ts: number };
+export type Deshacer = { etapa_antes: string; desde_antes: string | null; descripcion: string; ts: number };
 
 export type EtapaConfigRow = {
   id: string;
@@ -57,6 +71,8 @@ export type EtapaConfigRow = {
   recordatorios: Secuencia;
   reactivacion: Secuencia;
   al_terminar: AlTerminar;
+  // Fase 4: palabras que cambian de etapa.
+  palabras?: Partial<PalabrasEtapa> | null;
   actualizado_en: string;
 };
 
@@ -71,6 +87,9 @@ export type SeguimientoRow = {
   visto_agente: string | null;
   ultimo_automatico: string | null;
   ultimo_texto_auto: string | null;
+  // Fase 4: espera que lo revises / lo último que se movió solo.
+  revisar?: Revisar | null;
+  deshacer?: Deshacer | null;
   creado_en: string;
   actualizado_en: string;
 };
@@ -84,7 +103,7 @@ export type ColaRow = {
   conversacion_id: string;
   linea_id: string;
   telefono: string;
-  tipo: TipoSecuencia;
+  tipo: TipoSecuencia | 'cita';
   etapa_id: string | null;
   paso: number;
   token: string;
@@ -140,11 +159,198 @@ export type NegocioRow = {
   horario: string | null;
   info_ia: string;
   embudo_id: string | null;
+  // Fase 3: la IA responde en este negocio, zonas que atiende y grupos a los que puede invitar.
+  ia_activa: boolean;
+  zonas: string | null;
+  grupos: GrupoNegocio[];
   creado_en: string;
   actualizado_en: string;
 };
+export type GrupoNegocio = { id: string; nombre: string; link: string; cuando: string };
 export type LineaNegocioRow = { linea_id: string; empresa_id: string; negocio_id: string };
 export type BotNegocioRow = { regla_id: string; negocio_id: string };
+
+// ---------- Fase 3: IA ----------
+export type ModoIA = 'apagado' | 'borrador' | 'automatico';
+export type TipoAviso = 'fuera' | 'compro' | 'pregunta' | 'molesto' | 'humano' | 'otro';
+export type EstiloIA = { tono: string; trato: string; emojis: string; largo: string; saltos: string; usar_nombre: boolean };
+export type AccionesIA = { mover_etapa: boolean; no_quiere_mas: boolean; respuestas_rapidas: boolean; pases: boolean; grupos: boolean };
+export type AvisosIA = {
+  activo: boolean;
+  telefono: string;
+  linea_id: string | null;
+  // Más "pago" (Fase 5): pagos e inscripciones (encendido si no está).
+  tipos: Partial<Record<TipoAviso | 'pago', boolean>>;
+  max_dia: number;
+  juntar_min: number;
+};
+
+export type IaRow = {
+  empresa_id: string;
+  activa: boolean;
+  modo: ModoIA;
+  modelo: string;
+  clave_final: string | null;
+  estilo: EstiloIA;
+  firma: string;
+  instrucciones: string;
+  ejemplos: string;
+  si_no_sabe: 'avisar' | 'espera';
+  texto_espera: string;
+  desde: string;
+  hasta: string;
+  espera_min_seg: number;
+  espera_max_seg: number;
+  max_por_cliente_dia: number;
+  max_respuestas_dia: number;
+  max_consultas_dia: number;
+  pausa_si_escribes_min: number;
+  acciones: AccionesIA;
+  avisos: AvisosIA;
+  actualizado_en: string;
+};
+
+export type AtencionIA = { tipo: TipoAviso; motivo: string; ts: number; hecho: number | null };
+
+export type LecturaRow = {
+  conversacion_id: string;
+  empresa_id: string;
+  contacto_id: string | null;
+  linea_id: string | null;
+  leido_hasta: string | null;
+  fallos: number;
+  reintentar_en: string | null;
+  resumen: string | null;
+  interes: string | null;
+  atencion: AtencionIA | null;
+  sin_respuestas: boolean;
+  avisado: Partial<Record<TipoAviso, number>>;
+  espera_enviada: string | null;
+  actualizado_en: string;
+};
+
+export type OrigenSalida = 'respuesta' | 'respuesta_rapida' | 'grupo' | 'pase' | 'aviso' | 'qr' | 'pago';
+export type SalidaRow = {
+  id: string;
+  empresa_id: string;
+  conversacion_id: string | null;
+  contacto_id: string | null;
+  linea_id: string;
+  telefono: string;
+  origen: OrigenSalida;
+  referencia: string | null;
+  tipo: 'texto' | 'imagen' | 'pdf' | 'documento' | 'audio';
+  contenido: string;
+  media_url: string | null;
+  mimetype: string | null;
+  vence: string;
+  estado: 'borrador' | 'pendiente' | 'enviando' | 'enviado' | 'cancelado' | 'error';
+  aprobado: boolean;
+  base_cliente: string | null;
+  motivo: string | null;
+  lote: string | null;
+  orden: number;
+  mensaje_id: string | null;
+  whatsapp_id: string | null;
+  creado_en: string;
+  cerrado_en: string | null;
+};
+
+export type PorLeerRow = { conversacion_id: string; linea_id: string; telefono: string; contacto_id: string | null; ultimo_cliente: string };
+
+export type Adaptar = { activo: boolean; recordatorios: boolean; reactivaciones: boolean; instrucciones: string };
+
+// Lo que propone el asistente (se hace al pulsar "Aplicar").
+export type MensajeAsistenteRow = {
+  id: string;
+  empresa_id: string;
+  usuario_id: string | null;
+  rol: 'usuario' | 'asistente';
+  texto: string;
+  acciones: Record<string, unknown>[];
+  aplicado_en: string | null;
+  resultado: string | null;
+  creado_en: string;
+};
+
+// ---------- Fase 5: inscripción con pago ----------
+export type TextosCurso = { confirmado: string; pedir_datos: string; falta: string; link: string; revisar: string; rechazado: string };
+export type CursoRow = {
+  id: string;
+  empresa_id: string;
+  negocio_id: string | null;
+  nombre: string;
+  activo: boolean;
+  precio: number;
+  moneda: string;
+  qr_url: string | null;
+  destinatario: string;
+  cuenta: string;
+  link_grupo: string;
+  datos: string[];
+  etapa_id: string | null;
+  max_horas: number;
+  textos: TextosCurso;
+  creado_en: string;
+  actualizado_en: string;
+};
+
+// Lo que la IA lee de un comprobante.
+export type LecturaComprobante = {
+  es_comprobante: boolean;
+  monto: number | null;
+  moneda: string | null;
+  fecha: string | null; // "YYYY-MM-DD HH:mm"
+  transaccion: string | null;
+  pagador: string | null;
+  banco: string | null;
+  destinatario: string | null;
+  cuenta_destino: string | null;
+  glosa: string | null;
+  senales_edicion: string[];
+  confianza: number;
+};
+export type ControlPago = { codigo: string; nombre: string; ok: boolean; detalle: string };
+export type EstadoPago = 'leyendo' | 'no_es' | 'revisar' | 'rechazado' | 'datos' | 'inscrito';
+export type PagoRow = {
+  id: string;
+  empresa_id: string;
+  contacto_id: string | null;
+  conversacion_id: string | null;
+  linea_id: string | null;
+  telefono: string;
+  curso_id: string | null;
+  mensaje_id: string | null;
+  media_url: string | null;
+  estado: EstadoPago;
+  lectura: LecturaComprobante | null;
+  controles: ControlPago[];
+  motivo: string | null;
+  monto: number | null;
+  transaccion: string | null;
+  pagado_en: string | null;
+  datos: Record<string, string>;
+  datos_desde: string | null;
+  datos_leido: string | null;
+  rondas: number;
+  accion: 'confirmar' | 'rechazar' | null;
+  intentos: number;
+  oportunidad_id: string | null;
+  avisado: boolean;
+  creado_en: string;
+  actualizado_en: string;
+};
+export type PagoPorLeerRow = {
+  mensaje_id: string;
+  conversacion_id: string;
+  linea_id: string;
+  telefono: string;
+  contacto_id: string | null;
+  tipo: string;
+  media_url: string;
+  contenido: string | null;
+  creado_en: string;
+};
 
 // Columnas de las tablas del curso que usa el seguimiento.
 export type EtapaVentaRow = {
@@ -186,10 +392,28 @@ export type SigueloDatabase = {
       siguelo_negocios: Tabla<NegocioRow>;
       siguelo_lineas: Tabla<LineaNegocioRow>;
       siguelo_bot_negocio: Tabla<BotNegocioRow>;
+      siguelo_citas: Tabla<CitaRow>;
       etapas_venta: Tabla<EtapaVentaRow>;
       contactos: Tabla<ContactoSigueloRow>;
-      conversaciones: Tabla<{ id: string; linea_id: string; contacto_telefono: string; contacto_nombre: string | null; ultima_actividad: string }>;
-      lineas_whatsapp: Tabla<{ id: string; empresa_id: string; nombre: string }>;
+      conversaciones: Tabla<{
+        id: string;
+        linea_id: string;
+        contacto_telefono: string;
+        contacto_nombre: string | null;
+        estado: 'abierto' | 'pendiente' | 'cerrado';
+        ultima_actividad: string;
+        creado_en: string;
+      }>;
+      lineas_whatsapp: Tabla<{ id: string; empresa_id: string; nombre: string; estado: string }>;
+      siguelo_ia: Tabla<IaRow>;
+      siguelo_ia_clave: Tabla<{ empresa_id: string; clave: string; actualizado_en: string }>;
+      siguelo_ia_lecturas: Tabla<LecturaRow>;
+      siguelo_ia_salida: Tabla<SalidaRow>;
+      siguelo_ia_uso: Tabla<{ empresa_id: string; fecha: string; consultas: number; entrada: number; salida: number }>;
+      siguelo_etapa_embudo: Tabla<{ etapa_id: string; embudo_id: string }>;
+      siguelo_respuesta_negocio: Tabla<{ respuesta_id: string; negocio_id: string }>;
+      respuestas_rapidas: Tabla<{ id: string; empresa_id: string; titulo: string; atajo: string | null; contenido: string; tipo: string; media_url: string | null }>;
+      notas: Tabla<{ id: string; contacto_id: string; autor_id: string | null; texto: string; creado_en: string }>;
       mensajes: Tabla<{
         id: string;
         conversacion_id: string;
@@ -204,17 +428,31 @@ export type SigueloDatabase = {
       motivos_perdida: Tabla<{ id: string; empresa_id: string; nombre: string }>;
       oportunidades: Tabla<{
         id: string;
+        empresa_id: string;
         contacto_id: string;
+        producto: string | null;
+        monto: number;
+        nota: string | null;
+        creado_en: string;
         estado: 'abierta' | 'ganada' | 'perdida';
         probabilidad: number;
         motivo_perdida_id: string | null;
         cerrada_en: string | null;
         actualizado_en: string;
       }>;
+      siguelo_cursos: Tabla<CursoRow>;
+      siguelo_asistente: Tabla<MensajeAsistenteRow>;
+      siguelo_embudos: Tabla<{ id: string; empresa_id: string; nombre: string; creado_en: string }>;
+      siguelo_pagos: Tabla<PagoRow>;
+      campos_personalizados: Tabla<{ id: string; empresa_id: string; nombre: string; tipo: string; opciones: string[]; orden: number }>;
+      contacto_campos: Tabla<{ contacto_id: string; campo_id: string; valor: string | null }>;
+      contacto_documentos: Tabla<{ id: string; contacto_id: string; nombre: string; ruta: string; url: string; tamano: number | null; subido_por: string | null; creado_en: string }>;
     };
     Views: Record<string, never>;
     Functions: {
       siguelo_actividad: { Args: { p_empresa: string }; Returns: ActividadRow[] };
+      siguelo_ia_por_leer: { Args: { p_empresa: string; p_quieto_seg: number }; Returns: PorLeerRow[] };
+      siguelo_pagos_por_leer: { Args: { p_empresa: string }; Returns: PagoPorLeerRow[] };
     };
   };
 };

@@ -5,19 +5,35 @@ import { BORDE, TEXTO_PRIMARIO, TEXTO_SECUNDARIO, TEXTO_TERCIARIO } from '../../
 import { Boton, EstadoVacio, Tarjeta, useToast } from '../../components/ui';
 import Etiqueta from '../seguimiento/Etiqueta';
 import { claseCampo, estiloArea, estiloCampo } from '../seguimiento/estilos';
-import type { DatosNegocios, Negocio } from './useNegocios';
+import type { DatosNegocios, GrupoNegocio, Negocio } from './useNegocios';
 
-type Borrador = { nombre: string; sucursal: string; direccion: string; horario: string; info_ia: string; embudo_id: string; lineas: string[] };
+type Borrador = {
+  nombre: string;
+  sucursal: string;
+  direccion: string;
+  horario: string;
+  zonas: string;
+  info_ia: string;
+  ia_activa: boolean;
+  grupos: GrupoNegocio[];
+  embudo_id: string;
+  lineas: string[];
+};
 
 const aBorrador = (n: Negocio | null, lineas: string[]): Borrador => ({
   nombre: n?.nombre ?? '',
   sucursal: n?.sucursal ?? '',
   direccion: n?.direccion ?? '',
   horario: n?.horario ?? '',
+  zonas: n?.zonas ?? '',
   info_ia: n?.info_ia ?? '',
+  ia_activa: n?.ia_activa ?? true,
+  grupos: (n?.grupos ?? []).map((g) => ({ ...g })),
   embudo_id: n?.embudo_id ?? '',
   lineas,
 });
+
+const idNuevo = () => Math.random().toString(36).slice(2, 10);
 
 const AYUDA_IA =
   'Qué vendes, precios, horarios, cómo inscribirse o comprar, formas de pago, preguntas frecuentes y lo que NO debe decir. La IA (Fase 3) responderá solo con esto.';
@@ -62,13 +78,20 @@ export default function FichasNegocios({ datos, empresaId, puedeEditar }: Props)
   const guardar = async (n: Negocio | null) => {
     if (!borrador) return;
     if (!borrador.nombre.trim()) return toast('Escribe el nombre del negocio.', 'error');
+    const grupos = borrador.grupos.filter((g) => g.nombre.trim() || g.link.trim());
+    if (grupos.some((g) => !g.nombre.trim() || !/^https?:\/\//i.test(g.link.trim()))) {
+      return toast('Cada grupo necesita un nombre y su link de invitación (https://chat.whatsapp.com/…).', 'error');
+    }
     setGuardando(true);
     const fila = {
       nombre: borrador.nombre.trim(),
       sucursal: borrador.sucursal.trim() || null,
       direccion: borrador.direccion.trim() || null,
       horario: borrador.horario.trim() || null,
+      zonas: borrador.zonas.trim() || null,
       info_ia: borrador.info_ia,
+      ia_activa: borrador.ia_activa,
+      grupos: grupos.map((g) => ({ id: g.id, nombre: g.nombre.trim(), link: g.link.trim(), cuando: g.cuando.trim() })),
       embudo_id: borrador.embudo_id || null,
       actualizado_en: new Date().toISOString(),
     };
@@ -131,6 +154,9 @@ export default function FichasNegocios({ datos, empresaId, puedeEditar }: Props)
             <input value={borrador.horario} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, horario: e.target.value })} placeholder="Ej. lunes a sábado de 8:00 a 19:00" className={`${claseCampo} font-normal`} style={estiloCampo} />
           </Campo>
         </div>
+        <Campo etiqueta="Zonas que atiende" ayuda="Barrios o ciudades cercanos. La IA los usa para sugerir la sucursal más cercana.">
+          <input value={borrador.zonas} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, zonas: e.target.value })} placeholder="Ej. Quillacollo, Tiquipaya, Colcapirhua" className={`${claseCampo} font-normal`} style={estiloCampo} />
+        </Campo>
 
         <Campo etiqueta="Embudo" ayuda="Los clientes nuevos de este negocio entran a la primera etapa de este embudo. Los que ya están no se mueven.">
           <select value={borrador.embudo_id} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, embudo_id: e.target.value })} className={`${claseCampo} font-normal`} style={estiloCampo}>
@@ -177,6 +203,36 @@ export default function FichasNegocios({ datos, empresaId, puedeEditar }: Props)
             style={estiloArea}
           />
         </Campo>
+
+        <label className="flex items-center gap-2 text-[13px]" style={{ color: TEXTO_PRIMARIO }}>
+          <input type="checkbox" checked={borrador.ia_activa} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, ia_activa: e.target.checked })} />
+          La IA responde en los números de este negocio
+        </label>
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[12.5px] font-semibold" style={{ color: 'var(--fg-2)' }}>Grupos de WhatsApp a los que la IA puede invitar</span>
+          <span className="text-[11.5px]" style={{ color: TEXTO_TERCIARIO }}>
+            La IA ofrece unirse y, solo si el cliente acepta, le manda el link (una sola vez). Nunca lo agrega directo.
+          </span>
+          {borrador.grupos.map((g, i) => {
+            const cambiar = (cambios: Partial<GrupoNegocio>) => setBorrador({ ...borrador, grupos: borrador.grupos.map((x, k) => (k === i ? { ...x, ...cambios } : x)) });
+            return (
+              <div key={g.id} className="grid gap-1.5 sm:grid-cols-[1fr_1fr_auto] rounded-lg p-2.5" style={{ border: `1px solid ${BORDE}` }}>
+                <input value={g.nombre} disabled={!puedeEditar} onChange={(e) => cambiar({ nombre: e.target.value })} placeholder="Nombre (ej. Curso gratis)" aria-label="Nombre del grupo" className={`${claseCampo} font-normal`} style={estiloCampo} />
+                <input value={g.link} disabled={!puedeEditar} onChange={(e) => cambiar({ link: e.target.value })} placeholder="https://chat.whatsapp.com/…" aria-label="Link de invitación" className={`${claseCampo} font-normal`} style={estiloCampo} />
+                {puedeEditar && (
+                  <button onClick={() => setBorrador({ ...borrador, grupos: borrador.grupos.filter((_, k) => k !== i) })} aria-label="Quitar grupo" className="p-2 rounded-md justify-self-end" style={{ color: TEXTO_TERCIARIO }}><Trash2 size={14} /></button>
+                )}
+                <input value={g.cuando} disabled={!puedeEditar} onChange={(e) => cambiar({ cuando: e.target.value })} placeholder="Cuándo ofrecerlo (ej. si quiere aprender mecánica)" aria-label="Cuándo ofrecerlo" className={`${claseCampo} font-normal sm:col-span-3`} style={estiloCampo} />
+              </div>
+            );
+          })}
+          {puedeEditar && (
+            <Boton tamano="sm" icono={Plus} className="self-start" onClick={() => setBorrador({ ...borrador, grupos: [...borrador.grupos, { id: idNuevo(), nombre: '', link: '', cuando: '' }] })}>
+              Agregar grupo
+            </Boton>
+          )}
+        </div>
 
         {puedeEditar && (
           <div className="flex items-center gap-2 flex-wrap">

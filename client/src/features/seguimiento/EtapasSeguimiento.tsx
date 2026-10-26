@@ -14,7 +14,9 @@ import { claseCampo, describirHoras, estiloArea, estiloCampo } from './estilos';
 // las líneas --- no se reacomodan mientras escribes).
 type PasoBorrador = { horas: string; texto: string };
 type SecBorrador = { activa: boolean; modo: Modo; pasos: PasoBorrador[] };
-type Borrador = { recordatorios: SecBorrador; reactivacion: SecBorrador; destino: string; dias: string };
+// Palabras que cambian de etapa (Fase 4): una por línea mientras editas.
+type PalabrasBorrador = { cliente: string; parecidas: string; tuyas: string; respuesta: string };
+type Borrador = { recordatorios: SecBorrador; reactivacion: SecBorrador; destino: string; dias: string; palabras: PalabrasBorrador };
 
 const aBorradorSec = (s: Secuencia): SecBorrador => ({
   activa: s.activa,
@@ -27,7 +29,15 @@ const aBorrador = (c: EtapaSeguimiento): Borrador => ({
   reactivacion: aBorradorSec(c.reactivacion),
   destino: c.al_terminar?.etapa_id || '',
   dias: String(c.al_terminar?.dias ?? 0),
+  palabras: {
+    cliente: (c.palabras?.cliente ?? []).join('\n'),
+    parecidas: (c.palabras?.parecidas ?? []).join('\n'),
+    tuyas: (c.palabras?.tuyas ?? []).join('\n'),
+    respuesta: c.palabras?.respuesta ?? '',
+  },
 });
+
+const lineas = (t: string) => t.split('\n').map((x) => x.trim()).filter(Boolean);
 
 const numero = (t: string): number => {
   const n = parseFloat(t.replace(',', '.'));
@@ -209,10 +219,14 @@ export default function EtapasSeguimiento({ etapas, configs, negocios, embudos, 
     const desconocidas = variablesDesconocidas([...recordatorios.pasos, ...reactivacion.pasos].flatMap((p) => p.variantes).join('\n'));
     if (desconocidas.length) return toast(`Esa variable no existe: ${desconocidas.map((v) => `{${v}}`).join(', ')}. Puedes usar ${TEXTO_VARIABLES}.`, 'error');
     setGuardando(true);
+    const p = borrador.palabras;
+    const conPalabras = !negocioId && (p.cliente.trim() || p.parecidas.trim() || p.tuyas.trim() || p.respuesta.trim() || enEdicion(etapa.id)?.palabras);
     const fila = {
       recordatorios,
       reactivacion,
       al_terminar: { etapa_id: borrador.destino || null, dias: borrador.destino ? dias : 0 },
+      // Las palabras son de los textos generales (sin la Fase 4 pegada, no se mandan).
+      ...(conPalabras ? { palabras: { cliente: lineas(p.cliente), parecidas: lineas(p.parecidas), tuyas: lineas(p.tuyas), respuesta: p.respuesta.trim() } } : {}),
       actualizado_en: new Date().toISOString(),
     };
     const actual = enEdicion(etapa.id);
@@ -334,6 +348,39 @@ export default function EtapasSeguimiento({ etapas, configs, negocios, embudos, 
                     </>
                   )}
                 </div>
+                {!negocioId && (
+                  <div className="flex flex-col gap-2 rounded-xl p-3.5" style={{ border: `1px solid ${BORDE}` }}>
+                    <div className="text-[13.5px] font-semibold" style={{ color: TEXTO_PRIMARIO }}>Palabras que lo pasan a esta etapa</div>
+                    <div className="text-[12px]" style={{ color: TEXTO_SECUNDARIO }}>
+                      Una por línea. Funcionan con los clientes que están en otra etapa de este mismo embudo. Para "stop", mira Ajustes.
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      {([
+                        ['cliente', 'Del cliente (pasa solo)', 'ya estoy\nya pagué', 'Si su mensaje tiene 5 palabras o menos.'],
+                        ['parecidas', 'Parecidas (piden revisar)', 'si voy\nme anoto', 'No lo mueven solas: te lo dejan para revisar.'],
+                        ['tuyas', 'Tuyas (pasa solo)', 'ya te registré\nte agendé', 'Al principio de tu mensaje, desde el CRM o el teléfono.'],
+                      ] as const).map(([k, titulo, ejemplo, ayuda]) => (
+                        <label key={k} className="flex flex-col gap-1 text-[12px] font-semibold" style={{ color: 'var(--fg-2)' }}>
+                          {titulo}
+                          <textarea
+                            value={borrador.palabras[k]}
+                            disabled={bloqueado}
+                            onChange={(e) => setBorrador({ ...borrador, palabras: { ...borrador.palabras, [k]: e.target.value } })}
+                            rows={3}
+                            placeholder={ejemplo}
+                            className="rounded-lg outline-none text-[13px] font-normal bg-[var(--surface)] resize-y"
+                            style={estiloArea}
+                          />
+                          <span className="font-normal text-[11px]" style={{ color: TEXTO_TERCIARIO }}>{ayuda}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <label className="flex flex-col gap-1 text-[12px] font-semibold" style={{ color: 'var(--fg-2)' }}>
+                      Respuesta al llegar por una palabra del cliente (opcional)
+                      <input value={borrador.palabras.respuesta} disabled={bloqueado} onChange={(e) => setBorrador({ ...borrador, palabras: { ...borrador.palabras, respuesta: e.target.value } })} placeholder="¡Genial {nombre}, gracias por avisar!" className={`${claseCampo} font-normal`} style={estiloCampo} />
+                    </label>
+                  </div>
+                )}
                 {!bloqueado && (
                   <div className="flex items-center gap-2 flex-wrap">
                     <Boton variante="primario" onClick={() => guardar(etapa)} disabled={guardando}>{guardando ? 'Guardando…' : 'Guardar'}</Boton>

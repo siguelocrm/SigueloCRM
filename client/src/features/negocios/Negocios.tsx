@@ -45,7 +45,7 @@ export default function Negocios() {
         </Tarjeta>
       ) : (
         <>
-          <div role="tablist" className="flex gap-1 overflow-x-auto" style={{ borderBottom: `1px solid ${BORDE}` }}>
+          <div role="tablist" className="flex gap-1 overflow-x-auto shrink-0" style={{ borderBottom: `1px solid ${BORDE}` }}>
             {PESTANAS.map((p) => (
               <button
                 key={p.id}
