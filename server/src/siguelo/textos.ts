@@ -33,10 +33,10 @@ export function aplicarNombre(texto: string, nombre: string | null | undefined):
   return r.replace(/^(\s*[¡¿"“(]*)(\p{Ll})/gmu, (_m, a: string, b: string) => a + b.toUpperCase());
 }
 
-// Variables que se pueden usar hoy en los textos, además de {nombre}:
-// {sucursal} = el nombre del número en Conexiones. La fase de negocios por
-// número sumará las de su ficha ({direccion}, {horario}...).
-export const VARIABLES = ['nombre', 'sucursal'];
+// Variables que se pueden usar en los textos, además de {nombre}. Salen de la
+// ficha del negocio del número que envía (server/src/siguelo/negocios.ts);
+// sin ficha, {sucursal} es el nombre del número en Conexiones.
+export const VARIABLES = ['nombre', 'negocio', 'sucursal', 'direccion', 'horario'];
 
 // Reemplaza {clave} por su valor y dice cuáles no se pudieron llenar
 // ({nombre} lo resuelve aplicarNombre).

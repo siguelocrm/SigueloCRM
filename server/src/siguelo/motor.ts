@@ -2,6 +2,7 @@ import { db } from './db.js';
 import { DIA } from './horario.js';
 import * as C from './calculo.js';
 import { registrar } from './registro.js';
+import { negocioDeLinea } from './negocios.js';
 import type { ActividadRow, AjustesRow, ColaRow, EtapaConfigRow, EtapaVentaRow, SeguimientoRow, TipoSecuencia } from './tipos.js';
 
 // Motor del embudo: cada minuto revisa a los contactos que están en una etapa
@@ -75,8 +76,7 @@ export async function revisarEmpresa(aj: AjustesRow): Promise<void> {
 
   const [etapasR, cfgR, actR, segR, colaR, manoR] = await Promise.all([
     db.from('etapas_venta').select('id, empresa_id, nombre, tipo, orden, probabilidad').eq('empresa_id', empresaId),
-    // Por ahora solo los textos generales (los propios de cada negocio llegan en su fase).
-    db.from('siguelo_etapas').select('*').eq('empresa_id', empresaId).is('negocio_id', null),
+    db.from('siguelo_etapas').select('*').eq('empresa_id', empresaId),
     db.rpc('siguelo_actividad', { p_empresa: empresaId }),
     db.from('siguelo_seguimientos').select('*').eq('empresa_id', empresaId),
     db.from('siguelo_cola').select('*').eq('empresa_id', empresaId).eq('estado', 'pendiente'),
@@ -95,14 +95,16 @@ export async function revisarEmpresa(aj: AjustesRow): Promise<void> {
   }
 
   const etapas = new Map((etapasR.data || []).map((e) => [e.id, e] as const));
-  const cfgs = new Map((cfgR.data || []).map((c: EtapaConfigRow) => [c.etapa_id, c] as const));
+  // Textos de cada etapa: los generales y los propios de algún negocio (que mandan sobre los generales).
+  const cfgs = new Map((cfgR.data || []).map((c: EtapaConfigRow) => [`${c.etapa_id}|${c.negocio_id ?? ''}`, c] as const));
+  const cfgDe = (etapaId: string, negocioId: string | null) => (negocioId && cfgs.get(`${etapaId}|${negocioId}`)) || cfgs.get(`${etapaId}|`) || null;
   const segs = new Map((segR.data || []).map((s: SeguimientoRow) => [s.contacto_id, s] as const));
   const pendientes = colaR.data || [];
   const cancelados = new Set((manoR.data || []).map((i) => clave(i.contacto_id, i.tipo, i.paso, i.token)));
   const revisados = new Set<string>();
 
-  const contexto = (a: ActividadRow, etapa: EtapaVentaRow): C.Contexto => {
-    const cfg = etapa.tipo === 'perdida' ? null : cfgs.get(etapa.id) ?? null;
+  const contexto = (a: ActividadRow, etapa: EtapaVentaRow, negocioId: string | null): C.Contexto => {
+    const cfg = etapa.tipo === 'perdida' ? null : cfgDe(etapa.id, negocioId);
     return {
       ahora,
       etapaId: etapa.id,
@@ -121,6 +123,8 @@ export async function revisarEmpresa(aj: AjustesRow): Promise<void> {
     revisados.add(a.contacto_id);
     const nombre = nombreDe(a);
     const anotar = (tipo: string, texto: string) => registrar(empresaId, a.contacto_id, tipo, `${nombre}: ${texto}`);
+    // Negocio del número de su chat: si tiene textos propios para la etapa, se usan esos.
+    const negocioId = (await negocioDeLinea(a.linea_id))?.id ?? null;
 
     const previo = segs.get(a.contacto_id);
     // La primera vez que se lo ve, lo que ya pasó en su chat no cuenta como novedad.
@@ -144,7 +148,7 @@ export async function revisarEmpresa(aj: AjustesRow): Promise<void> {
       respondio: seg.respondio,
       pausado: seg.pausado,
     };
-    let ctx = contexto(a, etapa);
+    let ctx = contexto(a, etapa, negocioId);
     C.prepararRec(est, ctx);
 
     // Novedades desde la última vuelta, en orden: el cliente escribió / le escribiste a mano.
@@ -168,7 +172,7 @@ export async function revisarEmpresa(aj: AjustesRow): Promise<void> {
       a.etapa_id = destino.id;
       a.etapa_actualizada_en = new Date(ahora).toISOString();
       etapa = destino;
-      ctx = contexto(a, etapa);
+      ctx = contexto(a, etapa, negocioId);
       C.prepararRec(est, ctx);
     }
 

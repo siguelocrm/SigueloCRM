@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Pause, Power } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../lib/AuthContext';
@@ -11,6 +11,7 @@ import EtapasSeguimiento from './EtapasSeguimiento';
 import ColaSeguimiento from './ColaSeguimiento';
 import ContactosSeguimiento from './ContactosSeguimiento';
 import AjustesSeguimiento from './AjustesSeguimiento';
+import { useNegocios } from '../negocios/useNegocios';
 
 type Pestana = 'etapas' | 'cola' | 'contactos' | 'ajustes';
 const PESTANAS: { id: Pestana; texto: string }[] = [
@@ -30,15 +31,18 @@ export default function Seguimiento() {
   const [faltaSql, setFaltaSql] = useState(false);
   const [ajustes, setAjustes] = useState<Ajustes | null>(null);
   const [existe, setExiste] = useState(false);
-  const [configs, setConfigs] = useState<Record<string, EtapaSeguimiento>>({});
+  // Todas: las generales y las propias de cada negocio.
+  const [todas, setTodas] = useState<EtapaSeguimiento[]>([]);
+  const negocios = useNegocios(usuario?.empresa_id);
   const puedeEditar = usuario?.rol === 'dueno' || usuario?.rol === 'supervisor';
+  // Las generales por etapa (para la pestaña Contactos).
+  const configs = useMemo(() => Object.fromEntries(todas.filter((c) => !c.negocio_id).map((c) => [c.etapa_id, c])), [todas]);
 
   const cargar = useCallback(async () => {
     if (!usuario) return;
     const [aj, cfg] = await Promise.all([
       supabase.from('siguelo_ajustes').select('*').maybeSingle(),
-      // Por ahora solo los textos generales (los de cada negocio llegan en su fase).
-      supabase.from('siguelo_etapas').select('*').is('negocio_id', null).returns<EtapaSeguimiento[]>(),
+      supabase.from('siguelo_etapas').select('*').order('actualizado_en').returns<EtapaSeguimiento[]>(),
     ]);
     if (aj.error || cfg.error) {
       setFaltaSql(true);
@@ -49,8 +53,8 @@ export default function Seguimiento() {
     // Solo se reemplazan si cambiaron: así no se borra lo que estás escribiendo en Ajustes.
     const nuevos = (aj.data as Ajustes | null) ?? ajustesPorDefecto(usuario.empresa_id);
     setAjustes((previos) => (JSON.stringify(previos) === JSON.stringify(nuevos) ? previos : nuevos));
-    const nuevasConfigs = Object.fromEntries((cfg.data || []).map((c) => [c.etapa_id, c]));
-    setConfigs((previas) => (JSON.stringify(previas) === JSON.stringify(nuevasConfigs) ? previas : nuevasConfigs));
+    const nuevas = cfg.data || [];
+    setTodas((previas) => (JSON.stringify(previas) === JSON.stringify(nuevas) ? previas : nuevas));
   }, [usuario]);
 
   useEffect(() => {
@@ -117,7 +121,18 @@ export default function Seguimiento() {
         ))}
       </div>
 
-      {pestana === 'etapas' && <EtapasSeguimiento etapas={etapasOrdenadas} configs={configs} empresaId={usuario!.empresa_id} puedeEditar={puedeEditar} onGuardado={cargar} />}
+      {pestana === 'etapas' && (
+        <EtapasSeguimiento
+          etapas={etapasOrdenadas}
+          configs={todas}
+          negocios={negocios.disponible ? negocios.negocios : []}
+          embudos={negocios.disponible ? negocios.embudos : []}
+          embudoDeEtapa={negocios.disponible ? negocios.embudoDeEtapa : {}}
+          empresaId={usuario!.empresa_id}
+          puedeEditar={puedeEditar}
+          onGuardado={cargar}
+        />
+      )}
       {pestana === 'cola' && <ColaSeguimiento ajustes={ajustes} />}
       {pestana === 'contactos' && <ContactosSeguimiento etapas={etapasOrdenadas} configs={configs} />}
       {pestana === 'ajustes' && <AjustesSeguimiento ajustes={ajustes} existe={existe} puedeEditar={puedeEditar} onGuardado={cargar} />}

@@ -3,6 +3,7 @@ import { MIN, ajustar, enFranja, fechaDe, inicioDelDia, type Franja } from './ho
 import * as C from './calculo.js';
 import { agregarPie, elegirVariante } from './textos.js';
 import { registrar } from './registro.js';
+import { variablesDeLinea } from './negocios.js';
 import { obtenerSesion } from '../whatsapp/sesiones.js';
 import { construirContenidoWA } from '../whatsapp/contenido.js';
 import { marcarEnviadoPorCRM } from '../whatsapp/mensajes-enviados-por-crm.js';
@@ -62,20 +63,6 @@ async function ultimoAutomatico(contactoId: string, lineaId: string): Promise<nu
     .limit(1)
     .maybeSingle();
   return C.ms(data?.cerrado_en);
-}
-
-// Variables de los textos que dependen del número que envía. Por ahora
-// {sucursal} = el nombre del número en Conexiones; la ficha de cada negocio
-// (dirección, horario...) llega en la fase de negocios por número.
-const nombresDeLinea = new Map<string, { nombre: string; leido: number }>();
-async function variablesDeLinea(lineaId: string): Promise<Record<string, string>> {
-  let n = nombresDeLinea.get(lineaId);
-  if (!n || Date.now() - n.leido > 5 * MIN) {
-    const { data } = await db.from('lineas_whatsapp').select('nombre').eq('id', lineaId).maybeSingle();
-    n = { nombre: data?.nombre?.trim() || '', leido: Date.now() };
-    nombresDeLinea.set(lineaId, n);
-  }
-  return { sucursal: n.nombre };
 }
 
 async function enviadosHoy(empresaId: string, lineaId: string, fecha: string): Promise<number> {

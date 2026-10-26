@@ -1,8 +1,9 @@
 -- =========================================================
--- SígueloCRM: seguimiento automático por etapa (Fase 1)
+-- SígueloCRM: seguimiento automático (Fase 1) y negocios por número (Fase 2)
 --
 -- Recordatorios y reactivaciones por etapa del embudo, con una cola segura
 -- (horario, tope diario y pausas al azar), traídos de la extensión SígueloCRM.
+-- Y varios números en el mismo CRM, cada uno con su negocio (sección 9 en adelante).
 --
 -- Cómo usarlo: en tu proyecto de Supabase entra a "SQL Editor", pega TODO
 -- este archivo y pulsa "Run". Es seguro repetirlo: no borra nada.
@@ -273,3 +274,199 @@ $$;
 -- Solo el servidor la usa: desde la página no se puede llamar.
 revoke execute on function siguelo_actividad(uuid) from public, anon, authenticated;
 grant execute on function siguelo_actividad(uuid) to service_role;
+
+-- =========================================================
+-- Fase 2: negocios por número
+-- Un solo CRM con varios números, y cada número trabaja como un negocio con
+-- su ficha (datos e información para la IA), sus respuestas rápidas, sus
+-- reglas del bot, sus textos de seguimiento y, si hace falta, su propio embudo.
+-- =========================================================
+
+-- ---------- 9. Embudos propios ----------
+-- Las etapas que NO están en siguelo_etapa_embudo son del embudo principal
+-- (el de siempre). Un negocio con embudo propio usa solo las etapas de ese embudo.
+create table if not exists siguelo_embudos (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id uuid not null references empresas (id) on delete cascade,
+  nombre text not null,
+  creado_en timestamptz not null default now()
+);
+
+create table if not exists siguelo_etapa_embudo (
+  etapa_id uuid primary key references etapas_venta (id) on delete cascade,
+  embudo_id uuid not null references siguelo_embudos (id) on delete cascade
+);
+create index if not exists siguelo_etapa_embudo_embudo_idx on siguelo_etapa_embudo (embudo_id);
+
+-- ---------- 10. Negocios (la ficha de cada uno) ----------
+create table if not exists siguelo_negocios (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id uuid not null references empresas (id) on delete cascade,
+  nombre text not null,
+  -- Variables de los textos: {negocio}, {sucursal}, {direccion}, {horario}.
+  sucursal text,
+  direccion text,
+  horario text,
+  -- Lo que la IA sabe de este negocio: qué vende, precios, horarios, lo que no debe decir.
+  info_ia text not null default '',
+  -- null = usa el embudo principal.
+  embudo_id uuid references siguelo_embudos (id) on delete set null,
+  creado_en timestamptz not null default now(),
+  actualizado_en timestamptz not null default now()
+);
+create index if not exists siguelo_negocios_empresa_idx on siguelo_negocios (empresa_id);
+
+-- De qué negocio es cada número (un número sin fila no es de ningún negocio).
+create table if not exists siguelo_lineas (
+  linea_id uuid primary key references lineas_whatsapp (id) on delete cascade,
+  empresa_id uuid not null references empresas (id) on delete cascade,
+  negocio_id uuid not null references siguelo_negocios (id) on delete cascade
+);
+
+-- Respuestas rápidas y reglas del bot que son solo de algunos negocios.
+-- Una respuesta o regla sin filas acá sirve para todos.
+create table if not exists siguelo_respuesta_negocio (
+  respuesta_id uuid not null references respuestas_rapidas (id) on delete cascade,
+  negocio_id uuid not null references siguelo_negocios (id) on delete cascade,
+  primary key (respuesta_id, negocio_id)
+);
+
+create table if not exists siguelo_bot_negocio (
+  regla_id uuid not null references respuestas_automaticas (id) on delete cascade,
+  negocio_id uuid not null references siguelo_negocios (id) on delete cascade,
+  primary key (regla_id, negocio_id)
+);
+
+-- Los textos de seguimiento propios de un negocio se borran con él.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'siguelo_etapas_negocio_fk') then
+    alter table siguelo_etapas
+      add constraint siguelo_etapas_negocio_fk foreign key (negocio_id) references siguelo_negocios (id) on delete cascade;
+  end if;
+end $$;
+
+-- ---------- 11. Permisos de la Fase 2 ----------
+-- Todos los de la empresa ven; el dueño y los supervisores cambian.
+alter table siguelo_embudos enable row level security;
+alter table siguelo_etapa_embudo enable row level security;
+alter table siguelo_negocios enable row level security;
+alter table siguelo_lineas enable row level security;
+alter table siguelo_respuesta_negocio enable row level security;
+alter table siguelo_bot_negocio enable row level security;
+
+drop policy if exists "siguelo_embudos_select" on siguelo_embudos;
+create policy "siguelo_embudos_select" on siguelo_embudos for select
+  using (empresa_id = (select empresa_id from usuario_actual()));
+drop policy if exists "siguelo_embudos_admin" on siguelo_embudos;
+create policy "siguelo_embudos_admin" on siguelo_embudos for all
+  using (empresa_id = (select empresa_id from usuario_actual()) and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[]))
+  with check (empresa_id = (select empresa_id from usuario_actual()) and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[]));
+
+drop policy if exists "siguelo_negocios_select" on siguelo_negocios;
+create policy "siguelo_negocios_select" on siguelo_negocios for select
+  using (empresa_id = (select empresa_id from usuario_actual()));
+drop policy if exists "siguelo_negocios_admin" on siguelo_negocios;
+create policy "siguelo_negocios_admin" on siguelo_negocios for all
+  using (empresa_id = (select empresa_id from usuario_actual()) and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[]))
+  with check (empresa_id = (select empresa_id from usuario_actual()) and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[]));
+
+drop policy if exists "siguelo_lineas_select" on siguelo_lineas;
+create policy "siguelo_lineas_select" on siguelo_lineas for select
+  using (empresa_id = (select empresa_id from usuario_actual()));
+drop policy if exists "siguelo_lineas_admin" on siguelo_lineas;
+create policy "siguelo_lineas_admin" on siguelo_lineas for all
+  using (empresa_id = (select empresa_id from usuario_actual()) and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[]))
+  with check (empresa_id = (select empresa_id from usuario_actual()) and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[]));
+
+drop policy if exists "siguelo_etapa_embudo_select" on siguelo_etapa_embudo;
+create policy "siguelo_etapa_embudo_select" on siguelo_etapa_embudo for select
+  using (embudo_id in (select id from siguelo_embudos where empresa_id = (select empresa_id from usuario_actual())));
+drop policy if exists "siguelo_etapa_embudo_admin" on siguelo_etapa_embudo;
+create policy "siguelo_etapa_embudo_admin" on siguelo_etapa_embudo for all
+  using (
+    embudo_id in (select id from siguelo_embudos where empresa_id = (select empresa_id from usuario_actual()))
+    and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[])
+  )
+  with check (
+    embudo_id in (select id from siguelo_embudos where empresa_id = (select empresa_id from usuario_actual()))
+    and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[])
+  );
+
+drop policy if exists "siguelo_respuesta_negocio_select" on siguelo_respuesta_negocio;
+create policy "siguelo_respuesta_negocio_select" on siguelo_respuesta_negocio for select
+  using (negocio_id in (select id from siguelo_negocios where empresa_id = (select empresa_id from usuario_actual())));
+drop policy if exists "siguelo_respuesta_negocio_admin" on siguelo_respuesta_negocio;
+create policy "siguelo_respuesta_negocio_admin" on siguelo_respuesta_negocio for all
+  using (
+    negocio_id in (select id from siguelo_negocios where empresa_id = (select empresa_id from usuario_actual()))
+    and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[])
+  )
+  with check (
+    negocio_id in (select id from siguelo_negocios where empresa_id = (select empresa_id from usuario_actual()))
+    and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[])
+  );
+
+drop policy if exists "siguelo_bot_negocio_select" on siguelo_bot_negocio;
+create policy "siguelo_bot_negocio_select" on siguelo_bot_negocio for select
+  using (negocio_id in (select id from siguelo_negocios where empresa_id = (select empresa_id from usuario_actual())));
+drop policy if exists "siguelo_bot_negocio_admin" on siguelo_bot_negocio;
+create policy "siguelo_bot_negocio_admin" on siguelo_bot_negocio for all
+  using (
+    negocio_id in (select id from siguelo_negocios where empresa_id = (select empresa_id from usuario_actual()))
+    and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[])
+  )
+  with check (
+    negocio_id in (select id from siguelo_negocios where empresa_id = (select empresa_id from usuario_actual()))
+    and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[])
+  );
+
+-- ---------- 12. Un cliente nuevo entra al embudo de su negocio ----------
+-- La base del curso pone a todo contacto nuevo en la primera etapa de la
+-- empresa. Este disparador (corre después de ese, por orden alfabético) lo
+-- pasa a la primera etapa del embudo del negocio del número por el que
+-- escribió. Si la ficha se creó con una etapa elegida a mano, no la toca.
+create or replace function siguelo_contacto_embudo() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  v_embudo uuid;
+  v_defecto uuid;
+  v_actual uuid;
+  v_etapa uuid;
+begin
+  -- La etapa que pone la base del curso cuando no se eligió ninguna.
+  select id into v_defecto from etapas_venta
+  where empresa_id = new.empresa_id and tipo = 'normal'
+  order by orden asc limit 1;
+  if new.etapa_id is distinct from v_defecto then return new; end if;
+
+  -- Embudo del negocio de su primer chat (null = principal, también si no hay negocio).
+  select n.embudo_id into v_embudo
+  from conversaciones c
+  join lineas_whatsapp l on l.id = c.linea_id and l.empresa_id = new.empresa_id
+  join siguelo_lineas sl on sl.linea_id = c.linea_id
+  join siguelo_negocios n on n.id = sl.negocio_id
+  where c.contacto_telefono = new.telefono
+  order by c.creado_en asc
+  limit 1;
+
+  select embudo_id into v_actual from siguelo_etapa_embudo where etapa_id = new.etapa_id;
+  if v_actual is not distinct from v_embudo then return new; end if;
+
+  select e.id into v_etapa
+  from etapas_venta e
+  left join siguelo_etapa_embudo ee on ee.etapa_id = e.id
+  where e.empresa_id = new.empresa_id and e.tipo = 'normal' and ee.embudo_id is not distinct from v_embudo
+  order by e.orden asc
+  limit 1;
+  if v_etapa is not null then
+    new.etapa_id := v_etapa;
+    new.etapa_actualizada_en := now();
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists siguelo_contactos_embudo on contactos;
+create trigger siguelo_contactos_embudo before insert on contactos
+  for each row execute function siguelo_contacto_embudo();

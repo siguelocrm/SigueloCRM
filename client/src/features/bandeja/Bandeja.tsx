@@ -31,6 +31,8 @@ import MiEmpresa from '../mi-empresa/MiEmpresa';
 import Configuracion from '../configuracion/Configuracion';
 import Programados from '../programados/Programados';
 import Seguimiento from '../seguimiento/Seguimiento';
+import Negocios from '../negocios/Negocios';
+import { soloDelNegocio, useNegocios } from '../negocios/useNegocios';
 import Oportunidades from '../oportunidades/Oportunidades';
 import { EstadoVacio, useToast } from '../../components/ui';
 import type { Conversacion, Mensaje, RespuestaAutomatica, RespuestaRapida } from '../../lib/tipos';
@@ -75,6 +77,9 @@ export default function Bandeja() {
   const conv = useConversaciones(usuario);
   const { mensajes, agregarMensaje, actualizarMensaje } = useMensajes(seleccionada?.id ?? null);
   const etapasVenta = useEtapasVenta(usuario?.empresa_id);
+  // Negocios por número (SígueloCRM): en cada chat, solo las respuestas y reglas del negocio de ese número.
+  const negocios = useNegocios(usuario?.empresa_id);
+  const negocioDelChat = seleccionada ? negocios.negocioDeLinea[seleccionada.linea_id] : undefined;
 
   useEffect(() => {
     inicializarSonidoNotificacion();
@@ -205,6 +210,7 @@ export default function Bandeja() {
     if (seccion === 'configuracion') return <Configuracion />;
     if (seccion === 'programados') return <Programados />;
     if (seccion === 'seguimiento') return <Seguimiento />;
+    if (seccion === 'negocios') return <Negocios />;
     if (seccion === 'oportunidades') return <Oportunidades onAbrirChat={abrirChatDeContacto} />;
     return <EstadoVacio icono={seccionActual.icon} titulo={seccionActual.label} texto="Esta sección todavía no está construida." />;
   };
@@ -384,8 +390,8 @@ export default function Bandeja() {
       seleccionada={seleccionada}
       usuario={usuario}
       mensajes={mensajes}
-      respuestasRapidas={respuestasRapidas}
-      respuestasAutomaticas={respuestasAutomaticas}
+      respuestasRapidas={soloDelNegocio(respuestasRapidas, negocios.respuestasDeNegocio, negocioDelChat)}
+      respuestasAutomaticas={soloDelNegocio(respuestasAutomaticas, negocios.reglasDeNegocio, negocioDelChat)}
       etapasVenta={etapasVenta}
       nombreLinea={conv.lineas.length > 1 ? conv.nombreLinea(seleccionada.linea_id) : ''}
       nombreAsignado={seleccionada.agente_asignado_id ? agentes[seleccionada.agente_asignado_id] : undefined}

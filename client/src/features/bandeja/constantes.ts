@@ -14,6 +14,7 @@ import {
   Flame,
   CalendarClock,
   Repeat,
+  Store,
   type LucideIcon,
   Settings,
 } from 'lucide-react';
@@ -44,6 +45,7 @@ export const SECCIONES: Seccion[] = [
   { id: 'reportes', icon: LineChart, label: 'Reportes', grupo: 'Administrar' },
   { id: 'usuarios', icon: UserCog, label: 'Usuarios', grupo: 'Administrar', soloAdmin: true },
   { id: 'conexiones', icon: Smartphone, label: 'Conexiones', grupo: 'Administrar' },
+  { id: 'negocios', icon: Store, label: 'Negocios', grupo: 'Administrar', soloAdmin: true },
   { id: 'mi-empresa', icon: Palette, label: 'Mi empresa', grupo: 'Administrar', soloDueno: true },
   { id: 'configuracion', icon: Settings, label: 'Configuración', grupo: 'Administrar' },
 ];

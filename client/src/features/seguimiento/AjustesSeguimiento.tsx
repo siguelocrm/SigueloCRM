@@ -5,7 +5,7 @@ import { TEXTO_PRIMARIO, TEXTO_SECUNDARIO, TEXTO_TERCIARIO } from '../../lib/tem
 import { etiquetaDeZona, formatearEnZona, listaDeZonas } from '../../lib/zonaHoraria';
 import { Boton, Interruptor, Tarjeta, useToast } from '../../components/ui';
 import type { AjustesSeguimiento as Ajustes } from './tipos';
-import { PIE_EJEMPLO, textoAVariantes, variablesDesconocidas, variantesATexto } from './plantillas';
+import { PIE_EJEMPLO, TEXTO_VARIABLES, textoAVariantes, variablesDesconocidas, variantesATexto } from './plantillas';
 import { claseCampo, estiloArea, estiloCampo } from './estilos';
 
 interface Props {
@@ -108,7 +108,7 @@ export default function AjustesSeguimiento({ ajustes, existe, puedeEditar, onGua
     const variantes = textoAVariantes(pieTexto);
     if (pieActivo && !variantes.length) return toast('Escribe el pie o apágalo.', 'error');
     const desconocidas = variablesDesconocidas(pieTexto);
-    if (desconocidas.length) return toast(`Todavía no existe ${desconocidas.map((v) => `{${v}}`).join(', ')}. Por ahora puedes usar {nombre} y {sucursal}.`, 'error');
+    if (desconocidas.length) return toast(`Esa variable no existe: ${desconocidas.map((v) => `{${v}}`).join(', ')}. Puedes usar ${TEXTO_VARIABLES}.`, 'error');
     setGuardando(true);
     await guardarCambios({ ...valores, zona_horaria: zona, hora_inicio: horaInicio, hora_fin: horaFin, pie: { activo: pieActivo, variantes } }, 'Ajustes guardados');
     setGuardando(false);

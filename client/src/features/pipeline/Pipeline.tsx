@@ -9,6 +9,8 @@ import VistaLista from './VistaLista';
 import GestionEtapas from './GestionEtapas';
 import DetalleLead from '../contactos/DetalleLead';
 import { useCambioEtapa } from './useCambioEtapa';
+import { useFiltroEmbudo } from '../negocios/FiltroEmbudo';
+import { VentanaEtapasDeEmbudo } from '../negocios/EtapasDeEmbudo';
 
 interface PipelineProps {
   onAbrirChat: (telefono: string) => void;
@@ -25,6 +27,7 @@ export default function Pipeline({ onAbrirChat }: PipelineProps) {
   const [contactos, setContactos] = useState<Contacto[]>([]);
   const [etapas, setEtapas] = useState<EtapaVenta[]>([]);
   const [etiquetasDeContacto, setEtiquetasDeContacto] = useState<Record<string, EtiquetaWhatsapp[]>>({});
+  const filtro = useFiltroEmbudo(usuario?.empresa_id);
 
   const cargarContactos = async () => {
     const { data } = await supabase.from('contactos').select('*').order('actualizado_en', { ascending: false }).returns<Contacto[]>();
@@ -81,9 +84,13 @@ export default function Pipeline({ onAbrirChat }: PipelineProps) {
         return porNombre || porNumero;
       });
 
+  // Negocios por número (SígueloCRM): solo el embudo y el número elegidos.
+  const etapasVisibles = filtro.filtrarEtapas(etapas);
+  const contactosVisibles = filtro.filtrarContactos(contactosFiltrados, etapasVisibles);
+
   // Resumen del embudo: solo leads abiertos (ni ganados ni perdidos).
   const tipoDe = (c: Contacto) => etapas.find((e) => e.id === c.etapa_id)?.tipo;
-  const abiertos = contactosFiltrados.filter((c) => tipoDe(c) === 'normal');
+  const abiertos = contactosVisibles.filter((c) => tipoDe(c) === 'normal');
   const totalAbierto = abiertos.reduce((t, c) => t + (c.valor_estimado || 0), 0);
   const ponderado = abiertos.reduce((t, c) => t + (c.valor_estimado || 0) * ((c.probabilidad_cierre ?? 0) / 100), 0);
   const hace3Dias = Date.now() - 3 * 86400000;
@@ -102,6 +109,7 @@ export default function Pipeline({ onAbrirChat }: PipelineProps) {
             <p className="m-0 text-[13.5px]" style={{ color: TEXTO_SECUNDARIO }}>Arrastra una tarjeta para cambiarla de etapa, o mira todo en lista.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {filtro.selector}
             <div className="flex items-center gap-2 rounded-lg px-2.5 py-1.5" style={{ border: `1px solid ${BORDE}`, backgroundColor: 'var(--surface)' }}>
               <Search size={14} style={{ color: TEXTO_SECUNDARIO }} />
               <input
@@ -145,14 +153,26 @@ export default function Pipeline({ onAbrirChat }: PipelineProps) {
 
       <div className="flex-1 min-h-0">
         {vista === 'embudo' ? (
-          <VistaEmbudo contactos={contactosFiltrados} etapas={etapas} etiquetasDeContacto={etiquetasDeContacto} onMoverContacto={moverContacto} onAbrirLead={setLeadAbierto} onAbrirChat={onAbrirChat} />
+          <VistaEmbudo contactos={contactosVisibles} etapas={etapasVisibles} etiquetasDeContacto={etiquetasDeContacto} onMoverContacto={moverContacto} onAbrirLead={setLeadAbierto} onAbrirChat={onAbrirChat} />
         ) : (
-          <VistaLista contactos={contactosFiltrados} etapas={etapas} etiquetasDeContacto={etiquetasDeContacto} onMoverContacto={moverContacto} />
+          <VistaLista contactos={contactosVisibles} etapas={etapasVisibles} etiquetasDeContacto={etiquetasDeContacto} onMoverContacto={moverContacto} />
         )}
       </div>
 
       {dialogo}
-      {mostrarGestionEtapas && <GestionEtapas etapas={etapas} onClose={() => setMostrarGestionEtapas(false)} />}
+      {mostrarGestionEtapas && !filtro.embudoPropio && <GestionEtapas etapas={etapasVisibles} onClose={() => setMostrarGestionEtapas(false)} />}
+      {mostrarGestionEtapas && filtro.embudoPropio && usuario && (
+        <VentanaEtapasDeEmbudo
+          titulo={filtro.embudoPropio.nombre}
+          embudoId={filtro.embudoPropio.id}
+          empresaId={usuario.empresa_id}
+          etapas={etapas}
+          embudoDeEtapa={filtro.datos.embudoDeEtapa}
+          puedeEditar={esAdmin}
+          onCambio={filtro.datos.recargar}
+          onCerrar={() => setMostrarGestionEtapas(false)}
+        />
+      )}
     </div>
   );
 }

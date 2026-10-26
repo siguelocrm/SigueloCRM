@@ -130,6 +130,22 @@ export type ActividadRow = {
   ultimo_manual: string | null;
 };
 
+// Fase 2: cada número trabaja como un negocio con su ficha.
+export type NegocioRow = {
+  id: string;
+  empresa_id: string;
+  nombre: string;
+  sucursal: string | null;
+  direccion: string | null;
+  horario: string | null;
+  info_ia: string;
+  embudo_id: string | null;
+  creado_en: string;
+  actualizado_en: string;
+};
+export type LineaNegocioRow = { linea_id: string; empresa_id: string; negocio_id: string };
+export type BotNegocioRow = { regla_id: string; negocio_id: string };
+
 // Columnas de las tablas del curso que usa el seguimiento.
 export type EtapaVentaRow = {
   id: string;
@@ -167,6 +183,9 @@ export type SigueloDatabase = {
       siguelo_cola: Tabla<ColaRow>;
       siguelo_contador: Tabla<ContadorRow>;
       siguelo_registro: Tabla<RegistroRow>;
+      siguelo_negocios: Tabla<NegocioRow>;
+      siguelo_lineas: Tabla<LineaNegocioRow>;
+      siguelo_bot_negocio: Tabla<BotNegocioRow>;
       etapas_venta: Tabla<EtapaVentaRow>;
       contactos: Tabla<ContactoSigueloRow>;
       conversaciones: Tabla<{ id: string; linea_id: string; contacto_telefono: string; contacto_nombre: string | null; ultima_actividad: string }>;

@@ -212,9 +212,12 @@ export const ajustesPorDefecto = (empresaId: string): AjustesSeguimiento => ({
   pie: { activo: false, variantes: [] },
 });
 
-// Variables que se pueden usar hoy en los textos (las llena el servidor:
-// server/src/siguelo/textos.ts). {sucursal} = el nombre del número en Conexiones.
-export const VARIABLES = ['nombre', 'sucursal'];
+// Variables que se pueden usar en los textos (las llena el servidor:
+// server/src/siguelo/textos.ts y negocios.ts). Salen del nombre del cliente y
+// de la ficha del negocio del número que envía; sin ficha, {sucursal} es el
+// nombre del número en Conexiones.
+export const VARIABLES = ['nombre', 'negocio', 'sucursal', 'direccion', 'horario'];
+export const TEXTO_VARIABLES = VARIABLES.map((v) => `{${v}}`).join(', ');
 export const variablesDesconocidas = (texto: string): string[] =>
   [...new Set([...texto.matchAll(/\{([\p{L}_]+)\}/gu)].map((m) => m[1].toLowerCase()))].filter((v) => !VARIABLES.includes(v));
 

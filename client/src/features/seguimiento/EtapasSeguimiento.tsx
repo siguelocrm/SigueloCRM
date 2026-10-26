@@ -6,7 +6,8 @@ import { Boton, Interruptor, Tarjeta, useToast } from '../../components/ui';
 import Etiqueta from './Etiqueta';
 import type { EtapaVenta } from '../../lib/tipos';
 import type { EtapaSeguimiento, Modo, Secuencia } from './tipos';
-import { PLANTILLAS, configVacia, copia, textoAVariantes, variablesDesconocidas, variantesATexto } from './plantillas';
+import { PLANTILLAS, TEXTO_VARIABLES, configVacia, copia, textoAVariantes, variablesDesconocidas, variantesATexto } from './plantillas';
+import type { Embudo, Negocio } from '../negocios/useNegocios';
 import { claseCampo, describirHoras, estiloArea, estiloCampo } from './estilos';
 
 // Mientras editas, cada paso guarda las horas y las variantes como texto (así
@@ -135,26 +136,54 @@ function EditorSecuencia({ titulo, ayuda, icono: Icono, sec, onCambiar, esReacti
 
 interface Props {
   etapas: EtapaVenta[];
-  configs: Record<string, EtapaSeguimiento>;
+  // Todas las configuraciones: las generales (negocio_id null) y las propias de cada negocio.
+  configs: EtapaSeguimiento[];
+  negocios: Negocio[];
+  embudos: Embudo[];
+  embudoDeEtapa: Record<string, string>;
   empresaId: string;
   puedeEditar: boolean;
   onGuardado: () => void;
 }
 
-export default function EtapasSeguimiento({ etapas, configs, empresaId, puedeEditar, onGuardado }: Props) {
+export default function EtapasSeguimiento({ etapas, configs, negocios, embudos, embudoDeEtapa, empresaId, puedeEditar, onGuardado }: Props) {
   const toast = useToast();
+  const [negocioId, setNegocioId] = useState(''); // '' = los textos generales (para todos)
   const [abierta, setAbierta] = useState<string | null>(null);
   const [borrador, setBorrador] = useState<Borrador | null>(null);
+  const [personalizando, setPersonalizando] = useState(false);
   const [guardando, setGuardando] = useState(false);
 
+  const negocio = negocios.find((n) => n.id === negocioId) ?? null;
+  const general = (etapaId: string) => configs.find((c) => c.etapa_id === etapaId && !c.negocio_id);
+  const propia = (etapaId: string) => (negocioId ? configs.find((c) => c.etapa_id === etapaId && c.negocio_id === negocioId) : undefined);
+  // La que se edita en la vista elegida: la general, o la propia del negocio.
+  const enEdicion = (etapaId: string) => (negocioId ? propia(etapaId) : general(etapaId));
+  const embudoDe = (etapaId: string) => embudoDeEtapa[etapaId] || '';
+
+  // Etapas agrupadas por embudo. Con un negocio elegido, solo las del embudo que usa.
+  const grupos = [{ id: '', nombre: 'Embudo principal' }, ...embudos.map((e) => ({ id: e.id, nombre: e.nombre }))]
+    .filter((g) => !negocio || (negocio.embudo_id ?? '') === g.id)
+    .map((g) => ({ ...g, etapas: etapas.filter((e) => embudoDe(e.id) === g.id) }))
+    .filter((g) => g.etapas.length);
+
+  const cerrar = () => {
+    setAbierta(null);
+    setBorrador(null);
+    setPersonalizando(false);
+  };
+
+  const elegirNegocio = (id: string) => {
+    setNegocioId(id);
+    cerrar();
+  };
+
   const abrir = (etapa: EtapaVenta) => {
-    if (abierta === etapa.id) {
-      setAbierta(null);
-      setBorrador(null);
-      return;
-    }
+    if (abierta === etapa.id) return cerrar();
     setAbierta(etapa.id);
-    setBorrador(aBorrador(configs[etapa.id] ?? configVacia(etapa.id, empresaId)));
+    setPersonalizando(false);
+    // Un negocio sin textos propios en la etapa ve los generales (para copiarlos con "Personalizar").
+    setBorrador(aBorrador(enEdicion(etapa.id) ?? general(etapa.id) ?? configVacia(etapa.id, empresaId)));
   };
 
   const cargarPlantilla = (id: string) => {
@@ -178,9 +207,7 @@ export default function EtapasSeguimiento({ etapas, configs, empresaId, puedeEdi
     const dias = numero(borrador.dias || '0');
     if (borrador.destino && (Number.isNaN(dias) || dias < 0)) return toast('Escribe los días con un número (por ejemplo 7).', 'error');
     const desconocidas = variablesDesconocidas([...recordatorios.pasos, ...reactivacion.pasos].flatMap((p) => p.variantes).join('\n'));
-    if (desconocidas.length) {
-      return toast(`Todavía no existe ${desconocidas.map((v) => `{${v}}`).join(', ')}. Por ahora puedes usar {nombre} y {sucursal}.`, 'error');
-    }
+    if (desconocidas.length) return toast(`Esa variable no existe: ${desconocidas.map((v) => `{${v}}`).join(', ')}. Puedes usar ${TEXTO_VARIABLES}.`, 'error');
     setGuardando(true);
     const fila = {
       recordatorios,
@@ -188,132 +215,166 @@ export default function EtapasSeguimiento({ etapas, configs, empresaId, puedeEdi
       al_terminar: { etapa_id: borrador.destino || null, dias: borrador.destino ? dias : 0 },
       actualizado_en: new Date().toISOString(),
     };
-    const actual = configs[etapa.id];
+    const actual = enEdicion(etapa.id);
     const { error } = actual?.id
       ? await supabase.from('siguelo_etapas').update(fila).eq('id', actual.id)
-      : await supabase.from('siguelo_etapas').insert({ ...fila, etapa_id: etapa.id, empresa_id: empresaId, negocio_id: null });
+      : await supabase.from('siguelo_etapas').insert({ ...fila, etapa_id: etapa.id, empresa_id: empresaId, negocio_id: negocioId || null });
     setGuardando(false);
     if (error) return toast(`No se pudo guardar: ${error.message}`, 'error');
-    toast(`Mensajes de "${etapa.nombre}" guardados`, 'ok');
+    toast(negocio ? `Textos de "${etapa.nombre}" para ${negocio.nombre} guardados` : `Mensajes de "${etapa.nombre}" guardados`, 'ok');
+    setPersonalizando(false);
     onGuardado();
   };
 
   const quitar = async (etapa: EtapaVenta) => {
-    if (!window.confirm(`¿Quitar todos los mensajes automáticos de "${etapa.nombre}"? Lo que esté en la cola para esta etapa se cancela.`)) return;
-    const actual = configs[etapa.id];
+    const pregunta = negocio
+      ? `¿Quitar los textos propios de ${negocio.nombre} en "${etapa.nombre}"? Vuelve a usar los generales.`
+      : `¿Quitar todos los mensajes automáticos de "${etapa.nombre}"? Lo que esté en la cola para esta etapa se cancela.`;
+    if (!window.confirm(pregunta)) return;
+    const actual = enEdicion(etapa.id);
     if (!actual?.id) return;
     const { error } = await supabase.from('siguelo_etapas').delete().eq('id', actual.id);
     if (error) return toast(`No se pudo quitar: ${error.message}`, 'error');
-    setAbierta(null);
-    setBorrador(null);
-    toast(`"${etapa.nombre}" ya no tiene mensajes automáticos`, 'ok');
+    cerrar();
+    toast(negocio ? `${negocio.nombre} vuelve a usar los textos generales en "${etapa.nombre}"` : `"${etapa.nombre}" ya no tiene mensajes automáticos`, 'ok');
     onGuardado();
   };
 
   const nombreEtapa = (id: string | null) => etapas.find((e) => e.id === id)?.nombre;
+
+  const tarjeta = (etapa: EtapaVenta) => {
+    const cfgPropia = propia(etapa.id);
+    const cfg = enEdicion(etapa.id) ?? (negocioId ? general(etapa.id) : undefined);
+    const usaGenerales = !!negocioId && !cfgPropia;
+    const abiertaAhora = abierta === etapa.id && borrador;
+    const rec = resumenSec(cfg?.recordatorios);
+    const react = resumenSec(cfg?.reactivacion);
+    const destino = cfg?.al_terminar?.etapa_id ? nombreEtapa(cfg.al_terminar.etapa_id) : null;
+    const perdida = etapa.tipo === 'perdida';
+    // Un negocio que usa los generales los ve sin poder cambiarlos, hasta que pulsa "Personalizar".
+    const bloqueado = !puedeEditar || (usaGenerales && !personalizando);
+    return (
+      <Tarjeta key={etapa.id} className="flex flex-col">
+        <button onClick={() => abrir(etapa)} className="flex items-center gap-3 px-4 py-3 text-left" aria-expanded={!!abiertaAhora}>
+          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: colorEtiquetaWhatsapp(etapa.color) }} />
+          <div className="flex-1 min-w-0">
+            <div className="text-[14px] font-semibold" style={{ color: TEXTO_PRIMARIO }}>{etapa.nombre}</div>
+            <div className="flex flex-wrap gap-1.5 mt-1">
+              {perdida ? (
+                <Etiqueta color="var(--fg-3)" icono={Ban}>Nunca envía mensajes</Etiqueta>
+              ) : !rec && !react && !destino ? (
+                <span className="text-[12px]" style={{ color: TEXTO_TERCIARIO }}>Sin mensajes automáticos</span>
+              ) : (
+                <>
+                  {negocioId && <Etiqueta color={cfgPropia ? 'var(--ok)' : 'var(--fg-2)'}>{cfgPropia ? 'Textos propios' : 'Usa los generales'}</Etiqueta>}
+                  {rec && <Etiqueta icono={Bell}>Recordatorios: {rec}</Etiqueta>}
+                  {react && <Etiqueta color="var(--warn)" icono={RotateCcw}>Reactivación: {react}</Etiqueta>}
+                  {destino && <Etiqueta color="var(--fg-2)" icono={ArrowRight}>Luego pasa a {destino} ({cfg!.al_terminar.dias} d)</Etiqueta>}
+                </>
+              )}
+            </div>
+          </div>
+          <ChevronDown size={16} style={{ color: TEXTO_TERCIARIO, transform: abiertaAhora ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
+        </button>
+
+        {abiertaAhora && (
+          <div className="flex flex-col gap-3 px-4 pb-4" style={{ borderTop: `1px solid ${BORDE}` }}>
+            {perdida ? (
+              <p className="m-0 pt-3 text-[12.5px]" style={{ color: TEXTO_SECUNDARIO }}>
+                Es una etapa de venta perdida: a los contactos que están acá nunca se les envía nada automático.
+              </p>
+            ) : (
+              <>
+                {usaGenerales && !personalizando && (
+                  <div className="flex items-center gap-2 flex-wrap pt-3 text-[12.5px]" style={{ color: TEXTO_SECUNDARIO }}>
+                    <span className="flex-1 min-w-[200px]">{negocio!.nombre} usa los textos generales en esta etapa.</span>
+                    {puedeEditar && <Boton tamano="sm" onClick={() => setPersonalizando(true)}>Personalizar para {negocio!.nombre}</Boton>}
+                  </div>
+                )}
+                {!bloqueado && (
+                  <label className="flex items-center gap-2 pt-3 text-[12.5px] flex-wrap" style={{ color: TEXTO_SECUNDARIO }}>
+                    Cargar un ejemplo:
+                    <select value="" onChange={(e) => cargarPlantilla(e.target.value)} className={`${claseCampo} w-full sm:w-auto max-w-full`} style={{ ...estiloCampo, height: 32 }}>
+                      <option value="">Elegir…</option>
+                      {PLANTILLAS.map((p) => (
+                        <option key={p.id} value={p.id}>{p.nombre} — {p.descripcion}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <EditorSecuencia
+                  titulo="Recordatorios"
+                  ayuda="Salen solos mientras el contacto está en esta etapa. Si respondió, esperan hasta que le escribas."
+                  icono={Bell}
+                  sec={borrador.recordatorios}
+                  onCambiar={(s) => setBorrador({ ...borrador, recordatorios: s })}
+                  deshabilitado={bloqueado}
+                />
+                <EditorSecuencia
+                  titulo="Reactivación"
+                  ayuda="Empieza cuando le escribes a mano y se detiene apenas responde. Como mucho un ciclo cada 24 h (se cambia en Ajustes)."
+                  icono={RotateCcw}
+                  sec={borrador.reactivacion}
+                  onCambiar={(s) => setBorrador({ ...borrador, reactivacion: s })}
+                  esReactivacion
+                  deshabilitado={bloqueado}
+                />
+                <div className="flex items-center gap-2 flex-wrap rounded-xl p-3.5 text-[12.5px]" style={{ border: `1px solid ${BORDE}`, color: TEXTO_SECUNDARIO }}>
+                  <ArrowRight size={16} color="var(--accent)" />
+                  Al terminar los recordatorios sin respuesta, pasar a
+                  <select value={borrador.destino} disabled={bloqueado} onChange={(e) => setBorrador({ ...borrador, destino: e.target.value })} className={claseCampo} style={{ ...estiloCampo, height: 32 }}>
+                    <option value="">(no pasar a otra etapa)</option>
+                    {etapas.filter((e) => e.id !== etapa.id && embudoDe(e.id) === embudoDe(etapa.id)).map((e) => <option key={e.id} value={e.id}>{e.nombre}</option>)}
+                  </select>
+                  {borrador.destino && (
+                    <>
+                      después de
+                      <input value={borrador.dias} disabled={bloqueado} onChange={(e) => setBorrador({ ...borrador, dias: e.target.value })} inputMode="decimal" aria-label="Días" className={`${claseCampo} w-16 text-right`} style={{ ...estiloCampo, height: 32 }} />
+                      días sin conversación
+                    </>
+                  )}
+                </div>
+                {!bloqueado && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Boton variante="primario" onClick={() => guardar(etapa)} disabled={guardando}>{guardando ? 'Guardando…' : 'Guardar'}</Boton>
+                    {enEdicion(etapa.id) && (
+                      <Boton variante="peligro" icono={Trash2} onClick={() => quitar(etapa)}>{negocio ? 'Volver a los generales' : 'Quitar mensajes'}</Boton>
+                    )}
+                    {usaGenerales && personalizando && <Boton variante="fantasma" onClick={() => abrir(etapa)}>Cancelar</Boton>}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </Tarjeta>
+    );
+  };
 
   return (
     <div className="flex flex-col gap-2.5">
       <p className="m-0 text-[12.5px] leading-relaxed" style={{ color: TEXTO_SECUNDARIO }}>
         Cada etapa del embudo tiene sus propios mensajes. <b>Recordatorios</b>: salen solos desde que el contacto entra a la etapa (y
         esperan si hubo conversación hace poco). <b>Reactivación</b>: sale cuando tú le escribes y no responde. Escribe varias formas de decir
-        cada mensaje separándolas con una línea <code>---</code>; se elige una al azar. <code>{'{nombre}'}</code> se cambia por su nombre y{' '}
-        <code>{'{sucursal}'}</code> por el nombre del número que lo envía (el que tiene en Conexiones).
+        cada mensaje separándolas con una línea <code>---</code>; se elige una al azar. Puedes usar {TEXTO_VARIABLES}: se llenan con el
+        nombre del cliente y con la ficha del negocio del número que envía.
       </p>
-      {etapas.map((etapa) => {
-        const cfg = configs[etapa.id];
-        const abiertaAhora = abierta === etapa.id && borrador;
-        const rec = resumenSec(cfg?.recordatorios);
-        const react = resumenSec(cfg?.reactivacion);
-        const destino = cfg?.al_terminar?.etapa_id ? nombreEtapa(cfg.al_terminar.etapa_id) : null;
-        const perdida = etapa.tipo === 'perdida';
-        return (
-          <Tarjeta key={etapa.id} className="flex flex-col">
-            <button onClick={() => abrir(etapa)} className="flex items-center gap-3 px-4 py-3 text-left" aria-expanded={!!abiertaAhora}>
-              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: colorEtiquetaWhatsapp(etapa.color) }} />
-              <div className="flex-1 min-w-0">
-                <div className="text-[14px] font-semibold" style={{ color: TEXTO_PRIMARIO }}>{etapa.nombre}</div>
-                <div className="flex flex-wrap gap-1.5 mt-1">
-                  {perdida ? (
-                    <Etiqueta color="var(--fg-3)" icono={Ban}>Nunca envía mensajes</Etiqueta>
-                  ) : !rec && !react && !destino ? (
-                    <span className="text-[12px]" style={{ color: TEXTO_TERCIARIO }}>Sin mensajes automáticos</span>
-                  ) : (
-                    <>
-                      {rec && <Etiqueta icono={Bell}>Recordatorios: {rec}</Etiqueta>}
-                      {react && <Etiqueta color="var(--warn)" icono={RotateCcw}>Reactivación: {react}</Etiqueta>}
-                      {destino && <Etiqueta color="var(--fg-2)" icono={ArrowRight}>Luego pasa a {destino} ({cfg!.al_terminar.dias} d)</Etiqueta>}
-                    </>
-                  )}
-                </div>
-              </div>
-              <ChevronDown size={16} style={{ color: TEXTO_TERCIARIO, transform: abiertaAhora ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
-            </button>
-
-            {abiertaAhora && (
-              <div className="flex flex-col gap-3 px-4 pb-4" style={{ borderTop: `1px solid ${BORDE}` }}>
-                {perdida ? (
-                  <p className="m-0 pt-3 text-[12.5px]" style={{ color: TEXTO_SECUNDARIO }}>
-                    Es una etapa de venta perdida: a los contactos que están acá nunca se les envía nada automático.
-                  </p>
-                ) : (
-                  <>
-                    {puedeEditar && (
-                      <label className="flex items-center gap-2 pt-3 text-[12.5px] flex-wrap" style={{ color: TEXTO_SECUNDARIO }}>
-                        Cargar un ejemplo:
-                        <select value="" onChange={(e) => cargarPlantilla(e.target.value)} className={`${claseCampo} w-full sm:w-auto max-w-full`} style={{ ...estiloCampo, height: 32 }}>
-                          <option value="">Elegir…</option>
-                          {PLANTILLAS.map((p) => (
-                            <option key={p.id} value={p.id}>{p.nombre} — {p.descripcion}</option>
-                          ))}
-                        </select>
-                      </label>
-                    )}
-                    <EditorSecuencia
-                      titulo="Recordatorios"
-                      ayuda="Salen solos mientras el contacto está en esta etapa. Si respondió, esperan hasta que le escribas."
-                      icono={Bell}
-                      sec={borrador.recordatorios}
-                      onCambiar={(s) => setBorrador({ ...borrador, recordatorios: s })}
-                      deshabilitado={!puedeEditar}
-                    />
-                    <EditorSecuencia
-                      titulo="Reactivación"
-                      ayuda="Empieza cuando le escribes a mano y se detiene apenas responde. Como mucho un ciclo cada 24 h (se cambia en Ajustes)."
-                      icono={RotateCcw}
-                      sec={borrador.reactivacion}
-                      onCambiar={(s) => setBorrador({ ...borrador, reactivacion: s })}
-                      esReactivacion
-                      deshabilitado={!puedeEditar}
-                    />
-                    <div className="flex items-center gap-2 flex-wrap rounded-xl p-3.5 text-[12.5px]" style={{ border: `1px solid ${BORDE}`, color: TEXTO_SECUNDARIO }}>
-                      <ArrowRight size={16} color="var(--accent)" />
-                      Al terminar los recordatorios sin respuesta, pasar a
-                      <select value={borrador.destino} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, destino: e.target.value })} className={claseCampo} style={{ ...estiloCampo, height: 32 }}>
-                        <option value="">(no pasar a otra etapa)</option>
-                        {etapas.filter((e) => e.id !== etapa.id).map((e) => <option key={e.id} value={e.id}>{e.nombre}</option>)}
-                      </select>
-                      {borrador.destino && (
-                        <>
-                          después de
-                          <input value={borrador.dias} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, dias: e.target.value })} inputMode="decimal" aria-label="Días" className={`${claseCampo} w-16 text-right`} style={{ ...estiloCampo, height: 32 }} />
-                          días sin conversación
-                        </>
-                      )}
-                    </div>
-                    {puedeEditar && (
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Boton variante="primario" onClick={() => guardar(etapa)} disabled={guardando}>{guardando ? 'Guardando…' : 'Guardar'}</Boton>
-                        {cfg && <Boton variante="peligro" icono={Trash2} onClick={() => quitar(etapa)}>Quitar mensajes</Boton>}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-          </Tarjeta>
-        );
-      })}
+      {negocios.length > 0 && (
+        <label className="flex items-center gap-2 flex-wrap text-[12.5px] font-semibold" style={{ color: 'var(--fg-2)' }}>
+          Textos para:
+          <select value={negocioId} onChange={(e) => elegirNegocio(e.target.value)} className={`${claseCampo} font-normal max-w-full`} style={{ ...estiloCampo, height: 32 }}>
+            <option value="">Todos los negocios (textos generales)</option>
+            {negocios.map((n) => <option key={n.id} value={n.id}>{n.nombre}</option>)}
+          </select>
+          {negocio && <span className="font-normal" style={{ color: TEXTO_TERCIARIO }}>Lo que no personalices usa los textos generales.</span>}
+        </label>
+      )}
+      {grupos.map((g) => (
+        <section key={g.id || 'principal'} className="flex flex-col gap-2.5">
+          {(embudos.length > 0 || negocio) && <h2 className="m-0 mt-1 text-[13px] font-semibold" style={{ color: TEXTO_SECUNDARIO }}>{g.nombre}</h2>}
+          {g.etapas.map(tarjeta)}
+        </section>
+      ))}
     </div>
   );
 }

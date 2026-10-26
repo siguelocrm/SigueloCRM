@@ -4,6 +4,7 @@ import type { PasoRespuestaAutomatica, RespuestaAutomaticaRow } from '../types/d
 import { obtenerEmpresaIdDeLinea } from './empresa.js';
 import { continuarFlujo, iniciarFlujo } from './flujo.js';
 import { aplicarVariables, palabraQueCoincide } from './coincidencia.js';
+import { reglasDelNumero } from '../siguelo/negocios.js';
 
 const espera = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -37,7 +38,8 @@ export async function intentarResponderAutomaticamente(
 
   if (error || !reglas || reglas.length === 0) return;
 
-  const regla = await elegirRegla(reglas, conversacionId, textoCliente);
+  // Negocios por número (SígueloCRM): solo las reglas de todos y las del negocio de esta línea.
+  const regla = await elegirRegla(await reglasDelNumero(reglas, lineaId), conversacionId, textoCliente);
   if (!regla) return;
   if (regla.tipo !== 'flujo' && regla.pasos.length === 0) return;
   if (regla.tipo === 'flujo' && !regla.flujo) return;
