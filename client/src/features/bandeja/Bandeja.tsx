@@ -30,6 +30,7 @@ import Usuarios from '../usuarios/Usuarios';
 import MiEmpresa from '../mi-empresa/MiEmpresa';
 import Configuracion from '../configuracion/Configuracion';
 import Programados from '../programados/Programados';
+import Seguimiento from '../seguimiento/Seguimiento';
 import Oportunidades from '../oportunidades/Oportunidades';
 import { EstadoVacio, useToast } from '../../components/ui';
 import type { Conversacion, Mensaje, RespuestaAutomatica, RespuestaRapida } from '../../lib/tipos';
@@ -203,6 +204,7 @@ export default function Bandeja() {
     if (seccion === 'mi-empresa') return <MiEmpresa />;
     if (seccion === 'configuracion') return <Configuracion />;
     if (seccion === 'programados') return <Programados />;
+    if (seccion === 'seguimiento') return <Seguimiento />;
     if (seccion === 'oportunidades') return <Oportunidades onAbrirChat={abrirChatDeContacto} />;
     return <EstadoVacio icono={seccionActual.icon} titulo={seccionActual.label} texto="Esta sección todavía no está construida." />;
   };

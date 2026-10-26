@@ -1,5 +1,6 @@
 import { iniciarProgramadorDeMensajes } from './whatsapp/programados.js';
 import { iniciarCierreAutomatico } from './whatsapp/cierre-automatico.js';
+import { iniciarSeguimiento } from './siguelo/index.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,6 +67,7 @@ app.listen(env.port, () => {
 
 iniciarProgramadorDeMensajes();
 iniciarCierreAutomatico();
+iniciarSeguimiento();
 
 // Reconecta automáticamente todas las líneas que ya tenían una sesión guardada
 // en disco (no hace falta volver a escanear cada vez que reiniciás el backend).
