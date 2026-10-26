@@ -2,7 +2,7 @@
 
 Este archivo es para ti y para cualquier IA que siga el trabajo (otra cuenta de Claude u otra sesión).
 Se actualiza al terminar cada fase. **Última actualización (26/10/2026): las Fases 1 a 5 están terminadas, más la IA que
-adapta el seguimiento y el Asistente. Las Fases 3 en adelante todavía no tienen commit (mira `git log`).**
+adapta el seguimiento y el Asistente. Todo está guardado en git (commit `644d2d9`), sin push.**
 
 ---
 
@@ -69,12 +69,12 @@ Con otra IA que no sea Claude sirve lo mismo, siempre que pueda leer y editar lo
 |---|---|---|
 | 1 | Seguimiento: recordatorios y reactivación por etapa, cola segura (horario, tope y pausas **por número**) | ✅ commit `e6edea0` |
 | 2 | Negocios por número: ficha, embudos propios, respuestas rápidas, bot y textos por negocio | ✅ commit `1d877ff` |
-| 3 | IA que responde con la ficha: respuestas, respuestas rápidas, avisos a tu WhatsApp, pase entre sucursales, grupos | ✅ (sin commit todavía) |
-| 4a | Palabras que cambian de etapa ("stop", "ya estoy"), frases parecidas para revisar, frases tuyas y deshacer | ✅ (sin commit todavía) |
-| 4b | Citas con sus mensajes (antes y después de la cita) | ✅ (sin commit todavía) |
-| 5 | Inscripción con pago: QR, la IA lee el comprobante, controles, datos a la ficha, link del grupo, reporte | ✅ (sin commit todavía) |
-| + | La IA adapta cada recordatorio y reactivación a la conversación | ✅ (sin commit todavía) |
-| + | Asistente: le preguntas y te propone cambios de configuración ("Aplicar") | ✅ (sin commit todavía) |
+| 3 | IA que responde con la ficha: respuestas, respuestas rápidas, avisos a tu WhatsApp, pase entre sucursales, grupos | ✅ commit `644d2d9` |
+| 4a | Palabras que cambian de etapa ("stop", "ya estoy"), frases parecidas para revisar, frases tuyas y deshacer | ✅ commit `644d2d9` |
+| 4b | Citas con sus mensajes (antes y después de la cita) | ✅ commit `644d2d9` |
+| 5 | Inscripción con pago: QR, la IA lee el comprobante, controles, datos a la ficha, link del grupo, reporte | ✅ commit `644d2d9` |
+| + | La IA adapta cada recordatorio y reactivación a la conversación | ✅ commit `644d2d9` |
+| + | Asistente: le preguntas y te propone cambios de configuración ("Aplicar") | ✅ commit `644d2d9` |
 
 ---
 
