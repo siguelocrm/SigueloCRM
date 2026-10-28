@@ -19,7 +19,7 @@ export default function ClubInscripcion({ info, puedeEditar, onCambio }: { info:
     setProbando(true);
     const r = await llamarBackend('/siguelo/club/conectar', f).catch(() => ({ ok: false, error: 'No hay conexión con el servidor del CRM (¿está prendido?).' }));
     setProbando(false);
-    if (!r.ok) return toast(r.error || 'No se pudo conectar.', 'error');
+    if (!r.ok || !('data' in r)) return toast(r.error || 'No se pudo conectar.', 'error');
     toast(`Conectado como "${r.data.vendedor}"`, 'ok');
     setF({ url: '', clave_publica: '', usuario: '', contrasena: '' });
     onCambio();
