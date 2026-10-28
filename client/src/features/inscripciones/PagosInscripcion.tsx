@@ -27,11 +27,11 @@ export default function PagosInscripcion({ cursos, zona, puedeEditar, onAbrirCha
   const cargar = useCallback(async () => {
     let q = supabase
       .from('siguelo_pagos')
-      .select('id, contacto_id, conversacion_id, telefono, curso_id, media_url, estado, lectura, controles, motivo, monto, transaccion, pagado_en, datos, accion, creado_en, actualizado_en, contactos(nombre)')
+      .select('*, contactos(nombre)')
       .neq('estado', 'no_es')
       .order('creado_en', { ascending: false })
       .limit(100);
-    if (filtro === 'atender') q = q.in('estado', ['revisar', 'leyendo', 'datos']);
+    if (filtro === 'atender') q = q.in('estado', ['revisar', 'leyendo', 'datos', 'reservado']);
     const { data } = await q.returns<Pago[]>();
     setPagos(data || []);
   }, [filtro]);
@@ -50,7 +50,15 @@ export default function PagosInscripcion({ cursos, zona, puedeEditar, onAbrirCha
       const r = window.prompt('¿Por qué se rechaza? (se lo decimos al cliente)', 'el pago no llegó a nuestra cuenta');
       if (r === null) return;
       motivo = r.trim() || 'no pudimos validar los datos del pago';
-    } else if (!window.confirm(p.estado === 'datos' ? '¿Mandarle el link del grupo sin esperar sus datos?' : '¿Confirmar este pago? Se le avisa al cliente y se le piden sus datos.')) return;
+    } else {
+      const delClub = cursos.find((k) => k.id === curso)?.club;
+      const pregunta =
+        p.estado === 'reservado' ? '¿Mandarle el link del grupo ya, sin esperar que confirmes la reserva en tu sistema del club?'
+        : p.estado === 'datos' && delClub ? '¿Volver a intentar dejar la reserva en tu sistema del club con los datos que tiene?'
+        : p.estado === 'datos' ? '¿Mandarle el link del grupo sin esperar sus datos?'
+        : '¿Confirmar este pago? Se le avisa al cliente y se le piden sus datos.';
+      if (!window.confirm(pregunta)) return;
+    }
     const { error } = await supabase.from('siguelo_pagos').update({ accion, curso_id: curso, motivo, actualizado_en: new Date().toISOString() }).eq('id', p.id);
     if (error) return toast(`No se pudo: ${error.message}`, 'error');
     toast(accion === 'confirmar' ? 'Listo: el servidor lo confirma en unos segundos' : 'Listo: el servidor le avisa al cliente', 'ok');
@@ -119,6 +127,14 @@ export default function PagosInscripcion({ cursos, zona, puedeEditar, onAbrirCha
                 {Object.keys(p.datos || {}).length > 0 && (
                   <span className="text-[12px]" style={{ color: TEXTO_TERCIARIO }}>Datos recibidos: {Object.values(p.datos).join(' · ')}</span>
                 )}
+                {p.club && (p.club.tutor || p.club.estudiantes.length > 0) && (
+                  <span className="text-[12px]" style={{ color: TEXTO_TERCIARIO }}>
+                    Para el club: {[p.club.tutor && `tutor ${p.club.tutor}`, ...p.club.estudiantes.map((e) => [e.nombre, e.fecha_nacimiento, e.curso_texto].filter(Boolean).join(', '))].filter(Boolean).join(' · ')}
+                  </span>
+                )}
+                {p.estado === 'reservado' && (
+                  <span className="text-[12px]" style={{ color: 'var(--accent)' }}>Confírmala en tu sistema del club → Reservas de vendedores. Al confirmarla, le llega el link solo.</span>
+                )}
                 <div className="flex gap-1.5 flex-wrap items-center mt-1">
                   {puedeEditar && !pendiente && (p.estado === 'revisar' || p.estado === 'rechazado') && (
                     <>
@@ -132,7 +148,9 @@ export default function PagosInscripcion({ cursos, zona, puedeEditar, onAbrirCha
                       {p.estado === 'revisar' && <Boton tamano="sm" variante="peligro" icono={X} onClick={() => pedir(p, 'rechazar')}>Rechazar</Boton>}
                     </>
                   )}
-                  {puedeEditar && !pendiente && p.estado === 'datos' && <Boton tamano="sm" onClick={() => pedir(p, 'confirmar')}>Mandarle el link ya</Boton>}
+                  {puedeEditar && !pendiente && (p.estado === 'datos' || p.estado === 'reservado') && (
+                    <Boton tamano="sm" onClick={() => pedir(p, 'confirmar')}>{p.estado === 'datos' && curso?.club ? 'Volver a intentar la reserva' : 'Mandarle el link ya'}</Boton>
+                  )}
                   {onAbrirChat && <Boton tamano="sm" variante="fantasma" onClick={() => onAbrirChat(p.telefono)}>Abrir chat</Boton>}
                 </div>
               </div>

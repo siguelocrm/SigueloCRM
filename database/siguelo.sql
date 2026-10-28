@@ -795,7 +795,7 @@ create table if not exists siguelo_pagos (
   mensaje_id uuid unique,
   media_url text,
   estado text not null default 'leyendo'
-    check (estado in ('leyendo', 'no_es', 'revisar', 'rechazado', 'datos', 'inscrito')),
+    check (estado in ('leyendo', 'no_es', 'revisar', 'rechazado', 'datos', 'reservado', 'inscrito')),
   -- Lo que leyó la IA y cada control ({ codigo, nombre, ok, detalle }).
   lectura jsonb,
   controles jsonb not null default '[]'::jsonb,
@@ -820,10 +820,10 @@ create index if not exists siguelo_pagos_empresa_idx on siguelo_pagos (empresa_i
 create index if not exists siguelo_pagos_transaccion_idx on siguelo_pagos (empresa_id, transaccion) where transaccion is not null;
 create index if not exists siguelo_pagos_conversacion_idx on siguelo_pagos (conversacion_id);
 
--- La IA también manda el QR del curso y los mensajes del pago.
+-- La IA también manda el QR del curso, los mensajes del pago y activa reglas del bot (sección 27).
 alter table siguelo_ia_salida drop constraint if exists siguelo_ia_salida_origen_check;
 alter table siguelo_ia_salida add constraint siguelo_ia_salida_origen_check
-  check (origen in ('respuesta', 'respuesta_rapida', 'grupo', 'pase', 'aviso', 'qr', 'pago'));
+  check (origen in ('respuesta', 'respuesta_rapida', 'grupo', 'pase', 'aviso', 'qr', 'pago', 'bot'));
 
 -- ---------- 23. Permisos de la Fase 5 ----------
 alter table siguelo_cursos enable row level security;
@@ -923,3 +923,78 @@ create policy "siguelo_asistente_select" on siguelo_asistente for select
 drop policy if exists "siguelo_asistente_delete" on siguelo_asistente;
 create policy "siguelo_asistente_delete" on siguelo_asistente for delete
   using (empresa_id = (select empresa_id from usuario_actual()) and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[]));
+
+-- ---------- 27. Cuándo usa la IA cada respuesta rápida o regla del bot ----------
+-- tipo 'respuesta' (respuestas_rapidas) o 'bot' (respuestas_automaticas). Con "cuándo", la IA
+-- manda esa respuesta rápida en esa situación, o activa esa regla o flujo del bot
+-- (además de sus palabras clave).
+create table if not exists siguelo_cuando_ia (
+  empresa_id uuid not null references empresas (id) on delete cascade,
+  tipo text not null check (tipo in ('respuesta', 'bot')),
+  item_id uuid not null,
+  cuando text not null default '',
+  actualizado_en timestamptz not null default now(),
+  primary key (tipo, item_id)
+);
+
+alter table siguelo_cuando_ia enable row level security;
+drop policy if exists "siguelo_cuando_ia_select" on siguelo_cuando_ia;
+create policy "siguelo_cuando_ia_select" on siguelo_cuando_ia for select
+  using (empresa_id = (select empresa_id from usuario_actual()));
+drop policy if exists "siguelo_cuando_ia_admin" on siguelo_cuando_ia;
+create policy "siguelo_cuando_ia_admin" on siguelo_cuando_ia for all
+  using (empresa_id = (select empresa_id from usuario_actual()) and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[]))
+  with check (empresa_id = (select empresa_id from usuario_actual()) and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[]));
+
+-- =========================================================
+-- Tu sistema del club (Infinity Chess Gestión)
+-- La IA consulta en vivo los horarios, cupos y precios de cada sucursal (con las
+-- funciones públicas del sistema), y cada inscripción pagada queda como
+-- "Reserva de vendedor" para que la confirmes con un clic. El CRM entra como un
+-- vendedor (una cuenta que creas tú en tu sistema): solo puede hacer lo que hace
+-- un vendedor.
+-- =========================================================
+
+-- ---------- 28. Conexión con el sistema del club ----------
+-- Dirección y clave pública de su Supabase, y usuario/contraseña del vendedor del CRM.
+-- Sin políticas: solo la lee el servidor (la página nunca ve la contraseña).
+create table if not exists siguelo_club (
+  empresa_id uuid primary key references empresas (id) on delete cascade,
+  url text not null,
+  clave_publica text not null,
+  usuario text not null,
+  contrasena text not null,
+  actualizado_en timestamptz not null default now()
+);
+alter table siguelo_club enable row level security;
+
+-- Lo que sí ve la página: si está conectado, con qué vendedor y las sucursales.
+create table if not exists siguelo_club_info (
+  empresa_id uuid primary key references empresas (id) on delete cascade,
+  conectado boolean not null default false,
+  vendedor text,
+  sucursales jsonb not null default '[]'::jsonb,
+  error text,
+  actualizado_en timestamptz not null default now()
+);
+alter table siguelo_club_info enable row level security;
+drop policy if exists "siguelo_club_info_select" on siguelo_club_info;
+create policy "siguelo_club_info_select" on siguelo_club_info for select
+  using (empresa_id = (select empresa_id from usuario_actual()));
+
+-- Cada negocio del CRM es una sucursal del club.
+alter table siguelo_negocios add column if not exists club_sucursal_id text;
+
+-- Un curso "del club": al pagar, la inscripción queda como reserva en el sistema del club
+-- (con precio 0, el monto lo decide el sistema del club y no se controla contra un precio fijo).
+alter table siguelo_cursos add column if not exists club boolean not null default false;
+
+-- El pago guarda los datos de la reserva ({ tutor, estudiantes: [{ nombre, fecha_nacimiento, grupo }] })
+-- y el id y estado de la reserva en el club. "reservado" = espera que la confirmes en el club.
+alter table siguelo_pagos
+  add column if not exists club jsonb,
+  add column if not exists club_reserva_id text,
+  add column if not exists club_revisado_en timestamptz;
+alter table siguelo_pagos drop constraint if exists siguelo_pagos_estado_check;
+alter table siguelo_pagos add constraint siguelo_pagos_estado_check
+  check (estado in ('leyendo', 'no_es', 'revisar', 'rechazado', 'datos', 'reservado', 'inscrito'));

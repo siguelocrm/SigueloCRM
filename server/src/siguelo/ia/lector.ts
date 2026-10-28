@@ -3,10 +3,11 @@ import { db } from '../db.js';
 import { HORA, MIN, ajustar, fechaDe, instante } from '../horario.js';
 import { registrar } from '../registro.js';
 import { cambiarEtapa } from '../motor.js';
-import { etapasDelEmbudo, negocioDeLinea, otrosNegocios, lineaDeNegocio } from '../negocios.js';
+import { etapasDelEmbudo, negocioDeLinea, otrosNegocios, lineaDeNegocio, reglasDelNumero } from '../negocios.js';
 import { llamar } from './config.js';
 import { cursosConQR, pagoEnCurso } from '../pagos/inscripcion.js';
 import { formatoMonto } from '../pagos/comprobante.js';
+import { datosClubParaIA } from '../club/club.js';
 import { armarMensajes, validarResultado, type DatosContexto, type LineaConversacion, type ResultadoIA } from './contexto.js';
 import type { CursoRow, EtapaVentaRow, IaRow, LecturaRow, NegocioRow, PorLeerRow, SalidaRow, TipoAviso } from '../tipos.js';
 
@@ -37,13 +38,43 @@ const formatear = (iso: string, zona: string) =>
 
 // Respuestas rápidas del negocio (las de todos y las suyas) que este cliente todavía no recibió.
 async function respuestasDisponibles(empresaId: string, negocioId: string, yaEnviadas: Set<string>) {
-  const [{ data: respuestas }, { data: asignadas }] = await Promise.all([
+  const [{ data: respuestas }, { data: asignadas }, cuando] = await Promise.all([
     db.from('respuestas_rapidas').select('id, empresa_id, titulo, atajo, contenido, tipo, media_url').eq('empresa_id', empresaId).order('titulo'),
     db.from('siguelo_respuesta_negocio').select('respuesta_id, negocio_id'),
+    cuandoDe(empresaId, 'respuesta'),
   ]);
   const de = new Map<string, string[]>();
   for (const a of asignadas || []) de.set(a.respuesta_id, [...(de.get(a.respuesta_id) || []), a.negocio_id]);
-  return (respuestas || []).filter((r) => !yaEnviadas.has(r.id) && (!de.get(r.id)?.length || de.get(r.id)!.includes(negocioId)));
+  return (respuestas || [])
+    .filter((r) => !yaEnviadas.has(r.id) && (!de.get(r.id)?.length || de.get(r.id)!.includes(negocioId)))
+    .map((r) => ({ ...r, cuando: cuando.get(r.id) || '' }));
+}
+
+// "Cuándo la usa la IA" de cada respuesta rápida o regla del bot (sin la última versión del SQL, ninguno).
+async function cuandoDe(empresaId: string, tipo: 'respuesta' | 'bot'): Promise<Map<string, string>> {
+  const { data, error } = await db.from('siguelo_cuando_ia').select('item_id, cuando').eq('empresa_id', empresaId).eq('tipo', tipo);
+  if (error) return new Map();
+  return new Map((data || []).filter((x) => x.cuando.trim()).map((x) => [x.item_id, x.cuando.trim()] as const));
+}
+
+// Reglas y flujos del bot de este número que la IA puede activar: los que tienen "cuándo",
+// y no se le activaron a este cliente en las últimas 24 h.
+async function botsDisponibles(empresaId: string, lineaId: string, conversacionId: string) {
+  const cuando = await cuandoDe(empresaId, 'bot');
+  if (!cuando.size) return [];
+  const [{ data: reglas }, { data: usados }] = await Promise.all([
+    db.from('respuestas_automaticas').select('id, nombre, palabra_clave, tipo, flujo, pasos').eq('empresa_id', empresaId).eq('activo', true).in('id', [...cuando.keys()]),
+    db.from('siguelo_ia_salida').select('referencia').eq('conversacion_id', conversacionId).eq('origen', 'bot').in('estado', ['pendiente', 'enviando', 'enviado']).gte('creado_en', new Date(Date.now() - 24 * HORA).toISOString()),
+  ]);
+  const ya = new Set((usados || []).map((x) => x.referencia));
+  const delNumero = await reglasDelNumero(reglas || [], lineaId);
+  return delNumero.filter((r) => !ya.has(r.id)).map((r) => ({ id: r.id, nombre: r.nombre || r.palabra_clave, cuando: cuando.get(r.id)! }));
+}
+
+// ¿Hay un flujo del bot esperando la respuesta de este cliente? Entonces contesta el bot, no la IA.
+async function flujoEsperando(conversacionId: string): Promise<boolean> {
+  const { data } = await db.from('bot_sesiones').select('actualizado_en').eq('conversacion_id', conversacionId).maybeSingle();
+  return !!data && Date.now() - ms(data.actualizado_en) < 24 * HORA;
 }
 
 // Lo que ya se le mandó (o está por mandarse) a este cliente: cada respuesta rápida y cada grupo, una sola vez.
@@ -94,6 +125,7 @@ type Contexto = {
   respuestas: Awaited<ReturnType<typeof respuestasDisponibles>>;
   otros: NegocioRow[];
   cursos: CursoRow[];
+  bots: Awaited<ReturnType<typeof botsDisponibles>>;
   clienteUltimo: boolean;
   ultimaPersona: number;
 };
@@ -138,7 +170,8 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
   const otro = ac.pases && r.pase ? x.otros.find((n) => n.id === r.pase!.negocio_id) : undefined;
   const lineaOtro = otro ? await lineaDeNegocio(otro.id) : null;
   const curso = r.qr ? x.cursos.find((k) => k.id === r.qr && k.qr_url) : undefined;
-  if (!texto && !respuestas.length && !grupo && !curso && !(otro && lineaOtro)) return '';
+  const bot = r.bot ? x.bots.find((b) => b.id === r.bot) : undefined;
+  if (!texto && !respuestas.length && !grupo && !curso && !bot && !(otro && lineaOtro)) return '';
   if (texto && c.ia.firma.trim() && !texto.includes(c.ia.firma.trim())) texto += `\n${c.ia.firma.trim()}`;
 
   const motivo = await motivoSinAuto(c, x.fila.conversacion_id, x.ultimaPersona);
@@ -149,7 +182,7 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
     .from('siguelo_ia_salida')
     .update({ estado: 'cancelado', motivo: 'Reemplazada por una respuesta nueva', cerrado_en: new Date().toISOString() })
     .eq('conversacion_id', x.fila.conversacion_id)
-    .in('origen', ['respuesta', 'respuesta_rapida', 'grupo', 'qr'])
+    .in('origen', ['respuesta', 'respuesta_rapida', 'grupo', 'qr', 'bot'])
     .in('estado', ['borrador', 'pendiente']);
 
   const min = Math.min(c.ia.espera_min_seg, c.ia.espera_max_seg);
@@ -176,6 +209,7 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
   }
   if (grupo) filas.push({ ...base, origen: 'grupo', referencia: grupo.id, contenido: `Aquí tienes el link para unirte a "${grupo.nombre}":\n${grupo.link}`, orden: filas.length });
   if (curso) filas.push({ ...base, origen: 'qr', referencia: curso.id, tipo: 'imagen', media_url: curso.qr_url, contenido: `QR para pagar ${curso.nombre}: ${formatoMonto(curso.precio, curso.moneda)}`, orden: filas.length });
+  if (bot) filas.push({ ...base, origen: 'bot', referencia: bot.id, contenido: `Activa "${bot.nombre}" del bot`, orden: filas.length });
   if (otro && lineaOtro) {
     // Sale por el número del otro negocio, un rato después de la respuesta.
     filas.push({
@@ -203,7 +237,7 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
     return '';
   }
   if (espera && estado === 'pendiente') x.lectura.espera_enviada = new Date().toISOString();
-  const que = [texto && `"${texto.slice(0, 80)}${texto.length > 80 ? '…' : ''}"`, ...respuestas.map((rr) => `"${rr.titulo}"`), grupo && `link de "${grupo.nombre}"`, curso && `QR de "${curso.nombre}"`, otro && `pase a ${otro.nombre}`]
+  const que = [texto && `"${texto.slice(0, 80)}${texto.length > 80 ? '…' : ''}"`, ...respuestas.map((rr) => `"${rr.titulo}"`), grupo && `link de "${grupo.nombre}"`, curso && `QR de "${curso.nombre}"`, bot && `activa "${bot.nombre}" del bot`, otro && `pase a ${otro.nombre}`]
     .filter(Boolean)
     .join(' + ');
   return estado === 'pendiente' ? `respondiendo: ${que}` : `respuesta lista para que la apruebes${base.motivo ? ` (${base.motivo})` : ''}: ${que}`;
@@ -278,8 +312,9 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
     await guardar(leido);
     return true;
   }
-  // Si está mandando un comprobante o sus datos de inscripción (Fase 5), de eso se encarga pagos/.
-  if (await pagoEnCurso(fila.conversacion_id)) {
+  // Si está mandando un comprobante o sus datos de inscripción (Fase 5), de eso se encarga pagos/;
+  // si un flujo del bot espera su respuesta, contesta el bot.
+  if ((await pagoEnCurso(fila.conversacion_id)) || (await flujoEsperando(fila.conversacion_id))) {
     await guardar(leido);
     return true;
   }
@@ -303,11 +338,13 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
   }));
   const ultimaPersona = ms([...lista].reverse().find((m) => m.remitente === 'agente' && m.agente_id)?.creado_en);
 
-  const [etapas, respuestas, otros, cursos] = await Promise.all([
+  const [etapas, respuestas, otros, cursos, bots, club] = await Promise.all([
     etapasDelEmbudo(empresaId, negocio.embudo_id),
     respuestasDisponibles(empresaId, negocio.id, enviadas),
     otrosNegocios(empresaId, negocio.id),
     cursosDisponibles(empresaId, negocio.id, fila.conversacion_id),
+    botsDisponibles(empresaId, fila.linea_id, fila.conversacion_id),
+    datosClubParaIA(empresaId, negocio.club_sucursal_id, fechaDe(Date.now(), c.zona)),
   ]);
   const nombre = contacto?.nombre?.trim() || fila.telefono.split('@')[0];
   const datos: DatosContexto = {
@@ -318,10 +355,12 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
     etapaActual: contacto?.etapa_id ?? null,
     nombreCliente: contacto?.nombre || '',
     conversacion,
-    respuestasRapidas: respuestas.map((r) => ({ id: r.id, titulo: r.titulo, tipo: r.tipo, contenido: r.contenido })),
+    respuestasRapidas: respuestas.map((r) => ({ id: r.id, titulo: r.titulo, tipo: r.tipo, contenido: r.contenido, cuando: r.cuando })),
     otrosNegocios: otros,
     grupos: (negocio.grupos || []).filter((g) => g.link && !enviadas.has(g.id)),
     cursos: cursosCortos(cursos),
+    bots,
+    club,
   };
   const conRespuesta = c.ia.modo !== 'apagado';
   const { mensajes: prompt, ids: mapa } = armarMensajes(datos, conRespuesta);
@@ -350,6 +389,7 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
     respuestas,
     otros,
     cursos,
+    bots,
     clienteUltimo: lista.at(-1)?.remitente === 'cliente',
     ultimaPersona,
   };
@@ -374,11 +414,14 @@ export async function probarMensaje(c: Config, negocioId: string, texto: string)
   const { data: negocio } = await db.from('siguelo_negocios').select('*').eq('id', negocioId).maybeSingle();
   if (!negocio) return { ok: false as const, mensaje: 'Elige un negocio.' };
   const ahora = new Date().toISOString();
-  const [etapas, respuestas, otros, cursos] = await Promise.all([
+  const { data: lineaDelNegocio } = await db.from('siguelo_lineas').select('linea_id').eq('negocio_id', negocio.id).limit(1).maybeSingle();
+  const [etapas, respuestas, otros, cursos, bots, club] = await Promise.all([
     etapasDelEmbudo(c.ia.empresa_id, negocio.embudo_id),
     respuestasDisponibles(c.ia.empresa_id, negocio.id, new Set()),
     otrosNegocios(c.ia.empresa_id, negocio.id),
     cursosConQR(c.ia.empresa_id, negocio.id),
+    lineaDelNegocio ? botsDisponibles(c.ia.empresa_id, lineaDelNegocio.linea_id, '00000000-0000-0000-0000-000000000000') : Promise.resolve([]),
+    datosClubParaIA(c.ia.empresa_id, negocio.club_sucursal_id, fechaDe(Date.now(), c.zona)),
   ]);
   const datos: DatosContexto = {
     ia: c.ia,
@@ -391,10 +434,12 @@ export async function probarMensaje(c: Config, negocioId: string, texto: string)
       { quien: 'cliente', texto: 'Hola, quiero información', cuando: formatear(new Date(Date.now() - 10 * MIN).toISOString(), c.zona) },
       { quien: 'cliente', texto, cuando: formatear(ahora, c.zona) },
     ],
-    respuestasRapidas: respuestas.map((r) => ({ id: r.id, titulo: r.titulo, tipo: r.tipo, contenido: r.contenido })),
+    respuestasRapidas: respuestas.map((r) => ({ id: r.id, titulo: r.titulo, tipo: r.tipo, contenido: r.contenido, cuando: r.cuando })),
     otrosNegocios: otros,
     grupos: (negocio.grupos || []).filter((g) => g.link),
     cursos: cursosCortos(cursos),
+    bots,
+    club,
   };
   const { mensajes, ids } = armarMensajes(datos, true);
   const res = await llamar(c, mensajes);
@@ -410,6 +455,7 @@ export async function probarMensaje(c: Config, negocioId: string, texto: string)
       grupo: negocio.grupos.find((g) => g.id === r.grupo)?.nombre ?? null,
       pase: r.pase ? { ...r.pase, negocio: otros.find((n) => n.id === r.pase!.negocio_id)?.nombre ?? '' } : null,
       qr: cursos.find((k) => k.id === r.qr)?.nombre ?? null,
+      bot: bots.find((b) => b.id === r.bot)?.nombre ?? null,
     },
   };
 }

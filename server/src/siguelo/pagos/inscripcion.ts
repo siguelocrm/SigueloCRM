@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { db } from '../db.js';
-import { HORA, MIN, instante } from '../horario.js';
+import { HORA, MIN, fechaDe, instante } from '../horario.js';
 import { registrar } from '../registro.js';
 import { cambiarEtapa } from '../motor.js';
 import { etapasDelEmbudo, negocioDeLinea } from '../negocios.js';
@@ -8,7 +8,9 @@ import { aplicarNombre, normalizarTexto } from '../textos.js';
 import { llamar } from '../ia/config.js';
 import type { MensajeChat, ParteChat } from '../ia/openai.js';
 import { PROMPT_COMPROBANTE, controlar, elegirCurso, formatoMonto, transaccionNormal, validarLectura } from './comprobante.js';
-import type { CursoRow, EstadoPago, IaRow, PagoPorLeerRow, PagoRow, TextosCurso } from '../tipos.js';
+import { configClub, gruposClub, lleno, rpcVendedor, subirFoto, tarifasClub, textoHorario, vendedorYo } from '../club/club.js';
+import { armarReserva, faltanClub, mezclarDatosClub } from './reserva.js';
+import type { CursoRow, DatosClub, EstadoPago, IaRow, PagoPorLeerRow, PagoRow, TextosCurso } from '../tipos.js';
 
 // Inscripción con pago (Fase 5). Cada foto o PDF que manda un cliente a un
 // número con cursos se lee con la IA: si es un comprobante y pasa los
@@ -39,6 +41,7 @@ export const TEXTOS_POR_DEFECTO: TextosCurso = {
   link: '¡Ya estás inscrito en {curso}! 🎉 Únete al grupo aquí:\n{link}',
   revisar: 'Recibimos tu comprobante 🙌 Lo estamos revisando y en un momento te confirmamos.',
   rechazado: 'No pudimos validar tu comprobante: {motivo}. Si crees que es un error, escríbenos por aquí.',
+  reservado: '¡Gracias, {nombre}! Ya tenemos todo para la inscripción en {curso}. En breve te la confirmamos y te mandamos el link del grupo. 🙌',
 };
 
 // ¿Hay un pago en curso en esta conversación? Mientras tanto la IA no le responde
@@ -102,16 +105,20 @@ async function descargar(url: string): Promise<{ datos: Buffer; mime: string } |
   }
 }
 
-// La parte del mensaje para la IA según lo que es el archivo de verdad (WhatsApp guarda todo documento como "pdf").
+// ¿Qué imagen es de verdad? (WhatsApp guarda todo documento como "pdf").
+function tipoImagen(datos: Buffer): string {
+  const cabeza = datos.subarray(0, 12);
+  if (cabeza[0] === 0xff && cabeza[1] === 0xd8) return 'image/jpeg';
+  if (cabeza[0] === 0x89 && cabeza.subarray(1, 4).toString('latin1') === 'PNG') return 'image/png';
+  if (cabeza.subarray(0, 4).toString('latin1') === 'RIFF' && cabeza.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  return '';
+}
+
+// La parte del mensaje para la IA según lo que es el archivo.
 function parteDe(datos: Buffer): ParteChat | null {
   const b64 = datos.toString('base64');
-  const cabeza = datos.subarray(0, 12);
-  if (cabeza.subarray(0, 5).toString('latin1') === '%PDF-') return { type: 'file', file: { filename: 'comprobante.pdf', file_data: `data:application/pdf;base64,${b64}` } };
-  const mime =
-    cabeza[0] === 0xff && cabeza[1] === 0xd8 ? 'image/jpeg'
-    : cabeza[0] === 0x89 && cabeza.subarray(1, 4).toString('latin1') === 'PNG' ? 'image/png'
-    : cabeza.subarray(0, 4).toString('latin1') === 'RIFF' && cabeza.subarray(8, 12).toString('latin1') === 'WEBP' ? 'image/webp'
-    : '';
+  if (datos.subarray(0, 5).toString('latin1') === '%PDF-') return { type: 'file', file: { filename: 'comprobante.pdf', file_data: `data:application/pdf;base64,${b64}` } };
+  const mime = tipoImagen(datos);
   return mime ? { type: 'image_url', image_url: { url: `data:${mime};base64,${b64}`, detail: 'high' } } : null;
 }
 
@@ -257,6 +264,13 @@ async function confirmar(x: Vuelta, pago: PagoRow, curso: CursoRow, aMano = fals
   const etapa = await moverDeEtapa(empresaId, contacto, curso, pago.linea_id);
   if (etapa) hechos.push(`pasó a "${etapa}"`);
 
+  if (curso.club) {
+    await actualizar(pago, { motivo: null, accion: null, oportunidad_id: oportunidadId, curso_id: curso.id });
+    if (!aMano) await avisar(x, pago, `💰 ${quien(contacto.nombre, pago.telefono)} pagó ${formatoMonto(monto, curso.moneda)}: ✅ comprobante correcto, se le piden los datos para la reserva en tu sistema del club.`);
+    await registrar(empresaId, contacto.id, 'pago', `Pago de ${quien(contacto.nombre, pago.telefono).replace(/\*/g, '')} confirmado${aMano ? ' a mano' : ''} (${formatoMonto(monto, curso.moneda)}): ${hechos.join(' · ') || 'listo'}; faltan los datos para la reserva del club.`);
+    await mandar(x, pago, [{ tipo: 'confirmado', texto: rellenar(textosDe(curso).confirmado, contacto.nombre, { curso: curso.nombre, monto: formatoMonto(monto, curso.moneda) }) }]);
+    return completarClub(x, pago, curso, true);
+  }
   const faltan = await datosQueFaltan(x, curso, contacto.id, pago.datos);
   const variables = { curso: curso.nombre, monto: formatoMonto(monto, curso.moneda) };
   const t = textosDe(curso);
@@ -303,7 +317,10 @@ async function paraRevisar(x: Vuelta, pago: PagoRow, curso: CursoRow | null, mot
 
 async function inscribir(x: Vuelta, pago: PagoRow, curso: CursoRow, aMano = false): Promise<void> {
   const contacto = await contactoDe(pago.contacto_id);
-  await mandar(x, pago, [{ tipo: 'link', texto: textoLink(curso, contacto?.nombre ?? null, { curso: curso.nombre, monto: formatoMonto(pago.monto, curso.moneda) }) }]);
+  // En una reserva del club, el nombre del curso y horario que eligió.
+  const elegidos = (pago.club?.estudiantes || []).map((e) => e.curso_texto).filter(Boolean);
+  const nombreCurso = curso.club && elegidos.length ? [...new Set(elegidos)].join(' y ') : curso.nombre;
+  await mandar(x, pago, [{ tipo: 'link', texto: textoLink(curso, contacto?.nombre ?? null, { curso: nombreCurso, monto: formatoMonto(pago.monto, curso.moneda) }) }]);
   await actualizar(pago, { estado: 'inscrito', motivo: null, accion: null });
   if (!aMano) await avisar(x, pago, `🎓 ${quien(contacto?.nombre, pago.telefono)} completó su inscripción en "${curso.nombre}".`);
   await registrar(x.c.ia.empresa_id, pago.contacto_id, 'pago', `${quien(contacto?.nombre, pago.telefono).replace(/\*/g, '')} quedó inscrito en ${curso.nombre}${aMano ? ' (a mano)' : ''}.`);
@@ -423,6 +440,7 @@ async function leerDatos(x: Vuelta, pago: PagoRow): Promise<void> {
   const ultimo = nuevos[nuevos.length - 1].creado_en;
   if (Date.now() - ms(ultimo) < QUIETO_DATOS_MS) return;
 
+  if (curso.club) return completarClub(x, pago, curso, false, ultimo);
   const faltan = await datosQueFaltan(x, curso, contacto.id, pago.datos);
   if (!faltan.length) return inscribir(x, pago, curso);
   const textos = nuevos.filter((m) => m.tipo === 'texto' && m.contenido?.trim()).map((m) => m.contenido!.trim());
@@ -471,9 +489,11 @@ async function hacerAccion(x: Vuelta, pago: PagoRow): Promise<void> {
   const curso = x.cursos.find((k) => k.id === pago.curso_id) ?? null;
   if (accion === 'confirmar') {
     if (!curso) return actualizar(pago, { motivo: 'Elige el curso antes de confirmar' });
-    if (pago.estado === 'datos') return inscribir(x, pago, curso, true);
+    if (pago.estado === 'datos' && curso.club) return completarClub(x, pago, curso, false);
+    if (pago.estado === 'datos' || pago.estado === 'reservado') return inscribir(x, pago, curso, true);
     if (pago.estado !== 'inscrito') {
       if (!pago.contacto_id) await actualizar(pago, { contacto_id: await asegurarContacto(x.c.ia.empresa_id, pago.telefono) });
+      if (curso.club && pago.oportunidad_id) return completarClub(x, pago, curso, false);
       return confirmar(x, pago, curso, true);
     }
   } else if (accion === 'rechazar' && pago.estado !== 'inscrito' && pago.estado !== 'datos') {
@@ -525,6 +545,139 @@ export async function revisarPagos(c: Config): Promise<void> {
 
   const { data: conDatos } = await db.from('siguelo_pagos').select('*').eq('empresa_id', empresaId).eq('estado', 'datos').order('actualizado_en').limit(10);
   for (const pago of conDatos || []) await leerDatos(x, pago);
+
+  await revisarReservas(x);
+}
+
+// ---------- Reserva en el sistema del club ----------
+
+// Junta los datos de la reserva (de toda la conversación: suelen decir el curso y el horario antes de pagar)
+// y, si está todo, deja la reserva. Si falta algo, se lo pide.
+async function completarClub(x: Vuelta, pago: PagoRow, curso: CursoRow, primeraVez: boolean, hasta?: string): Promise<void> {
+  const contacto = await contactoDe(pago.contacto_id);
+  const cfg = await configClub(x.c.ia.empresa_id);
+  const negocio = pago.linea_id ? await negocioDeLinea(pago.linea_id) : null;
+  if (!contacto || !cfg || !negocio?.club_sucursal_id) {
+    return paraRevisar(x, pago, curso, !cfg ? 'Falta conectar tu sistema del club (Inscripciones → Sistema del club)' : 'El negocio de este número no tiene elegida su sucursal del club (Negocios)');
+  }
+  let grupos: Awaited<ReturnType<typeof gruposClub>>;
+  try {
+    grupos = (await gruposClub(cfg, negocio.club_sucursal_id)).filter((g) => !lleno(g));
+  } catch (err) {
+    return paraRevisar(x, pago, curso, `No se pudo leer los horarios del club: ${(err as Error).message}`);
+  }
+  const ids = new Map<string, (typeof grupos)[number]>(grupos.map((g, i) => [`k${i + 1}`, g]));
+  const { data: chat } = pago.conversacion_id
+    ? await db.from('mensajes').select('remitente, tipo, contenido, creado_en').eq('conversacion_id', pago.conversacion_id).order('creado_en', { ascending: false }).limit(30)
+    : { data: [] };
+  const ultimoChat = chat?.[0]?.creado_en;
+  const lineas = [...(chat || [])]
+    .reverse()
+    .filter((m) => m.tipo === 'texto' && m.contenido?.trim())
+    .map((m) => `${m.remitente === 'cliente' ? 'Cliente' : 'Nosotros'}: ${m.contenido!.trim()}`);
+  const r = await llamar(x.c, [
+    {
+      role: 'system',
+      content: `Ayudas a inscribir a un cliente que ya pagó en un club de cursos para niños. Con lo que dijo en la conversación (antes o después de pagar), arma los datos de la inscripción.
+GRUPOS CON CUPO (id: curso · días · horario):
+${[...ids].map(([k, g]) => `- ${k}: ${g.curso} · ${textoHorario(g)}`).join('\n') || '(ninguno)'}
+Responde SOLO con JSON: {"tutor": "nombre del papá, mamá o tutor" o null, "estudiantes": [{"nombre": "nombre completo del niño o niña" o null, "fecha_nacimiento": "AAAA-MM-DD" o null, "grupo": "id de la lista" o null}]}
+No inventes nada: si un dato no está, null. Si solo dice la edad, fecha_nacimiento es null. Si elige un curso u horario que no está en la lista, grupo es null. Si inscribe a varios hermanos, uno por cada uno.`,
+    },
+    { role: 'user', content: lineas.join('\n') || '(sin mensajes)' },
+  ]);
+  if (!r.ok) {
+    if (r.cupo) return paraRevisar(x, pago, curso, `La IA no pudo leer los datos de la inscripción: ${r.mensaje}`);
+    return actualizar(pago, { intentos: pago.intentos + 1, ...(primeraVez ? { estado: 'datos' } : {}) });
+  }
+  const crudo = r.json as { tutor?: unknown; estudiantes?: unknown };
+  const estudiantes = (Array.isArray(crudo.estudiantes) ? crudo.estudiantes : []).slice(0, 6).map((e) => {
+    const o = (e && typeof e === 'object' ? e : {}) as Record<string, unknown>;
+    return {
+      nombre: o.nombre ? String(o.nombre).slice(0, 120) : null,
+      fecha_nacimiento: o.fecha_nacimiento ? String(o.fecha_nacimiento).slice(0, 10) : null,
+      grupo: typeof o.grupo === 'string' ? ids.get(o.grupo.trim())?.grupo ?? null : null,
+    };
+  });
+  const datos: DatosClub = mezclarDatosClub(pago.club, { tutor: crudo.tutor ? String(crudo.tutor).slice(0, 120) : null, estudiantes });
+  const faltan = faltanClub(datos);
+  const rondas = primeraVez ? 0 : pago.rondas + 1;
+  const leido = hasta ?? (primeraVez ? ultimoChat : undefined);
+  await actualizar(pago, { club: datos, rondas, intentos: 0, estado: 'datos', ...(leido ? { datos_leido: leido } : {}) });
+  if (!faltan.length) return crearReserva(x, pago, curso, grupos);
+  if (rondas >= MAX_RONDAS) return paraRevisar(x, pago, curso, `Faltan datos para la reserva: ${faltan.join(', ')}`);
+  const t = textosDe(curso);
+  await mandar(x, pago, [{ tipo: primeraVez ? 'pedir_datos' : 'falta', texto: rellenar(primeraVez ? t.pedir_datos : t.falta, contacto.nombre, { curso: curso.nombre, datos: faltan.map((f) => `• ${f}`).join('\n') }) }]);
+}
+
+async function crearReserva(x: Vuelta, pago: PagoRow, curso: CursoRow, grupos: Awaited<ReturnType<typeof gruposClub>>): Promise<void> {
+  const contacto = await contactoDe(pago.contacto_id);
+  const cfg = await configClub(x.c.ia.empresa_id);
+  const negocio = pago.linea_id ? await negocioDeLinea(pago.linea_id) : null;
+  if (!cfg || !negocio?.club_sucursal_id || !pago.club) return;
+  try {
+    const sucursal = negocio.club_sucursal_id;
+    const [yo, tarifas] = await Promise.all([vendedorYo(cfg), tarifasClub(cfg, sucursal)]);
+    const id = randomUUID();
+    let foto: string | null = null;
+    if (pago.media_url) {
+      const archivo = await descargar(pago.media_url);
+      const mime = typeof archivo === 'string' ? '' : tipoImagen(archivo.datos);
+      if (typeof archivo !== 'string' && mime) foto = await subirFoto(cfg, `${yo.id}/${id}.${mime.split('/')[1].replace('jpeg', 'jpg')}`, archivo.datos, mime);
+    }
+    const monto = formatoMonto(pago.monto, curso.moneda);
+    const reserva = armarReserva({
+      id,
+      sucursal,
+      datos: pago.club,
+      grupos,
+      tarifas,
+      telefono: pago.telefono,
+      pagoQr: Number(pago.monto || 0),
+      foto,
+      nota: `Desde WhatsApp (SígueloCRM): pagó ${monto} por QR${pago.transaccion ? `, transacción ${pago.transaccion}` : ''}. La IA revisó el comprobante.${foto ? '' : ' El comprobante (PDF) está en el CRM.'}`,
+      hoy: fechaDe(Date.now(), x.c.zona),
+      claves: randomUUID,
+    });
+    await rpcVendedor(cfg, 'vendedor_reservar', { p_reserva: reserva });
+    const cursos = reserva.datos.estudiantes.map((e) => `${e.cursos[0].curso} (${e.cursos[0].horario})`).join(', ');
+    const club = { ...pago.club, estudiantes: pago.club.estudiantes.map((e, i) => ({ ...e, curso_texto: `${reserva.datos.estudiantes[i].cursos[0].curso} (${reserva.datos.estudiantes[i].cursos[0].horario})` })) };
+    await actualizar(pago, { estado: 'reservado', club_reserva_id: id, motivo: null, club });
+    await mandar(x, pago, [{ tipo: 'reservado', texto: rellenar(textosDe(curso).reservado, contacto?.nombre, { curso: cursos, monto }) }]);
+    await avisar(x, pago, `🧾 ${quien(contacto?.nombre, pago.telefono)}: la inscripción de ${reserva.datos.estudiantes.map((e) => e.nombre).join(' y ')} quedó en "Reservas de vendedores" de tu sistema del club. Confírmala con un clic.`);
+    await registrar(x.c.ia.empresa_id, pago.contacto_id, 'pago', `Reserva en el club para ${reserva.datos.estudiantes.map((e) => e.nombre).join(', ')} (${cursos}); total sugerido ${formatoMonto(reserva.total_sugerido, curso.moneda)}, pagado por QR ${formatoMonto(reserva.pago_qr, curso.moneda)}.`);
+  } catch (err) {
+    await paraRevisar(x, pago, curso, `No se pudo dejar la reserva en el club: ${(err as Error).message}`);
+  }
+}
+
+// Cada 2 minutos: las reservas que confirmaste en el club → se le manda el link; las rechazadas quedan para revisar.
+const ultimaRevision = new Map<string, number>();
+async function revisarReservas(x: Vuelta): Promise<void> {
+  const empresaId = x.c.ia.empresa_id;
+  if (Date.now() - (ultimaRevision.get(empresaId) ?? 0) < 2 * MIN) return;
+  const { data: reservados } = await db.from('siguelo_pagos').select('*').eq('empresa_id', empresaId).eq('estado', 'reservado').limit(50);
+  if (!reservados?.length) return;
+  ultimaRevision.set(empresaId, Date.now());
+  const cfg = await configClub(empresaId);
+  if (!cfg) return;
+  let lista: { id: string; estado: string; motivo?: string | null }[];
+  try {
+    lista = (await rpcVendedor(cfg, 'vendedor_reservas')) || [];
+  } catch (err) {
+    console.error('Club: no se pudo revisar las reservas:', (err as Error).message);
+    return;
+  }
+  for (const pago of reservados) {
+    const r = lista.find((y) => y.id === pago.club_reserva_id);
+    const curso = x.cursos.find((k) => k.id === pago.curso_id);
+    if (!r || !curso || r.estado === 'pendiente') continue;
+    if (r.estado === 'aprobada') await inscribir(x, pago, curso, true);
+    else {
+      await actualizar(pago, { estado: 'revisar', motivo: `La reserva se ${r.estado === 'rechazada' ? 'rechazó' : 'anuló'} en el club${r.motivo ? `: ${r.motivo}` : ''}` });
+      await registrar(empresaId, pago.contacto_id, 'pago', `La reserva de +${pago.telefono.split('@')[0]} se ${r.estado === 'rechazada' ? 'rechazó' : 'anuló'} en el club.`);
+    }
+  }
 }
 
 // Para el QR de la IA: los cursos de un negocio con su imagen de pago.

@@ -20,6 +20,7 @@ type Resultado = {
   respuestas_rapidas: string[];
   grupo: string | null;
   qr?: string | null;
+  bot?: string | null;
   pase: { negocio: string; mensaje: string; nota: string } | null;
 };
 
@@ -87,6 +88,7 @@ export default function ProbarIA({ negocios, hayClave }: { negocios: Negocio[]; 
           {linea('Respuestas rápidas', r.respuestas_rapidas.join(', '))}
           {linea('Invitaría al grupo', r.grupo)}
           {linea('Le mandaría el QR de pago de', r.qr ?? null)}
+          {linea('Activaría del bot', r.bot ?? null)}
           {r.pase && linea(`Pase a ${r.pase.negocio}`, `${r.pase.mensaje}\n(nota: ${r.pase.nota})`)}
           {linea('Pasaría a la etapa', r.etapa)}
           {r.no_quiere_mas && linea('No quiere más', 'Sí: pasa a la etapa perdida y no se le escribe más', 'var(--bad)')}

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Bot, Check, FileText, Image, Mic, Reply, Store } from 'lucide-react';
+import { Bot, Check, FileText, Image, Mic, Reply, Sparkles, Store } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import { BORDE, TEXTO_PRIMARIO, TEXTO_SECUNDARIO, TEXTO_TERCIARIO } from '../../lib/tema';
 import { EstadoVacio, Tarjeta, useToast } from '../../components/ui';
+import { claseCampo, estiloCampo } from '../seguimiento/estilos';
 import type { DatosNegocios } from './useNegocios';
 
 type Item = { id: string; titulo: string; detalle: string; icono: typeof Reply };
@@ -25,6 +26,10 @@ export default function AsignarPorNegocio({ tipo, datos, puedeEditar }: Props) {
   const tabla = tipo === 'respuestas' ? 'siguelo_respuesta_negocio' : 'siguelo_bot_negocio';
   const columna = tipo === 'respuestas' ? 'respuesta_id' : 'regla_id';
   const asignaciones = tipo === 'respuestas' ? datos.respuestasDeNegocio : datos.reglasDeNegocio;
+  const tipoCuando = tipo === 'respuestas' ? 'respuesta' : 'bot';
+  // "Cuándo la usa la IA": lo que está escrito y lo que ya está guardado (null = falta pegar la última versión del SQL).
+  const [cuando, setCuando] = useState<Record<string, string>>({});
+  const [guardado, setGuardado] = useState<Record<string, string> | null>({});
 
   const cargar = useCallback(async () => {
     if (tipo === 'respuestas') {
@@ -46,8 +51,24 @@ export default function AsignarPorNegocio({ tipo, datos, puedeEditar }: Props) {
         })),
       );
     }
+    const { data: c, error } = await supabase.from('siguelo_cuando_ia').select('item_id, cuando').eq('tipo', tipoCuando).returns<{ item_id: string; cuando: string }[]>();
+    const mapa = error ? null : Object.fromEntries((c || []).map((x) => [x.item_id, x.cuando]));
+    setGuardado(mapa);
+    setCuando(mapa ?? {});
     setCargando(false);
-  }, [tipo]);
+  }, [tipo, tipoCuando]);
+
+  const guardarCuando = async (itemId: string) => {
+    const texto = (cuando[itemId] ?? '').trim();
+    if (!guardado || texto === (guardado[itemId] ?? '')) return;
+    const empresaId = datos.negocios[0]?.empresa_id;
+    const { error } = texto
+      ? await supabase.from('siguelo_cuando_ia').upsert({ empresa_id: empresaId, tipo: tipoCuando, item_id: itemId, cuando: texto, actualizado_en: new Date().toISOString() }, { onConflict: 'tipo,item_id' })
+      : await supabase.from('siguelo_cuando_ia').delete().eq('tipo', tipoCuando).eq('item_id', itemId);
+    if (error) return toast(`No se pudo guardar: ${error.message}`, 'error');
+    setGuardado({ ...guardado, [itemId]: texto });
+    toast(texto ? 'Guardado: la IA lo usará en esa situación' : 'Quitado: la IA ya no lo usa por su cuenta', 'ok');
+  };
 
   useEffect(() => {
     cargar();
@@ -74,8 +95,8 @@ export default function AsignarPorNegocio({ tipo, datos, puedeEditar }: Props) {
     <div className="flex flex-col gap-2.5">
       <p className="m-0 text-[12.5px] leading-relaxed" style={{ color: TEXTO_SECUNDARIO }}>
         {tipo === 'respuestas'
-          ? 'Marca de qué negocios es cada respuesta rápida. Sin ninguno marcado, sirve para todos. En el chat solo aparecen las del negocio de ese número.'
-          : 'Marca de qué negocios es cada regla del bot. Sin ninguno marcado, responde en todos los números. Si no, solo en los números de esos negocios.'}
+          ? 'Marca de qué negocios es cada respuesta rápida. Sin ninguno marcado, sirve para todos. En el chat solo aparecen las del negocio de ese número. En "Cuándo la usa la IA" escribe en qué situación la IA debe mandarla (por ejemplo, el QR cuando el cliente quiere inscribirse); vacío = la IA decide sola si le sirve.'
+          : 'Marca de qué negocios es cada regla del bot. Sin ninguno marcado, responde en todos los números. Si no, solo en los números de esos negocios. Si escribes "Cuándo la activa la IA", la IA también la activa en esa situación (además de sus palabras clave); vacío = solo con sus palabras clave.'}
       </p>
       {cargando ? (
         <div className="text-xs" style={{ color: TEXTO_TERCIARIO }}>Cargando…</div>
@@ -125,6 +146,22 @@ export default function AsignarPorNegocio({ tipo, datos, puedeEditar }: Props) {
                     );
                   })}
                 </div>
+                {guardado && (
+                  <label className="flex items-center gap-2 pl-6 text-[12px] font-semibold" style={{ color: TEXTO_SECUNDARIO }}>
+                    <Sparkles size={13} color="var(--accent)" className="shrink-0" />
+                    <span className="shrink-0">{tipo === 'respuestas' ? 'Cuándo la usa la IA' : 'Cuándo la activa la IA'}</span>
+                    <input
+                      value={cuando[it.id] ?? ''}
+                      onChange={(e) => setCuando({ ...cuando, [it.id]: e.target.value })}
+                      onBlur={() => guardarCuando(it.id)}
+                      onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+                      disabled={!puedeEditar}
+                      placeholder={tipo === 'respuestas' ? 'Ej.: cuando el cliente quiere inscribirse o pregunta cómo pagar' : 'Ej.: cuando el cliente pide información de los cursos'}
+                      className={`${claseCampo} font-normal flex-1 min-w-0`}
+                      style={{ ...estiloCampo, height: 32 }}
+                    />
+                  </label>
+                )}
               </div>
             );
           })}

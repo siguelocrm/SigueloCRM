@@ -11,7 +11,7 @@ const ms = (iso: string) => new Date(iso).getTime() || 0;
 const formatear = (ts: number) => new Intl.DateTimeFormat('es', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(ts));
 const nombreDe = (x: { contactos: { nombre: string | null; telefono: string } | null; telefono?: string }) =>
   x.contactos?.nombre?.trim() || (x.contactos?.telefono || x.telefono || '').split('@')[0] || 'Cliente';
-const QUE: Record<string, string> = { respuesta_rapida: 'Respuesta rápida', grupo: 'Link del grupo', pase: 'Pase a otra sucursal' };
+const QUE: Record<string, string> = { respuesta_rapida: 'Respuesta rápida', grupo: 'Link del grupo', pase: 'Pase a otra sucursal', qr: 'QR de pago', pago: 'Pago', bot: 'Bot' };
 
 interface Props {
   ajustes: AjustesIA;

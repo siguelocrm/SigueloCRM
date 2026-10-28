@@ -5,6 +5,7 @@ import { listarModelos } from './openai.js';
 import { configDeEmpresa, olvidarCache } from './config.js';
 import { probarMensaje } from './lector.js';
 import { aplicarAcciones, conversar } from './asistente.js';
+import { conectarClub, olvidarClub } from '../club/club.js';
 import type { IaRow } from '../tipos.js';
 
 // Lo de la IA que pasa por el servidor: la clave de OpenAI (la página la manda
@@ -84,4 +85,24 @@ iaRouter.post('/siguelo/ia/asistente/aplicar', soloAdmin, async (req, res) => {
   const r = await aplicarAcciones(req.usuarioAutenticado!.empresa_id, String(req.body?.id ?? ''));
   if (!r.ok) return res.status(400).json({ error: r.mensaje });
   res.json({ ok: true, resultado: r.resultado });
+});
+
+// Tu sistema del club: prueba la conexión (funciones públicas y el usuario del vendedor) y la guarda.
+iaRouter.post('/siguelo/club/conectar', soloAdmin, async (req, res) => {
+  const empresaId = req.usuarioAutenticado!.empresa_id;
+  const b = req.body ?? {};
+  const cfg = { url: String(b.url ?? '').trim(), clave_publica: String(b.clave_publica ?? '').trim(), usuario: String(b.usuario ?? '').trim(), contrasena: String(b.contrasena ?? '') };
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(cfg.url)) return res.status(400).json({ error: 'La dirección tiene que ser como https://xxxx.supabase.co (la de tu sistema del club).' });
+  if (!cfg.clave_publica || !cfg.usuario || !cfg.contrasena) return res.status(400).json({ error: 'Completa la clave pública, el usuario y la contraseña del vendedor.' });
+  const r = await conectarClub(empresaId, cfg);
+  if (!r.ok) return res.status(400).json({ error: r.mensaje });
+  res.json({ ok: true, vendedor: r.vendedor, sucursales: r.sucursales });
+});
+
+iaRouter.delete('/siguelo/club', soloAdmin, async (req, res) => {
+  const empresaId = req.usuarioAutenticado!.empresa_id;
+  await db.from('siguelo_club').delete().eq('empresa_id', empresaId);
+  await db.from('siguelo_club_info').update({ conectado: false, error: null, actualizado_en: new Date().toISOString() }).eq('empresa_id', empresaId);
+  olvidarClub();
+  res.json({ ok: true });
 });

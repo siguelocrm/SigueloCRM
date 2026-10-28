@@ -13,6 +13,7 @@ interface Props {
   cursos: Curso[];
   negocios: Negocio[];
   etapas: EtapaVenta[];
+  clubConectado: boolean;
   puedeEditar: boolean;
   onGuardado: () => void;
 }
@@ -31,7 +32,7 @@ function Campo({ etiqueta, ayuda, children }: { etiqueta: string; ayuda?: string
 
 // Cada curso (o lo que se cobra): precio, QR, a quién le llega el pago, link del
 // grupo, datos que se piden y los textos que recibe el cliente.
-export default function CursosInscripcion({ empresaId, cursos, negocios, etapas, puedeEditar, onGuardado }: Props) {
+export default function CursosInscripcion({ empresaId, cursos, negocios, etapas, clubConectado, puedeEditar, onGuardado }: Props) {
   const toast = useToast();
   const [campos, setCampos] = useState<CampoPersonalizado[]>([]);
   const [b, setB] = useState<Borrador | null>(null);
@@ -58,11 +59,13 @@ export default function CursosInscripcion({ empresaId, cursos, negocios, etapas,
     if (!b) return;
     const precio = Number(b.precioTexto.replace(',', '.'));
     if (!b.nombre.trim()) return toast('Ponle un nombre al curso.', 'error');
-    if (!Number.isFinite(precio) || precio <= 0) return toast('Revisa el precio.', 'error');
+    if (!Number.isFinite(precio) || precio < 0 || (precio === 0 && !b.club)) return toast('Revisa el precio.', 'error');
     if (b.link_grupo.trim() && !/^https:\/\//.test(b.link_grupo.trim())) return toast('El link del grupo tiene que empezar con https://', 'error');
     if (!b.destinatario.trim() && b.cuenta.replace(/\D/g, '').length < 4) return toast('Pon el nombre del titular o el número de cuenta: así se controla que el pago llegó a ti.', 'error');
-    const { id, precioTexto: _p, ...resto } = b;
-    const fila = { ...resto, nombre: b.nombre.trim(), precio, link_grupo: b.link_grupo.trim(), max_horas: Math.min(720, Math.max(1, Math.round(b.max_horas) || 72)), actualizado_en: new Date().toISOString() };
+    const { id, precioTexto: _p, ...sinPrecio } = b;
+    // Sin la última versión del SQL, la columna "club" no existe: solo se manda si se usa.
+    const { club, ...resto } = sinPrecio;
+    const fila = { ...resto, ...(club || clubConectado ? { club: !!club } : {}), nombre: b.nombre.trim(), precio, link_grupo: b.link_grupo.trim(), max_horas: Math.min(720, Math.max(1, Math.round(b.max_horas) || 72)), actualizado_en: new Date().toISOString() };
     const { error } = id ? await supabase.from('siguelo_cursos').update(fila).eq('id', id) : await supabase.from('siguelo_cursos').insert(fila);
     if (error) return toast(`No se pudo guardar: ${error.message}`, 'error');
     toast('Curso guardado', 'ok');
@@ -85,11 +88,21 @@ export default function CursosInscripcion({ empresaId, cursos, negocios, etapas,
           <span className="flex-1 text-[15px] font-bold" style={{ color: TEXTO_PRIMARIO }}>{b.id ? 'Editar curso' : 'Nuevo curso'}</span>
           <Interruptor activo={b.activo} onCambiar={(v) => setB({ ...b, activo: v })} etiqueta="Curso activo" deshabilitado={!puedeEditar} />
         </div>
+        {(clubConectado || b.club) && (
+          <label className="flex items-start gap-2 text-[12.5px] rounded-lg p-2.5" style={{ color: TEXTO_SECUNDARIO, border: `1px solid ${BORDE}` }}>
+            <input type="checkbox" className="mt-0.5" checked={!!b.club} disabled={!puedeEditar} onChange={(e) => setB({ ...b, club: e.target.checked })} />
+            <span>
+              <b style={{ color: TEXTO_PRIMARIO }}>Dejar la inscripción como reserva en mi sistema del club.</b> Al pagar, la IA le pide al cliente el nombre del
+              tutor, del niño o niña, su fecha de nacimiento y el curso y horario (de los grupos con cupo de su sucursal), y deja la reserva para que
+              la confirmes con un clic. El link del grupo le llega cuando la confirmas. Pon precio 0 si el total depende de cuántos cursos toma.
+            </span>
+          </label>
+        )}
         <div className="grid gap-3 sm:grid-cols-2">
           <Campo etiqueta="Nombre">
             <input value={b.nombre} onChange={(e) => setB({ ...b, nombre: e.target.value })} placeholder="Curso de mecánica de motos" className={`${claseCampo} font-normal`} style={estiloCampo} />
           </Campo>
-          <Campo etiqueta="Precio">
+          <Campo etiqueta={b.club ? 'Precio (0 = lo calcula tu sistema del club)' : 'Precio'}>
             <span className="flex gap-1.5">
               <input value={b.moneda} onChange={(e) => setB({ ...b, moneda: e.target.value })} aria-label="Moneda" className={`${claseCampo} font-normal w-16`} style={estiloCampo} />
               <input value={b.precioTexto} onChange={(e) => setB({ ...b, precioTexto: e.target.value })} inputMode="decimal" placeholder="150" className={`${claseCampo} font-normal flex-1 min-w-0`} style={estiloCampo} />
@@ -136,7 +149,7 @@ export default function CursosInscripcion({ empresaId, cursos, negocios, etapas,
           </Campo>
         </div>
 
-        <div className="flex flex-col gap-1.5">
+        {!b.club && <div className="flex flex-col gap-1.5">
           <span className="text-[12.5px] font-semibold" style={{ color: TEXTO_SECUNDARIO }}>Datos que se le piden al pagar</span>
           <label className="flex items-center gap-2 text-[12.5px]" style={{ color: TEXTO_SECUNDARIO }}>
             <input type="checkbox" checked={b.datos.includes('nombre')} onChange={(e) => cambiarDato('nombre', e.target.checked)} /> Nombre completo
@@ -149,7 +162,7 @@ export default function CursosInscripcion({ empresaId, cursos, negocios, etapas,
           <span className="text-[11.5px]" style={{ color: TEXTO_TERCIARIO }}>
             Se guardan en la ficha del cliente. Para pedir otros datos (carnet, correo, ciudad…), créalos como campos en Administrar → Mi empresa.
           </span>
-        </div>
+        </div>}
 
         <details>
           <summary className="cursor-pointer text-[12.5px] font-semibold" style={{ color: 'var(--accent)' }}>Textos que recibe el cliente</summary>
@@ -187,6 +200,7 @@ export default function CursosInscripcion({ empresaId, cursos, negocios, etapas,
                 {formatoMonto(k.precio, k.moneda)} · {negocios.find((n) => n.id === k.negocio_id)?.nombre || 'todos los negocios'}
                 {!k.qr_url && ' · sin QR'}
                 {!k.link_grupo && ' · sin link de grupo'}
+                {k.club && ' · reserva en tu sistema del club'}
               </span>
             </div>
             <Boton tamano="sm" onClick={() => editar(k)}>{puedeEditar ? 'Editar' : 'Ver'}</Boton>

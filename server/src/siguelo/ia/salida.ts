@@ -5,6 +5,8 @@ import { registrar } from '../registro.js';
 import { obtenerSesion } from '../../whatsapp/sesiones.js';
 import { construirContenidoWA } from '../../whatsapp/contenido.js';
 import { marcarEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
+import { enviarPasos } from '../../whatsapp/bot-automatico.js';
+import { iniciarFlujo } from '../../whatsapp/flujo.js';
 import type { IaRow, SalidaRow } from '../tipos.js';
 
 // Envía lo que decidió la IA (lector.ts): sus respuestas, las respuestas
@@ -89,6 +91,16 @@ async function enviarAlCliente(c: Config, it: SalidaRow): Promise<void> {
   try {
     const conversacionId = it.conversacion_id ?? (await conversacionDe(it.linea_id, it.telefono));
     if (!conversacionId) throw new Error('No se pudo abrir la conversación en ese número');
+    // La IA activó una regla o flujo del bot: lo manda el bot del CRM, como si el cliente hubiera escrito su palabra clave.
+    if (it.origen === 'bot') {
+      const { data: regla } = await db.from('respuestas_automaticas').select('id, tipo, flujo, pasos, activo').eq('id', it.referencia ?? '').maybeSingle();
+      if (!regla?.activo) throw new Error('La regla del bot ya no existe o está apagada');
+      if (regla.tipo === 'flujo' && regla.flujo) await iniciarFlujo(sesion.sock, it.linea_id, c.ia.empresa_id, conversacionId, it.telefono, regla.id, regla.flujo as Parameters<typeof iniciarFlujo>[6]);
+      else await enviarPasos(sesion.sock, it.linea_id, conversacionId, it.telefono, regla.pasos as Parameters<typeof enviarPasos>[4], c.ia.empresa_id);
+      await cerrar([it.id], { estado: 'enviado', conversacion_id: conversacionId });
+      await registrar(c.ia.empresa_id, it.contacto_id, 'ia', `IA activó ${it.contenido.replace(/^Activa /, '')} para +${it.telefono.split('@')[0]}.`);
+      return;
+    }
     const contenido = await construirContenidoWA({ tipo: it.tipo, texto: it.contenido, media_url: it.media_url, mimetype: it.mimetype });
     const resultado = await sesion.sock.sendMessage(jidDe(it.telefono), contenido);
     const whatsappId = resultado?.key?.id || null;

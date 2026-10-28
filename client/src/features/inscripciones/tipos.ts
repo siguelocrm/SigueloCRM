@@ -1,7 +1,7 @@
 // Tipos de la inscripción con pago (SígueloCRM, Fase 5), según database/siguelo.sql
 // (secciones 21 a 24) y server/src/siguelo/pagos.
 
-export type TextosCurso = { confirmado: string; pedir_datos: string; falta: string; link: string; revisar: string; rechazado: string };
+export type TextosCurso = { confirmado: string; pedir_datos: string; falta: string; link: string; revisar: string; rechazado: string; reservado: string };
 
 export interface Curso {
   id: string;
@@ -20,9 +20,12 @@ export interface Curso {
   etapa_id: string | null;
   max_horas: number;
   textos: TextosCurso;
+  // Al pagar, la inscripción queda como reserva en el sistema del club.
+  club?: boolean;
 }
 
-export type EstadoPago = 'leyendo' | 'no_es' | 'revisar' | 'rechazado' | 'datos' | 'inscrito';
+export type EstadoPago = 'leyendo' | 'no_es' | 'revisar' | 'rechazado' | 'datos' | 'reservado' | 'inscrito';
+export type DatosClub = { tutor: string | null; estudiantes: { nombre: string | null; fecha_nacimiento: string | null; grupo: string | null; curso_texto?: string | null }[] };
 export type ControlPago = { codigo: string; nombre: string; ok: boolean; detalle: string };
 
 export interface Pago {
@@ -41,6 +44,7 @@ export interface Pago {
   pagado_en: string | null;
   datos: Record<string, string>;
   accion: 'confirmar' | 'rechazar' | null;
+  club?: DatosClub | null;
   creado_en: string;
   actualizado_en: string;
   contactos: { nombre: string | null } | null;
@@ -54,6 +58,7 @@ export const ESTADOS: Record<EstadoPago, { texto: string; color: string }> = {
   revisar: { texto: 'Para revisar', color: 'var(--warn)' },
   rechazado: { texto: 'Rechazado', color: 'var(--bad)' },
   datos: { texto: 'Pagó · faltan sus datos', color: 'var(--accent)' },
+  reservado: { texto: 'Reservado en el club · falta que lo confirmes', color: 'var(--accent)' },
   inscrito: { texto: 'Inscrito', color: 'var(--ok)' },
 };
 
@@ -64,6 +69,7 @@ export const TEXTOS_POR_DEFECTO: TextosCurso = {
   link: '¡Ya estás inscrito en {curso}! 🎉 Únete al grupo aquí:\n{link}',
   revisar: 'Recibimos tu comprobante 🙌 Lo estamos revisando y en un momento te confirmamos.',
   rechazado: 'No pudimos validar tu comprobante: {motivo}. Si crees que es un error, escríbenos por aquí.',
+  reservado: '¡Gracias, {nombre}! Ya tenemos todo para la inscripción en {curso}. En breve te la confirmamos y te mandamos el link del grupo. 🙌',
 };
 
 export const NOMBRE_TEXTOS: Record<keyof TextosCurso, string> = {
@@ -73,6 +79,7 @@ export const NOMBRE_TEXTOS: Record<keyof TextosCurso, string> = {
   link: 'Al quedar inscrito ({link} = el link del grupo)',
   revisar: 'Si el comprobante queda para revisar',
   rechazado: 'Si se rechaza ({motivo} = por qué)',
+  reservado: 'Al dejar la reserva en tu sistema del club ({curso} = curso y horario que eligió)',
 };
 
 export const cursoNuevo = (empresaId: string): Omit<Curso, 'id'> => ({

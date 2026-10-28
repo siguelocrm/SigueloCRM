@@ -20,6 +20,8 @@ export interface Negocio {
   ia_activa?: boolean;
   zonas?: string | null;
   grupos?: GrupoNegocio[];
+  // Su sucursal en el sistema del club (Inscripciones → Sistema del club).
+  club_sucursal_id?: string | null;
 }
 
 export interface GrupoNegocio {

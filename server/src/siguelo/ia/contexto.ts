@@ -7,7 +7,9 @@ import type { GrupoNegocio, IaRow, NegocioRow, TipoAviso } from '../tipos.js';
 
 export type LineaConversacion = { quien: 'cliente' | 'nosotros' | 'automatico'; texto: string; cuando: string };
 export type EtapaCorta = { id: string; nombre: string; tipo: 'normal' | 'ganada' | 'perdida' };
-export type RespuestaCorta = { id: string; titulo: string; tipo: string; contenido: string };
+// cuando: lo que escribiste en "Cuándo la usa la IA" (Negocios → Respuestas rápidas / Bot).
+export type RespuestaCorta = { id: string; titulo: string; tipo: string; contenido: string; cuando?: string };
+export type BotCorto = { id: string; nombre: string; cuando: string };
 export type OtroNegocio = { id: string; nombre: string; sucursal: string | null; direccion: string | null; horario: string | null; zonas: string | null };
 
 export type DatosContexto = {
@@ -24,6 +26,10 @@ export type DatosContexto = {
   grupos: GrupoNegocio[];
   // Fase 5: cursos con QR de pago (el precio ya escrito, "Bs 150").
   cursos: { id: string; nombre: string; precio: string }[];
+  // Reglas y flujos del bot que la IA puede activar (los que tienen "cuándo").
+  bots?: BotCorto[];
+  // Horarios, cupos y precios en vivo de su sucursal en el sistema del club ('' si no está conectado).
+  club?: string;
 };
 
 export type ResultadoIA = {
@@ -41,6 +47,7 @@ export type ResultadoIA = {
   grupo: string | null;
   pase: { negocio_id: string; mensaje: string; nota: string } | null;
   qr: string | null;
+  bot: string | null;
 };
 
 export const TIPOS_AVISO: Record<TipoAviso, string> = {
@@ -75,7 +82,7 @@ const recortar = (s: unknown, n: number) => {
 type Mapa = Map<string, string>;
 const corto = (prefijo: string, lista: { id: string }[]): Mapa => new Map(lista.map((x, i) => [`${prefijo}${i + 1}`, x.id]));
 
-export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensajes: MensajeChat[]; ids: { etapas: Mapa; respuestas: Mapa; negocios: Mapa; grupos: Mapa; cursos: Mapa } } {
+export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensajes: MensajeChat[]; ids: { etapas: Mapa; respuestas: Mapa; negocios: Mapa; grupos: Mapa; cursos: Mapa; bots: Mapa } } {
   const ac = d.ia.acciones;
   const ids = {
     etapas: corto('e', d.etapas),
@@ -83,6 +90,7 @@ export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensaj
     negocios: corto('n', ac.pases ? d.otrosNegocios : []),
     grupos: corto('g', ac.grupos ? d.grupos : []),
     cursos: corto('k', d.cursos),
+    bots: corto('b', d.bots || []),
   };
   const idDe = (m: Mapa, id: string) => [...m.entries()].find(([, v]) => v === id)?.[0];
   const e = d.ia.estilo;
@@ -103,7 +111,7 @@ export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensaj
   const etapas = d.etapas.map((x) => `- ${idDe(ids.etapas, x.id)}: "${x.nombre}"${x.tipo === 'ganada' ? ' (compró / se inscribió)' : x.tipo === 'perdida' ? ' (no le interesa; no se le escribe más)' : ''}`).join('\n');
   const respuestas = d.respuestasRapidas
     .filter((x) => idDe(ids.respuestas, x.id))
-    .map((x) => `- ${idDe(ids.respuestas, x.id)}: "${x.titulo}" (${x.tipo === 'texto' ? 'texto' : x.tipo}) ${recortar(x.contenido, 160)}`)
+    .map((x) => `- ${idDe(ids.respuestas, x.id)}: "${x.titulo}" (${x.tipo === 'texto' ? 'texto' : x.tipo}) ${recortar(x.contenido, 160)}${x.cuando?.trim() ? ` — MÁNDALA CUANDO: ${recortar(x.cuando, 200)}` : ''}`)
     .join('\n');
   const otros = d.otrosNegocios
     .filter((x) => idDe(ids.negocios, x.id))
@@ -114,6 +122,7 @@ export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensaj
     .map((x) => `- ${idDe(ids.grupos, x.id)}: "${x.nombre}"${x.cuando ? ` — cuándo ofrecerlo: ${x.cuando}` : ''}`)
     .join('\n');
   const cursos = d.cursos.map((x) => `- ${idDe(ids.cursos, x.id)}: "${x.nombre}", ${x.precio}`).join('\n');
+  const bots = (d.bots || []).map((x) => `- ${idDe(ids.bots, x.id)}: "${x.nombre}" — ACTÍVALO CUANDO: ${recortar(x.cuando, 200)}`).join('\n');
 
   const campos = [
     '"resumen": "una línea: qué quiere el cliente y en qué está"',
@@ -132,6 +141,7 @@ export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensaj
           ...(grupos ? ['"grupo": "id del grupo al que ACEPTÓ unirse, o null"'] : []),
           ...(otros ? ['"pase": null o { "negocio_id": "id", "mensaje": "primer mensaje que le escribirá esa sucursal", "nota": "contexto corto para el equipo" }'] : []),
           ...(cursos ? ['"qr": "id del curso cuyo QR de pago hay que mandarle, o null"'] : []),
+          ...(bots ? ['"bot": "id de la regla o flujo del bot que hay que activar ahora, o null"'] : []),
         ]
       : []),
   ];
@@ -143,7 +153,17 @@ FICHA DEL NEGOCIO (escrita por el dueño):
 ${ficha}
 """
 
-ETAPAS DEL EMBUDO (id: nombre):
+${
+    d.club?.trim()
+      ? `HORARIOS, CUPOS Y PRECIOS EN VIVO (del sistema del club; si algo no coincide con la ficha, manda esto):
+"""
+${d.club.trim()}
+"""
+- Para horarios, cupos y mensualidades usa estos datos. No ofrezcas un grupo LLENO: ofrece otro horario del mismo curso o, si no hay, otra sucursal. Si quedan pocos cupos, puedes decirlo.
+
+`
+      : ''
+  }ETAPAS DEL EMBUDO (id: nombre):
 ${etapas || '(sin etapas)'}
 
 Devuelve exactamente este JSON:
@@ -174,7 +194,8 @@ RESPUESTA AL CLIENTE ("puede_responder" y "respuesta"):
 RESPUESTAS RÁPIDAS DEL NEGOCIO (id: título, tipo, contenido):
 ${respuestas}
 - Si alguna ayuda a responder (una foto de la ubicación, un PDF con precios...), pon su id en "respuestas_rapidas" (como mucho 2). Se mandan después de tu respuesta, tal como están. No repitas su contenido: puedes presentarla ("te paso la ubicación").
-- Cada una se manda una sola vez a cada cliente: las que ya recibió no están en la lista.`
+- Cada una se manda una sola vez a cada cliente: las que ya recibió no están en la lista.
+- Si una dice "MÁNDALA CUANDO", mándala en esa situación (y no en otras): es lo que pidió el dueño.`
             : ''
         }${
           otros
@@ -201,6 +222,14 @@ CURSOS CON INSCRIPCIÓN POR QR (id: nombre, precio):
 ${cursos}
 - Cuando el cliente quiera inscribirse o pregunte cómo pagar uno de estos cursos, pon su id en "qr": se le manda sola la imagen del QR para pagar. No escribas números de cuenta. En tu respuesta dile que cuando pague te mande la foto del comprobante.
 - No confirmes pagos ni inscripciones tú: el comprobante lo revisa el sistema.`
+            : ''
+        }${
+          bots
+            ? `
+
+REGLAS Y FLUJOS DEL BOT QUE PUEDES ACTIVAR (id: nombre — cuándo):
+${bots}
+- Cuando se cumpla el "cuándo" de uno, pon su id en "bot": el bot le manda sus propios mensajes (y sus preguntas, si es un flujo). Tu respuesta debe ser corta o vacía para no repetir lo que manda el bot.`
             : ''
         }`
       : ''
@@ -244,5 +273,6 @@ export function validarResultado(j: Record<string, unknown>, ids: ReturnType<typ
         ? { negocio_id: negocioPase, mensaje: String(paseCrudo!.mensaje).trim().slice(0, 1000), nota: recortar(paseCrudo!.nota, 300) }
         : null,
     qr: conRespuesta ? real(ids.cursos, j.qr) : null,
+    bot: conRespuesta ? real(ids.bots, j.bot) : null,
   };
 }

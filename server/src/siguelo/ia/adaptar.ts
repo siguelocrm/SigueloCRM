@@ -2,6 +2,8 @@ import { db } from '../db.js';
 import { negocioDeLinea } from '../negocios.js';
 import { empresasConIA, llamar } from './config.js';
 import { describirEstilo } from './contexto.js';
+import { datosClubParaIA } from '../club/club.js';
+import { fechaDe } from '../horario.js';
 import type { AjustesRow, ColaRow } from '../tipos.js';
 
 // La IA adapta cada recordatorio y reactivación a la conversación justo antes
@@ -39,6 +41,7 @@ export async function adaptarMensaje(aj: AjustesRow, item: Pick<ColaRow, 'tipo' 
         .filter(Boolean)
         .join('\n')
     : '(sin ficha)';
+  const club = await datosClubParaIA(aj.empresa_id, negocio?.club_sucursal_id, fechaDe(Date.now(), c.zona));
   const tipo = item.tipo === 'rec' ? 'un RECORDATORIO (el cliente no avanzó y se le recuerda)' : 'una REACTIVACIÓN (se le escribió y no respondió)';
 
   const sistema = `Eres quien atiende el WhatsApp de un negocio. Vas a enviar ${tipo} a un cliente. Te doy el mensaje base que escribió el dueño y la conversación.
@@ -56,7 +59,12 @@ FICHA DEL NEGOCIO:
 """
 ${ficha}
 """
-
+${club ? `
+HORARIOS, CUPOS Y PRECIOS EN VIVO (sistema del club; no ofrezcas grupos LLENOS):
+"""
+${club}
+"""
+` : ''}
 Devuelve SOLO este JSON: {"enviar": true/false, "texto": "el mensaje final", "motivo": "si no se envía, por qué (una frase)"}`;
 
   const usuario = `Mensaje: ${item.nombre}

@@ -27,7 +27,7 @@ export default function ReporteInscripcion({ cursos, zona }: { cursos: Curso[]; 
     supabase
       .from('siguelo_pagos')
       .select('id, curso_id, telefono, estado, monto, transaccion, datos, creado_en, contactos(nombre)')
-      .in('estado', ['datos', 'inscrito', 'revisar'])
+      .in('estado', ['datos', 'reservado', 'inscrito', 'revisar'])
       .gte('creado_en', desde)
       .lt('creado_en', hasta)
       .order('creado_en')
@@ -55,7 +55,7 @@ export default function ReporteInscripcion({ cursos, zona }: { cursos: Curso[]; 
     const lineas = [
       ['Fecha', 'Curso', 'Nombre', 'Teléfono', 'Monto', 'Transacción', 'Estado', ...ids.map(nombreCampo)].map(celda).join(';'),
       ...pagados.map((f) =>
-        [fecha(f.creado_en), cursos.find((k) => k.id === f.curso_id)?.nombre ?? '', f.contactos?.nombre ?? '', `+${f.telefono.split('@')[0]}`, f.monto ?? '', f.transaccion ?? '', f.estado === 'inscrito' ? 'Inscrito' : 'Faltan datos', ...ids.map((id) => f.datos?.[id])]
+        [fecha(f.creado_en), cursos.find((k) => k.id === f.curso_id)?.nombre ?? '', f.contactos?.nombre ?? '', `+${f.telefono.split('@')[0]}`, f.monto ?? '', f.transaccion ?? '', f.estado === 'inscrito' ? 'Inscrito' : f.estado === 'reservado' ? 'Reservado en el club' : 'Faltan datos', ...ids.map((id) => f.datos?.[id])]
           .map(celda)
           .join(';'),
       ),
@@ -101,7 +101,7 @@ export default function ReporteInscripcion({ cursos, zona }: { cursos: Curso[]; 
                   <td className="px-3 py-2" style={{ color: TEXTO_PRIMARIO }}>{f.contactos?.nombre || `+${f.telefono.split('@')[0]}`}</td>
                   <td className="px-3 py-2">{cursos.find((k) => k.id === f.curso_id)?.nombre ?? '—'}</td>
                   <td className="px-3 py-2 whitespace-nowrap num">{formatoMonto(f.monto, cursos.find((k) => k.id === f.curso_id)?.moneda || 'Bs')}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">{f.estado === 'inscrito' ? 'Inscrito' : 'Faltan datos'}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">{f.estado === 'inscrito' ? 'Inscrito' : f.estado === 'reservado' ? 'Reservado en el club' : 'Faltan datos'}</td>
                 </tr>
               ))}
             </tbody>

@@ -164,4 +164,32 @@ t('etapa sin config (perdida): nada', () => {
   assert.equal(C.deseoRec(e, c), null); assert.equal(C.transicion(e, c), null);
   assert.deepEqual(C.alMensajeManual(e, c, T0), []);
 });
+// ---------- reserva en el sistema del club ----------
+const RS = await import(R + 'pagos/reserva.ts');
+const grupo = (g: string, dias: number[]) => ({ grupo: g, curso: 'Ajedrez', curso_id: 'c', dias, hora_inicio: '16:00', hora_fin: '17:00', cupo: 'libre', quedan: null });
+const tarifas = [
+  { id: 'lmv', nombre: 'LMV', dias: [5, 1, 3], clases: 12, precios: [180, 299, 380], desde: null, hasta: null },
+  { id: 'sab', nombre: 'Sábados', dias: [6], clases: 4, precios: [100, 150, 200], desde: null, hasta: null },
+  { id: 'vieja', nombre: 'Vencida', dias: [6], clases: 4, precios: [1, 2, 3], desde: '2026-01-01', hasta: '2026-02-01' },
+];
+t('club: 1 curso de lunes/miércoles/viernes = Bs 180', () => assert.deepEqual(RS.totalSugerido([grupo('a', [1, 3, 5])], tarifas, '2026-10-26'), { total: 180, sinPrecio: false }));
+t('club: 2 cursos (o 2 hermanos con 1 curso) de lun/mié/vie = Bs 299', () => assert.equal(RS.totalSugerido([grupo('a', [1, 3, 5]), grupo('b', [1, 3, 5])], tarifas, '2026-10-26').total, 299));
+t('club: 1 de lun/mié/vie + 1 de sábado = 180 + 100 (sin la tarifa vencida)', () => assert.equal(RS.totalSugerido([grupo('a', [1, 3, 5]), grupo('b', [6])], tarifas, '2026-10-26').total, 280));
+t('club: un día sin tarifa queda sin precio', () => assert.equal(RS.totalSugerido([grupo('a', [2, 4])], tarifas, '2026-10-26').sinPrecio, true));
+t('club: primer día de clase (lunes 26/10 → ese lunes; sábado → el 31)', () => {
+  assert.equal(RS.fechaInicio([1, 3, 5], '2026-10-26'), '2026-10-26');
+  assert.equal(RS.fechaInicio([6], '2026-10-26'), '2026-10-31');
+});
+t('club: celular sin el 591 y edad cumplida', () => {
+  assert.equal(RS.celularLocal('59170000001@s.whatsapp.net'), '70000001');
+  assert.equal(RS.edad('2017-03-15', '2026-03-14'), 8);
+  assert.equal(RS.edad('2017-03-15', '2026-03-15'), 9);
+});
+t('club: lo que falta y juntar lo nuevo con lo de antes', () => {
+  assert.deepEqual(RS.faltanClub(null), ['Nombre del papá, mamá o tutor', 'Nombre completo del niño o niña', 'Su fecha de nacimiento', 'Curso y horario que elige']);
+  const d = RS.mezclarDatosClub({ tutor: null, estudiantes: [{ nombre: 'Juan Pérez', fecha_nacimiento: null, grupo: 'g1' }] }, { tutor: 'María', estudiantes: [{ nombre: null, fecha_nacimiento: '2017-03-15', grupo: null }] });
+  assert.deepEqual(d, { tutor: 'María', estudiantes: [{ nombre: 'Juan Pérez', fecha_nacimiento: '2017-03-15', grupo: 'g1' }] });
+  assert.deepEqual(RS.faltanClub(d), []);
+  assert.deepEqual(RS.faltanClub(RS.mezclarDatosClub(d, { estudiantes: [{}, { nombre: 'Ana' }] as any })), ['Fecha de nacimiento de Ana', 'Curso y horario de Ana']);
+});
 console.log(`\n${ok} pruebas OK`);

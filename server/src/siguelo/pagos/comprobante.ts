@@ -91,7 +91,10 @@ export function controlar(
   if (curso) {
     const moneda = curso.moneda || 'Bs';
     if (l.monto == null) add({ codigo: 'monto', nombre: 'Monto', ok: false, grave: false, detalle: 'No se pudo leer el monto' });
-    else {
+    else if (!(Number(curso.precio) > 0)) {
+      // Sin precio fijo (por ejemplo, un curso del club: el total depende de cuántos cursos toma).
+      add({ codigo: 'monto', nombre: 'Monto', ok: l.monto > 0, grave: false, detalle: `Pagó ${formatoMonto(l.monto, moneda)} (el total lo calcula tu sistema del club)` });
+    } else {
       const ok = l.monto + 0.001 >= Number(curso.precio);
       add({
         codigo: 'monto',

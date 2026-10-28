@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ChevronDown, Plus, Smartphone, Store, Trash2 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import { BORDE, TEXTO_PRIMARIO, TEXTO_SECUNDARIO, TEXTO_TERCIARIO } from '../../lib/tema';
@@ -17,6 +17,7 @@ type Borrador = {
   ia_activa: boolean;
   grupos: GrupoNegocio[];
   embudo_id: string;
+  club_sucursal_id: string;
   lineas: string[];
 };
 
@@ -30,6 +31,7 @@ const aBorrador = (n: Negocio | null, lineas: string[]): Borrador => ({
   ia_activa: n?.ia_activa ?? true,
   grupos: (n?.grupos ?? []).map((g) => ({ ...g })),
   embudo_id: n?.embudo_id ?? '',
+  club_sucursal_id: n?.club_sucursal_id ?? '',
   lineas,
 });
 
@@ -60,6 +62,16 @@ export default function FichasNegocios({ datos, empresaId, puedeEditar }: Props)
   const [abierto, setAbierto] = useState<string | null>(null); // id del negocio o 'nuevo'
   const [borrador, setBorrador] = useState<Borrador | null>(null);
   const [guardando, setGuardando] = useState(false);
+  // Sucursales del sistema del club (null = no está conectado o falta el SQL).
+  const [sucursalesClub, setSucursalesClub] = useState<{ id: string; nombre: string }[] | null>(null);
+
+  useEffect(() => {
+    supabase
+      .from('siguelo_club_info')
+      .select('conectado, sucursales')
+      .maybeSingle()
+      .then(({ data, error }) => setSucursalesClub(!error && data?.conectado ? (data.sucursales as { id: string; nombre: string }[]) : null));
+  }, []);
 
   const lineasDe = (negocioId: string) => Object.entries(datos.negocioDeLinea).filter(([, n]) => n === negocioId).map(([l]) => l);
   const nombreNegocio = (id: string | undefined) => datos.negocios.find((n) => n.id === id)?.nombre;
@@ -93,6 +105,7 @@ export default function FichasNegocios({ datos, empresaId, puedeEditar }: Props)
       ia_activa: borrador.ia_activa,
       grupos: grupos.map((g) => ({ id: g.id, nombre: g.nombre.trim(), link: g.link.trim(), cuando: g.cuando.trim() })),
       embudo_id: borrador.embudo_id || null,
+      ...(sucursalesClub ? { club_sucursal_id: borrador.club_sucursal_id || null } : {}),
       actualizado_en: new Date().toISOString(),
     };
     let id = n?.id;
@@ -157,6 +170,14 @@ export default function FichasNegocios({ datos, empresaId, puedeEditar }: Props)
         <Campo etiqueta="Zonas que atiende" ayuda="Barrios o ciudades cercanos. La IA los usa para sugerir la sucursal más cercana.">
           <input value={borrador.zonas} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, zonas: e.target.value })} placeholder="Ej. Quillacollo, Tiquipaya, Colcapirhua" className={`${claseCampo} font-normal`} style={estiloCampo} />
         </Campo>
+        {sucursalesClub && (
+          <Campo etiqueta="Sucursal en tu sistema del club" ayuda="La IA responde con los horarios, cupos y precios en vivo de esta sucursal, y las inscripciones pagadas quedan como reserva en ella.">
+            <select value={borrador.club_sucursal_id} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, club_sucursal_id: e.target.value })} className={`${claseCampo} font-normal`} style={estiloCampo}>
+              <option value="">Ninguna (no usar el sistema del club)</option>
+              {sucursalesClub.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+            </select>
+          </Campo>
+        )}
 
         <Campo etiqueta="Embudo" ayuda="Los clientes nuevos de este negocio entran a la primera etapa de este embudo. Los que ya están no se mueven.">
           <select value={borrador.embudo_id} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, embudo_id: e.target.value })} className={`${claseCampo} font-normal`} style={estiloCampo}>

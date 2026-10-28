@@ -261,6 +261,40 @@ await leerPendientes(await config());
 assert.equal(llamadas.length, antes2);
 paso('respeta el máximo de consultas a la IA por día');
 
+// ---------- 11. "Cuándo la usa la IA": respuestas rápidas y reglas del bot ----------
+await pg.query(`update siguelo_ia set max_consultas_dia = 500, modo = 'automatico', espera_min_seg = 0, espera_max_seg = 0`);
+const { botActivados } = await import('./mock-bot.mjs');
+const rQR = (await uno(`insert into respuestas_rapidas (empresa_id, titulo, contenido, tipo, media_url) values ($1, 'QR inscripción', 'Escanea para pagar', 'imagen', 'https://x/qr.jpg') returning id`, [empresa])).id;
+await pg.query(`insert into siguelo_cuando_ia (empresa_id, tipo, item_id, cuando) values ($1, 'respuesta', $2, 'cuando el cliente quiere inscribirse')`, [empresa, rQR]);
+const regla = (await uno(`insert into respuestas_automaticas (empresa_id, palabra_clave, nombre, tipo, pasos) values ($1, 'cursos', 'Info de cursos', 'rapida', $2::jsonb) returning id`, [empresa, JSON.stringify([{ tipo: 'texto', contenido: 'Tenemos estos cursos…' }])])).id;
+await pg.query(`insert into siguelo_cuando_ia (empresa_id, tipo, item_id, cuando) values ($1, 'bot', $2, 'cuando pide información de los cursos')`, [empresa, regla]);
+const gabi = await chat(L1, '59170000020', 'Gabi');
+await escribe(gabi.conv, 'Hola, ¿qué cursos tienen? Quiero inscribir a mi hijo');
+avanzar(MIN);
+responder = (l) => {
+  assert.match(l.sistema, /"QR inscripción" \(imagen\) Escanea para pagar — MÁNDALA CUANDO: cuando el cliente quiere inscribirse/);
+  const bot = /- (b\d+): "Info de cursos" — ACTÍVALO CUANDO: cuando pide información de los cursos/.exec(l.sistema)?.[1];
+  assert.ok(bot, 've la regla del bot que puede activar');
+  return { resumen: 'Quiere info e inscribir', puede_responder: true, respuesta: 'Te paso la información 😊', respuestas_rapidas: [idDe(l, 'r', '"QR inscripción"')], bot };
+};
+await leerPendientes(await config());
+await salida();
+const aGabi = enviados.filter((e) => e.jid.startsWith('59170000020'));
+assert.equal(aGabi[0]?.texto, 'Te paso la información 😊');
+assert.equal(aGabi.find((e) => e.imagen)?.imagen, 'https://x/qr.jpg');
+assert.equal(botActivados.length, 1);
+assert.equal(botActivados[0].tipo, 'pasos');
+assert.equal(botActivados[0].conversacionId, gabi.conv);
+paso('la IA manda la respuesta rápida y activa la regla del bot en la situación que escribiste');
+
+await pg.query(`insert into bot_sesiones (conversacion_id, regla_id, nodo_id, linea_id, telefono, actualizado_en) values ($1, $2, 'n1', $3, '59170000020', $4)`, [gabi.conv, regla, L1, iso(reloj.ahora)]);
+await escribe(gabi.conv, 'La opción 2');
+avanzar(MIN);
+const antesFlujo = llamadas.length;
+await leerPendientes(await config());
+assert.equal(llamadas.length, antesFlujo, 'contesta el flujo del bot, no la IA');
+paso('mientras un flujo del bot espera la respuesta del cliente, la IA no se mete');
+
 const uso = await uno(`select sum(consultas)::int c, sum(entrada)::int e from siguelo_ia_uso`);
 console.log(`\n${ok} pasos OK · ${uso.c} consultas a la IA (${uso.e} tokens de entrada) · mensajes:`);
 for (const e of enviados) console.log('  →', e.jid.split('@')[0], e.imagen ? `[foto ${e.imagen}]` : JSON.stringify(e.texto).slice(0, 110));

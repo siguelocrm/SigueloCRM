@@ -163,6 +163,8 @@ export type NegocioRow = {
   ia_activa: boolean;
   zonas: string | null;
   grupos: GrupoNegocio[];
+  // Sucursal de este negocio en el sistema del club (null = no está conectado).
+  club_sucursal_id?: string | null;
   creado_en: string;
   actualizado_en: string;
 };
@@ -229,7 +231,7 @@ export type LecturaRow = {
   actualizado_en: string;
 };
 
-export type OrigenSalida = 'respuesta' | 'respuesta_rapida' | 'grupo' | 'pase' | 'aviso' | 'qr' | 'pago';
+export type OrigenSalida = 'respuesta' | 'respuesta_rapida' | 'grupo' | 'pase' | 'aviso' | 'qr' | 'pago' | 'bot';
 export type SalidaRow = {
   id: string;
   empresa_id: string;
@@ -274,7 +276,7 @@ export type MensajeAsistenteRow = {
 };
 
 // ---------- Fase 5: inscripción con pago ----------
-export type TextosCurso = { confirmado: string; pedir_datos: string; falta: string; link: string; revisar: string; rechazado: string };
+export type TextosCurso = { confirmado: string; pedir_datos: string; falta: string; link: string; revisar: string; rechazado: string; reservado: string };
 export type CursoRow = {
   id: string;
   empresa_id: string;
@@ -291,6 +293,8 @@ export type CursoRow = {
   etapa_id: string | null;
   max_horas: number;
   textos: TextosCurso;
+  // Al pagar, la inscripción queda como reserva en el sistema del club.
+  club?: boolean;
   creado_en: string;
   actualizado_en: string;
 };
@@ -311,7 +315,10 @@ export type LecturaComprobante = {
   confianza: number;
 };
 export type ControlPago = { codigo: string; nombre: string; ok: boolean; detalle: string };
-export type EstadoPago = 'leyendo' | 'no_es' | 'revisar' | 'rechazado' | 'datos' | 'inscrito';
+export type EstadoPago = 'leyendo' | 'no_es' | 'revisar' | 'rechazado' | 'datos' | 'reservado' | 'inscrito';
+// Lo que se va juntando para la reserva en el club: grupo = id del grupo del club.
+// curso_texto: "Ajedrez (Lunes/Miércoles/Viernes · 16:00 a 17:00)", se llena al dejar la reserva.
+export type DatosClub = { tutor: string | null; estudiantes: { nombre: string | null; fecha_nacimiento: string | null; grupo: string | null; curso_texto?: string | null }[] };
 export type PagoRow = {
   id: string;
   empresa_id: string;
@@ -337,6 +344,9 @@ export type PagoRow = {
   intentos: number;
   oportunidad_id: string | null;
   avisado: boolean;
+  club?: DatosClub | null;
+  club_reserva_id?: string | null;
+  club_revisado_en?: string | null;
   creado_en: string;
   actualizado_en: string;
 };
@@ -442,6 +452,11 @@ export type SigueloDatabase = {
       }>;
       siguelo_cursos: Tabla<CursoRow>;
       siguelo_asistente: Tabla<MensajeAsistenteRow>;
+      siguelo_cuando_ia: Tabla<{ empresa_id: string; tipo: 'respuesta' | 'bot'; item_id: string; cuando: string; actualizado_en: string }>;
+      respuestas_automaticas: Tabla<{ id: string; empresa_id: string; nombre: string | null; palabra_clave: string; activo: boolean; tipo: string; flujo: unknown; pasos: unknown[] }>;
+      bot_sesiones: Tabla<{ conversacion_id: string; regla_id: string; nodo_id: string; linea_id: string; telefono: string; actualizado_en: string }>;
+      siguelo_club: Tabla<{ empresa_id: string; url: string; clave_publica: string; usuario: string; contrasena: string; actualizado_en: string }>;
+      siguelo_club_info: Tabla<{ empresa_id: string; conectado: boolean; vendedor: string | null; sucursales: { id: string; nombre: string; departamento?: string | null }[]; error: string | null; actualizado_en: string }>;
       siguelo_embudos: Tabla<{ id: string; empresa_id: string; nombre: string; creado_en: string }>;
       siguelo_pagos: Tabla<PagoRow>;
       campos_personalizados: Tabla<{ id: string; empresa_id: string; nombre: string; tipo: string; opciones: string[]; orden: number }>;
