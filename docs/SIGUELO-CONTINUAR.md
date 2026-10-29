@@ -56,7 +56,19 @@ Entra a http://localhost:5173. Los envíos automáticos los hace el **servidor**
    quitarte el rol). Crea Dueños de negocio, Gerentes y Vendedores; a cada uno le eliges sus **números** (todos, algunos o
    ninguno) y **hasta cuándo** tiene acceso (1 mes, 1 año, una fecha). Cada uno solo administra a los que están debajo de él
    y solo ve los chats de sus números. Al vencer, queda desactivado solo; para renovarlo, cambia la fecha.
-9. Prueba todo con un **número secundario** (automatizar WhatsApp tiene riesgo de bloqueo).
+9. **Automatizar → Redes sociales** (Facebook e Instagram), pestaña **Cuentas**:
+   1. En **developers.facebook.com** (con el Facebook que administra tus páginas) → **Mis apps → Crear app**, tipo **Empresa**.
+   2. Agrega **Inicio de sesión con Facebook para empresas** y en **URI de redireccionamiento de OAuth válidos** pega la
+      dirección que te muestra el CRM (`https://tu-crm/siguelo/meta/volver`). Si te pide una **Configuración**, créala con
+      los permisos que lista el CRM y copia su ID.
+   3. En **Configuración de la app → Básica**: copia el **Identificador** y la **Clave secreta**; en política de privacidad y
+      en instrucciones para eliminar datos pega `https://tu-crm/siguelo/privacidad` (la sirve el CRM). Pasa la app a **Activo**.
+   4. En el CRM pega el ID, la clave (y el ID de configuración si hay) → **Guardar y probar** → **Conectar con Facebook**.
+   5. Activa cada página o Instagram y elige su **negocio** (la IA usa su ficha y su WhatsApp). Negativos: ocultar o borrar.
+   Instagram tiene que ser cuenta **profesional** conectada a su página. Lo que la IA no sabe te lo pregunta a tu WhatsApp
+   personal (avisos de IA → Ajustes, tipo "Redes sociales") con un código: respondes **"R12 tu respuesta"** y lo publica y
+   aprende (pestaña **Lo que aprendió**). Si no respondes en 6 h, publica una respuesta que lo lleva a tu WhatsApp.
+10. Prueba todo con un **número secundario** (automatizar WhatsApp tiene riesgo de bloqueo).
 
 ### Guardar el trabajo (git)
 Pídele a la IA: *"haz el commit de lo que hay (sin push)"*. No hagas `git push` mientras no tengas la ficha del profe o tu
@@ -96,7 +108,8 @@ Con otra IA que no sea Claude sirve lo mismo, siempre que pueda leer y editar lo
 | + | Sistema del club: horarios, cupos y precios en vivo; inscripción pagada → reserva de vendedor | ✅ commits `7297fd0` y `6fbb92d` |
 | + | Usuarios: dueño principal, jerarquía, números por persona, vencimiento; el servidor pide sesión y acceso al número | ✅ (ver `git log`) |
 | ⏳ | Clientes que compran el CRM, planes y cobros | por decidir (ver "Pendientes") |
-| ⏳ | Facebook / Instagram (comentarios y mensajes) | por decidir (ver "Pendientes") |
+| + | Facebook e Instagram: la IA responde comentarios, oculta/borra negativos, te pregunta y aprende | ✅ (ver `git log`) |
+| ⏳ | Mensajes privados de Facebook e Instagram | falta la revisión de Meta (ver "Pendientes") |
 
 ---
 
@@ -131,9 +144,11 @@ npm test
 - `integracion-asistente.mts`: la IA que adapta el seguimiento y el asistente (proponer y aplicar cambios).
 - `integracion-club.mts`: el sistema del club con un club falso (conectar, horarios en vivo, reserva, aprobada/rechazada).
 - `integracion-usuarios.mts`: jerarquía, números por persona y vencimiento (reglas del servidor).
+- `integracion-redes.mts`: comentarios de Facebook/Instagram con una Meta y una OpenAI falsas (responder, ocultar, borrar,
+  preguntarte "R12", tu respuesta por WhatsApp, lo aprendido, respuesta de respaldo).
 - `hooks.mjs` cambia `db.js` y `whatsapp/sesiones.js` por los de prueba; las pruebas fuerzan una URL de Supabase falsa.
 - Pantallas: `npm run banco` y abre http://localhost:5199/banco?vista=seguimiento (o `negocios`, `embudo`, `ia`,
-  `inscripciones`): la pantalla real con datos de ejemplo en memoria (`banco/mock-supabase.ts`).
+  `inscripciones`, `usuarios`, `redes`): la pantalla real con datos de ejemplo en memoria (`banco/mock-supabase.ts`).
 - `mock-bot.mjs` reemplaza al bot del profe en las pruebas (anota qué regla o flujo activó la IA).
 
 ### Cómo funciona (resumen)
@@ -178,6 +193,17 @@ npm test
   `usuarios/proteger.ts` (`conNumero`) exige sesión y acceso al número en `/enviar`, `/etiquetas`, `/lineas/*` y el bot;
   la página manda el token con `conSesion()` (lib/backend.ts). La ruta del curso `POST /usuarios` quedó cerrada (410).
 
+- **Redes sociales** (`redes/`, secciones 32 a 34): `meta.ts` habla con la Graph API (v26.0, firma `appsecret_proof`):
+  login (`config_id` o `scope`), token largo, páginas e Instagram de `/me/accounts`, comentarios (FB `/{página}/feed`,
+  IG `/{ig}/media`), responder, ocultar y borrar. No usa webhooks (piden modo Live + acceso avanzado): cada 60 s
+  `revisarRedes` revisa cada cuenta activa cada 3 min. `redes.ts` decide con la IA (responder / preguntar / negativo / spam /
+  ignorar) usando la ficha, el club en vivo y `siguelo_aprendido`; las respuestas salen con 1 a 6 min de espera y distintas
+  a las últimas. "Preguntar" manda un aviso con código `R{n}` (`siguelo_redes_codigo()`); `leerRespuestasDueno` lee tu
+  respuesta en el chat con tu número personal, la IA la redacta, se publica y queda en `siguelo_aprendido` (que también usa
+  el lector de WhatsApp). App y tokens en `siguelo_meta_app` / `siguelo_redes_tokens` (sin permisos para la página).
+  Rutas en `redes/rutas.ts`: `/siguelo/meta/app`, `/iniciar`, `/volver` (sin sesión, validada con `state`), `/token`
+  (plan B), `/siguelo/redes/responder` y la página pública `/siguelo/privacidad`.
+
 ### Pendientes conocidos e ideas
 - El selector de etapa dentro del chat (curso: `HiloMensajes`/`PanelContacto`) lista etapas de todos los embudos.
 - Dashboard y Reportes no separan por embudo.
@@ -190,7 +216,12 @@ npm test
   seguimiento, negocios, cursos) es de toda la empresa. Para vender a otros negocios hay que decidir: un CRM aparte por
   cliente (como lo diseñó el curso), o pasarlo a varias empresas (cambio grande). Por ahora, los "Dueños de negocio" son
   para tu propio equipo o socios, no para clientes ajenos.
-- **Redes sociales:** Facebook e Instagram se pueden conectar con una App de Meta (comentarios: responder, ocultar o
-  borrar; mensajes: responder dentro de 24 h). TikTok no da acceso a comentarios ni mensajes a cuentas comunes.
+- **Mensajes privados de Facebook e Instagram (fase B):** responder DMs a clientes pide **acceso avanzado** a
+  `pages_messaging` / `instagram_manage_messages`, con **revisión de la app** y **verificación del negocio** en Meta, y
+  se responde dentro de las 24 h del último mensaje del cliente. Con eso, se agregaría como otro "canal" del lector de IA.
+- **TikTok:** su API de comentarios y mensajes no está abierta a cuentas comunes (pide aprobación de desarrollador y
+  responder mensajes depende del país). Por ahora no se puede.
+- Redes: si hay más de 10 comentarios nuevos en 3 min, el resto sale en la vuelta siguiente; solo mira las últimas 10
+  publicaciones de cada cuenta.
 - Sistema del club: si el comprobante llega en PDF, la reserva queda sin foto y con "pagado por QR" en 0 (la nota lo dice);
   el total sugerido es aproximado (tu sistema lo recalcula al registrar). Una reserva es de una sucursal.

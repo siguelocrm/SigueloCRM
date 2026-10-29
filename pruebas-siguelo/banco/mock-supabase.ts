@@ -156,6 +156,18 @@ const tablas: Record<string, Fila[]> = {
 • Los recordatorios al día 1, 3 y 5. Para el del día 5 te escribí un texto nuevo con la información de tu negocio.
 Pulsa "Aplicar" para hacerlo.`, acciones: [{ tipo: 'secuencia', descripcion: 'Reactivación de "Primer Contacto": 4 mensajes a 1 h, 3 h, 5 h y 8 h, contados desde que le escribiste, con textos nuevos' }, { tipo: 'secuencia', descripcion: 'Recordatorios de "Primer Contacto": 3 mensajes a 1 día, 3 días y 5 días, contados desde que entra a la etapa, con textos nuevos' }], aplicado_en: null, resultado: null, creado_en: iso(ahora - 4 * 60000) },
   ],
+  siguelo_meta_info: [{ empresa_id: E, app_id: '1029384756102', config_id: null, error: null, leido_dueno: null }],
+  siguelo_redes_cuentas: [
+    { id: 'rc1', empresa_id: E, red: 'facebook', externo_id: '1111', nombre: 'Academia de Ajedrez', usuario: null, negocio_id: 'n2', activo: true, responder: true, negativos: 'ocultar', whatsapp: '', instrucciones: '', revisado_hasta: iso(ahora - 2 * 60000), revisado_en: iso(ahora - 2 * 60000), error: null },
+    { id: 'rc2', empresa_id: E, red: 'instagram', externo_id: '2222', nombre: 'Academia de Ajedrez', usuario: 'academia.ajedrez', negocio_id: null, activo: false, responder: true, negativos: 'ocultar', whatsapp: '', instrucciones: '', revisado_hasta: null, revisado_en: null, error: null },
+  ],
+  siguelo_redes_comentarios: [
+    { id: 'rk1', cuenta_id: 'rc1', autor: 'Rosa Fernández', texto: '¿Tienen clases para adultos mayores?', tipo: 'pregunta', accion: 'preguntado', respuesta: null, respaldo: 'Hola Rosa, escríbenos al WhatsApp y te contamos todo 😊 https://wa.me/59170000000', motivo: 'la ficha no dice si hay clases para adultos mayores', codigo: 12, responder_en: iso(ahora + 5 * H), creado_en: iso(ahora - 30 * 60000) },
+    { id: 'rk2', cuenta_id: 'rc1', autor: 'Luis Choque', texto: 'Precio?', tipo: 'pregunta', accion: 'respondido', respuesta: 'Hola Luis 👋 La mensualidad es de Bs 150. Te paso los horarios por WhatsApp: https://wa.me/59170000000', respaldo: null, motivo: null, codigo: null, responder_en: null, creado_en: iso(ahora - 2 * H) },
+    { id: 'rk3', cuenta_id: 'rc1', autor: 'Anónimo Perfil', texto: 'No lo recomiendo, pésimo lugar', tipo: 'negativo', accion: 'oculto', respuesta: null, respaldo: null, motivo: 'crítica negativa al negocio', codigo: null, responder_en: null, creado_en: iso(ahora - 3 * H) },
+    { id: 'rk4', cuenta_id: 'rc1', autor: 'Carla M.', texto: '¿Dónde queda?', tipo: 'pregunta', accion: 'programado', respuesta: '¡Hola Carla! Estamos en el Cercado. Escríbenos y te mandamos la ubicación 📍 https://wa.me/59170000000', respaldo: null, motivo: null, codigo: null, responder_en: iso(ahora + 3 * 60000), creado_en: iso(ahora - 60000) },
+  ],
+  siguelo_aprendido: [{ id: 'ap1', empresa_id: E, negocio_id: 'n2', pregunta: '¿Dan certificado?', respuesta: 'Sí, al terminar cada nivel reciben un certificado de la academia.', creado_en: iso(ahora - 3 * 24 * H) }],
   siguelo_contador: [{ empresa_id: E, linea_id: 'l1', fecha: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/La_Paz' }).format(new Date()), enviados: 4 }],
 };
 

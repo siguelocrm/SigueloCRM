@@ -25,7 +25,7 @@ export interface AjustesIA {
   max_consultas_dia: number;
   pausa_si_escribes_min: number;
   acciones: { mover_etapa: boolean; no_quiere_mas: boolean; respuestas_rapidas: boolean; pases: boolean; grupos: boolean };
-  avisos: { activo: boolean; telefono: string; linea_id: string | null; tipos: Partial<Record<TipoAviso | 'pago', boolean>>; max_dia: number; juntar_min: number };
+  avisos: { activo: boolean; telefono: string; linea_id: string | null; tipos: Partial<Record<TipoAviso | 'pago' | 'redes', boolean>>; max_dia: number; juntar_min: number };
 }
 
 export interface ItemSalida {

@@ -270,6 +270,10 @@ export default function AjustesIA({ ajustes, existe, lineas, puedeEditar, onGuar
             <input type="checkbox" checked={b.avisos.tipos.pago !== false} disabled={!puedeEditar} onChange={(e) => setB({ ...b, avisos: { ...b.avisos, tipos: { ...b.avisos.tipos, pago: e.target.checked } } })} />
             Pagos e inscripciones (comprobantes confirmados, rechazados o para revisar)
           </label>
+          <label className="flex items-center gap-2 text-[12.5px]" style={{ color: TEXTO_SECUNDARIO }}>
+            <input type="checkbox" checked={b.avisos.tipos.redes !== false} disabled={!puedeEditar} onChange={(e) => setB({ ...b, avisos: { ...b.avisos, tipos: { ...b.avisos.tipos, redes: e.target.checked } } })} />
+            Redes sociales (preguntas que la IA no sabe responder y comentarios negativos)
+          </label>
         </div>
         <span className="text-[11.5px]" style={{ color: TEXTO_TERCIARIO }}>
           Junta los casos de {b.avisos.juntar_min} minutos en un solo mensaje, no repite lo mismo del mismo cliente en 6 horas y manda como mucho {b.avisos.max_dia} por día.

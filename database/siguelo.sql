@@ -1237,3 +1237,138 @@ create policy "mensajes_programados_todo" on mensajes_programados for all
       where l.empresa_id = (select empresa_id from usuario_actual()) and siguelo_ve_linea(c.linea_id)
     )
   );
+
+-- =========================================================
+-- Redes sociales: comentarios de Facebook e Instagram
+-- La IA lee los comentarios nuevos de tus páginas y cuentas, responde con la
+-- ficha del negocio (cada vez distinto) llevando a la gente a tu WhatsApp,
+-- oculta o borra los negativos, y lo que no sabe te lo pregunta por WhatsApp:
+-- tu respuesta se publica y queda aprendida para la próxima.
+-- =========================================================
+
+-- ---------- 32. Tu App de Meta y las cuentas conectadas ----------
+-- Sin políticas: el secreto de la app y los tokens solo los lee el servidor.
+create table if not exists siguelo_meta_app (
+  empresa_id uuid primary key references empresas (id) on delete cascade,
+  app_id text not null,
+  app_secret text not null,
+  config_id text,
+  actualizado_en timestamptz not null default now()
+);
+alter table siguelo_meta_app enable row level security;
+
+-- Lo que ve la página: el id de la app y si está lista; leido_dueno = último mensaje tuyo ya leído.
+create table if not exists siguelo_meta_info (
+  empresa_id uuid primary key references empresas (id) on delete cascade,
+  app_id text,
+  config_id text,
+  error text,
+  leido_dueno timestamptz,
+  actualizado_en timestamptz not null default now()
+);
+alter table siguelo_meta_info enable row level security;
+drop policy if exists "siguelo_meta_info_select" on siguelo_meta_info;
+create policy "siguelo_meta_info_select" on siguelo_meta_info for select
+  using (empresa_id = (select empresa_id from usuario_actual()));
+
+-- Cada página de Facebook o cuenta de Instagram, con su negocio y qué hace la IA.
+create table if not exists siguelo_redes_cuentas (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id uuid not null references empresas (id) on delete cascade,
+  red text not null check (red in ('facebook', 'instagram')),
+  externo_id text not null,
+  nombre text not null default '',
+  usuario text,
+  negocio_id uuid references siguelo_negocios (id) on delete set null,
+  activo boolean not null default false,
+  responder boolean not null default true,
+  -- Comentarios negativos (critican, no recomiendan, insultan) y spam: nada, ocultar o borrar.
+  negativos text not null default 'ocultar' check (negativos in ('nada', 'ocultar', 'borrar')),
+  -- WhatsApp al que lleva a la gente (vacío = el del número del negocio).
+  whatsapp text not null default '',
+  instrucciones text not null default '',
+  -- Hasta dónde ya se leyeron los comentarios (al conectar: desde ese momento).
+  revisado_hasta timestamptz,
+  revisado_en timestamptz,
+  error text,
+  creado_en timestamptz not null default now(),
+  actualizado_en timestamptz not null default now(),
+  unique (empresa_id, red, externo_id)
+);
+create table if not exists siguelo_redes_tokens (
+  cuenta_id uuid primary key references siguelo_redes_cuentas (id) on delete cascade,
+  token text not null,
+  actualizado_en timestamptz not null default now()
+);
+alter table siguelo_redes_tokens enable row level security;
+
+-- ---------- 33. Cada comentario y lo que se hizo ----------
+-- accion: programado (la respuesta sale en unos minutos) · respondido · oculto · borrado · ignorado
+--         · preguntado (te lo preguntó por WhatsApp; codigo = el número para responder) · error
+create sequence if not exists siguelo_redes_codigo_seq;
+create table if not exists siguelo_redes_comentarios (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id uuid not null references empresas (id) on delete cascade,
+  cuenta_id uuid not null references siguelo_redes_cuentas (id) on delete cascade,
+  externo_id text not null,
+  publicacion_id text,
+  publicacion text,
+  autor text,
+  texto text not null default '',
+  publicado_en timestamptz,
+  tipo text,
+  accion text not null default 'programado'
+    check (accion in ('programado', 'respondido', 'oculto', 'borrado', 'ignorado', 'preguntado', 'error')),
+  respuesta text,
+  -- Si te pregunta y no respondes en unas horas, se publica esta (lleva a tu WhatsApp).
+  respaldo text,
+  motivo text,
+  codigo integer,
+  responder_en timestamptz,
+  respondido_en timestamptz,
+  creado_en timestamptz not null default now(),
+  unique (cuenta_id, externo_id)
+);
+create index if not exists siguelo_redes_comentarios_idx on siguelo_redes_comentarios (empresa_id, accion, responder_en);
+create unique index if not exists siguelo_redes_comentarios_codigo_idx on siguelo_redes_comentarios (empresa_id, codigo) where codigo is not null;
+
+-- ---------- 34. Lo que aprendió de tus respuestas ----------
+-- También lo usa la IA de WhatsApp de ese negocio.
+create table if not exists siguelo_aprendido (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id uuid not null references empresas (id) on delete cascade,
+  negocio_id uuid references siguelo_negocios (id) on delete cascade,
+  pregunta text not null,
+  respuesta text not null,
+  creado_en timestamptz not null default now()
+);
+create index if not exists siguelo_aprendido_negocio_idx on siguelo_aprendido (empresa_id, negocio_id);
+
+alter table siguelo_redes_cuentas enable row level security;
+alter table siguelo_redes_comentarios enable row level security;
+alter table siguelo_aprendido enable row level security;
+drop policy if exists "siguelo_redes_cuentas_select" on siguelo_redes_cuentas;
+create policy "siguelo_redes_cuentas_select" on siguelo_redes_cuentas for select
+  using (empresa_id = (select empresa_id from usuario_actual()));
+drop policy if exists "siguelo_redes_cuentas_admin" on siguelo_redes_cuentas;
+create policy "siguelo_redes_cuentas_admin" on siguelo_redes_cuentas for update
+  using (empresa_id = (select empresa_id from usuario_actual()) and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[]))
+  with check (empresa_id = (select empresa_id from usuario_actual()) and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[]));
+drop policy if exists "siguelo_redes_comentarios_select" on siguelo_redes_comentarios;
+create policy "siguelo_redes_comentarios_select" on siguelo_redes_comentarios for select
+  using (empresa_id = (select empresa_id from usuario_actual()));
+drop policy if exists "siguelo_aprendido_select" on siguelo_aprendido;
+create policy "siguelo_aprendido_select" on siguelo_aprendido for select
+  using (empresa_id = (select empresa_id from usuario_actual()));
+drop policy if exists "siguelo_aprendido_admin" on siguelo_aprendido;
+create policy "siguelo_aprendido_admin" on siguelo_aprendido for all
+  using (empresa_id = (select empresa_id from usuario_actual()) and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[]))
+  with check (empresa_id = (select empresa_id from usuario_actual()) and (select rol from usuario_actual()) = any (array['supervisor', 'dueno']::rol_usuario[]));
+
+-- El código para responder por WhatsApp (R1, R2…).
+create or replace function siguelo_redes_codigo() returns integer
+language sql volatile security definer set search_path = public as $$
+  select nextval('siguelo_redes_codigo_seq')::integer;
+$$;
+revoke execute on function siguelo_redes_codigo() from public, anon, authenticated;
+grant execute on function siguelo_redes_codigo() to service_role;

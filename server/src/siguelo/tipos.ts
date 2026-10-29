@@ -181,8 +181,8 @@ export type AvisosIA = {
   activo: boolean;
   telefono: string;
   linea_id: string | null;
-  // Más "pago" (Fase 5): pagos e inscripciones (encendido si no está).
-  tipos: Partial<Record<TipoAviso | 'pago', boolean>>;
+  // Más "pago" (Fase 5) y "redes" (comentarios): encendidos si no están.
+  tipos: Partial<Record<TipoAviso | 'pago' | 'redes', boolean>>;
   max_dia: number;
   juntar_min: number;
 };
@@ -272,6 +272,49 @@ export type MensajeAsistenteRow = {
   acciones: Record<string, unknown>[];
   aplicado_en: string | null;
   resultado: string | null;
+  creado_en: string;
+};
+
+// ---------- Redes sociales (comentarios de Facebook e Instagram) ----------
+export type RedSocial = 'facebook' | 'instagram';
+export type CuentaRedRow = {
+  id: string;
+  empresa_id: string;
+  red: RedSocial;
+  externo_id: string;
+  nombre: string;
+  usuario: string | null;
+  negocio_id: string | null;
+  activo: boolean;
+  responder: boolean;
+  negativos: 'nada' | 'ocultar' | 'borrar';
+  whatsapp: string;
+  instrucciones: string;
+  revisado_hasta: string | null;
+  revisado_en: string | null;
+  error: string | null;
+  creado_en: string;
+  actualizado_en: string;
+};
+export type AccionComentario = 'programado' | 'respondido' | 'oculto' | 'borrado' | 'ignorado' | 'preguntado' | 'error';
+export type ComentarioRedRow = {
+  id: string;
+  empresa_id: string;
+  cuenta_id: string;
+  externo_id: string;
+  publicacion_id: string | null;
+  publicacion: string | null;
+  autor: string | null;
+  texto: string;
+  publicado_en: string | null;
+  tipo: string | null;
+  accion: AccionComentario;
+  respuesta: string | null;
+  respaldo: string | null;
+  motivo: string | null;
+  codigo: number | null;
+  responder_en: string | null;
+  respondido_en: string | null;
   creado_en: string;
 };
 
@@ -414,7 +457,7 @@ export type SigueloDatabase = {
         ultima_actividad: string;
         creado_en: string;
       }>;
-      lineas_whatsapp: Tabla<{ id: string; empresa_id: string; nombre: string; estado: string }>;
+      lineas_whatsapp: Tabla<{ id: string; empresa_id: string; nombre: string; estado: string; numero: string | null }>;
       siguelo_ia: Tabla<IaRow>;
       siguelo_ia_clave: Tabla<{ empresa_id: string; clave: string; actualizado_en: string }>;
       siguelo_ia_lecturas: Tabla<LecturaRow>;
@@ -459,6 +502,12 @@ export type SigueloDatabase = {
       siguelo_club_info: Tabla<{ empresa_id: string; conectado: boolean; vendedor: string | null; sucursales: { id: string; nombre: string; departamento?: string | null }[]; error: string | null; actualizado_en: string }>;
       usuarios: Tabla<{ id: string; empresa_id: string; nombre: string; rol: 'dueno' | 'supervisor' | 'vendedor' | 'atendedor_online'; linea_id: string | null; activo: boolean; creado_en: string }>;
       siguelo_accesos: Tabla<{ usuario_id: string; empresa_id: string; jefe_id: string | null; principal: boolean; todas_lineas: boolean; lineas: string[]; vence_en: string | null; actualizado_en: string }>;
+      siguelo_meta_app: Tabla<{ empresa_id: string; app_id: string; app_secret: string; config_id: string | null; actualizado_en: string }>;
+      siguelo_meta_info: Tabla<{ empresa_id: string; app_id: string | null; config_id: string | null; error: string | null; leido_dueno: string | null; actualizado_en: string }>;
+      siguelo_redes_cuentas: Tabla<CuentaRedRow>;
+      siguelo_redes_tokens: Tabla<{ cuenta_id: string; token: string; actualizado_en: string }>;
+      siguelo_redes_comentarios: Tabla<ComentarioRedRow>;
+      siguelo_aprendido: Tabla<{ id: string; empresa_id: string; negocio_id: string | null; pregunta: string; respuesta: string; creado_en: string }>;
       siguelo_embudos: Tabla<{ id: string; empresa_id: string; nombre: string; creado_en: string }>;
       siguelo_pagos: Tabla<PagoRow>;
       campos_personalizados: Tabla<{ id: string; empresa_id: string; nombre: string; tipo: string; opciones: string[]; orden: number }>;
@@ -470,6 +519,7 @@ export type SigueloDatabase = {
       siguelo_actividad: { Args: { p_empresa: string }; Returns: ActividadRow[] };
       siguelo_ia_por_leer: { Args: { p_empresa: string; p_quieto_seg: number }; Returns: PorLeerRow[] };
       siguelo_pagos_por_leer: { Args: { p_empresa: string }; Returns: PagoPorLeerRow[] };
+      siguelo_redes_codigo: { Args: Record<string, never>; Returns: number };
     };
   };
 };

@@ -103,6 +103,7 @@ class Consulta {
   lt(c, v) { return this.f(c, '<', v); }
   lte(c, v) { return this.f(c, '<=', v); }
   ilike(c, v) { return this.f(c, 'ilike', v); }
+  like(c, v) { return this.f(c, 'like', v); }
   in(c, v) { return this.f(c, 'in', v); }
   is(c, v) { return this.f(c, 'is', v); }
   or(texto) { this.filtros.push({ or: texto }); return this; }
@@ -209,7 +210,10 @@ export const db = {
     try {
       const claves = Object.keys(args);
       const r = await pg.query(`select * from ${fn}(${claves.map((_, i) => `$${i + 1}`).join(', ')})`, claves.map((k) => args[k]));
-      return { data: normalizar(r.rows, r.fields), error: null };
+      const filas = normalizar(r.rows, r.fields);
+      // Una función que devuelve un solo valor: Supabase devuelve ese valor, no una fila.
+      if (r.fields.length === 1 && r.fields[0].name === fn && filas.length === 1) return { data: filas[0][fn], error: null };
+      return { data: filas, error: null };
     } catch (e) {
       return { data: null, error: { message: e.message } };
     }

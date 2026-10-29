@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Pruebas de SígueloCRM (seguimiento, negocios, IA, pagos, asistente y sistema del club) con un Postgres en memoria, WhatsApp, OpenAI y club falsos. Nunca tocan tu Supabase ni mandan mensajes.",
   "scripts": {
-    "test": "npm run calculo && npm run sql && npm run seguimiento && npm run ia && npm run pagos && npm run asistente && npm run club && npm run usuarios",
+    "test": "npm run calculo && npm run sql && npm run seguimiento && npm run ia && npm run pagos && npm run asistente && npm run club && npm run usuarios && npm run redes",
     "calculo": "tsx calculo.test.mts",
     "sql": "node probar-sql.mjs",
     "seguimiento": "node --import tsx --import ./hooks.mjs integracion.mts",
@@ -13,6 +13,7 @@
     "asistente": "node --import tsx --import ./hooks.mjs integracion-asistente.mts",
     "club": "node --import tsx --import ./hooks.mjs integracion-club.mts",
     "usuarios": "node --import tsx --import ./hooks.mjs integracion-usuarios.mts",
+    "redes": "node --import tsx --import ./hooks.mjs integracion-redes.mts",
     "banco": "node ../node_modules/vite/bin/vite.js --config banco/vite.config.mjs"
   },
   "devDependencies": {

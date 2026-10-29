@@ -6,6 +6,7 @@ import { empresasConIA } from './ia/config.js';
 import { leerPendientes } from './ia/lector.js';
 import { procesarSalida } from './ia/salida.js';
 import { revisarPagos } from './pagos/inscripcion.js';
+import { revisarRedes } from './redes/redes.js';
 import type { AjustesRow } from './tipos.js';
 import { desactivarVencidos } from './usuarios/accesos.js';
 
@@ -87,6 +88,7 @@ function candado(nombre: string): (tarea: () => Promise<void>) => Promise<void> 
 const conCandadoLector = candado('la lectura de la IA');
 const conCandadoSalida = candado('los envíos de la IA');
 const conCandadoPagos = candado('los pagos');
+const conCandadoRedes = candado('las redes sociales');
 
 export function iniciarIA(): void {
   db.from('siguelo_ia_salida')
@@ -103,6 +105,10 @@ export function iniciarIA(): void {
   setInterval(() => conCandadoPagos(async () => {
     for (const c of await empresasConIA()) await revisarPagos(c);
   }), 10_000);
+  // Comentarios de Facebook e Instagram (cada cuenta se revisa cada 3 minutos).
+  setInterval(() => conCandadoRedes(async () => {
+    for (const c of await empresasConIA()) await revisarRedes(c);
+  }), 60_000);
 }
 
 export function iniciarSeguimiento(): void {

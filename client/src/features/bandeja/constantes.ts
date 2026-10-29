@@ -17,6 +17,7 @@ import {
   Store,
   Sparkles,
   GraduationCap,
+  Share2,
   type LucideIcon,
   Settings,
 } from 'lucide-react';
@@ -46,6 +47,7 @@ export const SECCIONES: Seccion[] = [
   { id: 'seguimiento', icon: Repeat, label: 'Seguimiento', grupo: 'Automatizar', soloAdmin: true },
   { id: 'ia', icon: Sparkles, label: 'IA', grupo: 'Automatizar', soloAdmin: true },
   { id: 'inscripciones', icon: GraduationCap, label: 'Inscripciones', grupo: 'Automatizar', soloAdmin: true },
+  { id: 'redes', icon: Share2, label: 'Redes sociales', grupo: 'Automatizar', soloAdmin: true },
   { id: 'reportes', icon: LineChart, label: 'Reportes', grupo: 'Administrar' },
   { id: 'usuarios', icon: UserCog, label: 'Usuarios', grupo: 'Administrar', soloAdmin: true },
   { id: 'conexiones', icon: Smartphone, label: 'Conexiones', grupo: 'Administrar' },

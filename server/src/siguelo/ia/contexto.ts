@@ -30,6 +30,8 @@ export type DatosContexto = {
   bots?: BotCorto[];
   // Horarios, cupos y precios en vivo de su sucursal en el sistema del club ('' si no está conectado).
   club?: string;
+  // Lo que respondió el dueño a preguntas que no estaban en la ficha (Redes sociales).
+  aprendido?: string;
 };
 
 export type ResultadoIA = {
@@ -160,6 +162,13 @@ ${
 ${d.club.trim()}
 """
 - Para horarios, cupos y mensualidades usa estos datos. No ofrezcas un grupo LLENO: ofrece otro horario del mismo curso o, si no hay, otra sucursal. Si quedan pocos cupos, puedes decirlo.
+
+`
+      : ''
+  }${
+    d.aprendido?.trim()
+      ? `RESPUESTAS QUE YA DIO EL DUEÑO (a preguntas que no estaban en la ficha; úsalas si encajan):
+${d.aprendido.trim()}
 
 `
       : ''

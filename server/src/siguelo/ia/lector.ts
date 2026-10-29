@@ -8,6 +8,7 @@ import { llamar } from './config.js';
 import { cursosConQR, pagoEnCurso } from '../pagos/inscripcion.js';
 import { formatoMonto } from '../pagos/comprobante.js';
 import { datosClubParaIA } from '../club/club.js';
+import { aprendidoDe, textoAprendido } from '../redes/redes.js';
 import { armarMensajes, validarResultado, type DatosContexto, type LineaConversacion, type ResultadoIA } from './contexto.js';
 import type { CursoRow, EtapaVentaRow, IaRow, LecturaRow, NegocioRow, PorLeerRow, SalidaRow, TipoAviso } from '../tipos.js';
 
@@ -338,13 +339,14 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
   }));
   const ultimaPersona = ms([...lista].reverse().find((m) => m.remitente === 'agente' && m.agente_id)?.creado_en);
 
-  const [etapas, respuestas, otros, cursos, bots, club] = await Promise.all([
+  const [etapas, respuestas, otros, cursos, bots, club, aprendido] = await Promise.all([
     etapasDelEmbudo(empresaId, negocio.embudo_id),
     respuestasDisponibles(empresaId, negocio.id, enviadas),
     otrosNegocios(empresaId, negocio.id),
     cursosDisponibles(empresaId, negocio.id, fila.conversacion_id),
     botsDisponibles(empresaId, fila.linea_id, fila.conversacion_id),
     datosClubParaIA(empresaId, negocio.club_sucursal_id, fechaDe(Date.now(), c.zona)),
+    aprendidoDe(empresaId, negocio.id),
   ]);
   const nombre = contacto?.nombre?.trim() || fila.telefono.split('@')[0];
   const datos: DatosContexto = {
@@ -361,6 +363,7 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
     cursos: cursosCortos(cursos),
     bots,
     club,
+    aprendido: textoAprendido(aprendido),
   };
   const conRespuesta = c.ia.modo !== 'apagado';
   const { mensajes: prompt, ids: mapa } = armarMensajes(datos, conRespuesta);
