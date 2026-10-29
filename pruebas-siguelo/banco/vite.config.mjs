@@ -19,10 +19,11 @@ const VIRTUALES = {
     import Pipeline from './features/pipeline/Pipeline';
     import IA from './features/ia/IA';
     import Inscripciones from './features/inscripciones/Inscripciones';
+    import UsuariosSiguelo from './features/usuarios/UsuariosSiguelo';
     const q = new URLSearchParams(location.search);
     if (q.get('tema') === 'claro') document.documentElement.dataset.theme = 'light';
     const vista = q.get('vista');
-    const Pagina = vista === 'negocios' ? <Negocios /> : vista === 'embudo' ? <Pipeline onAbrirChat={() => {}} /> : vista === 'ia' ? <IA onAbrirChat={(t) => { window.__chat = t; }} /> : vista === 'inscripciones' ? <Inscripciones onAbrirChat={(t) => { window.__chat = t; }} /> : <Seguimiento />;
+    const Pagina = vista === 'negocios' ? <Negocios /> : vista === 'embudo' ? <Pipeline onAbrirChat={() => {}} /> : vista === 'ia' ? <IA onAbrirChat={(t) => { window.__chat = t; }} /> : vista === 'inscripciones' ? <Inscripciones onAbrirChat={(t) => { window.__chat = t; }} /> : vista === 'usuarios' ? <UsuariosSiguelo /> : <Seguimiento />;
     createRoot(document.getElementById('root')).render(
       <ToastProvider><div style={{ height: '100dvh', display: 'flex', background: 'var(--bg)', fontFamily: 'var(--fuente-sans)' }}>{Pagina}</div></ToastProvider>
     );`,

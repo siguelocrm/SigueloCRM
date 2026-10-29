@@ -7,6 +7,7 @@ import { leerPendientes } from './ia/lector.js';
 import { procesarSalida } from './ia/salida.js';
 import { revisarPagos } from './pagos/inscripcion.js';
 import type { AjustesRow } from './tipos.js';
+import { desactivarVencidos } from './usuarios/accesos.js';
 
 // Seguimiento automático por etapa (SígueloCRM). Se prende desde la pantalla
 // "Seguimiento"; mientras esté apagado no hace nada. Necesita las tablas de
@@ -106,6 +107,10 @@ export function iniciarIA(): void {
 
 export function iniciarSeguimiento(): void {
   iniciarIA();
+  // Los accesos con vencimiento (Usuarios): al vencer, el usuario queda desactivado.
+  const vencer = () => desactivarVencidos().catch((err) => console.error('Usuarios: no se pudo revisar los vencimientos:', (err as Error).message));
+  setTimeout(vencer, 15_000);
+  setInterval(vencer, 10 * 60_000);
   // Un mensaje que quedó "enviando" por un reinicio a mitad de camino vuelve a la cola.
   db.from('siguelo_cola')
     .update({ estado: 'pendiente' })

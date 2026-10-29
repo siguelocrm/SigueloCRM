@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { obtenerSesion } from '../whatsapp/sesiones.js';
 import { supabase } from '../supabase/client.js';
+import { conNumero } from '../siguelo/usuarios/proteger.js';
 
 export const etiquetasRouter = Router();
 
@@ -13,7 +14,7 @@ export const etiquetasRouter = Router();
 // vinculado a esa cuenta. WhatsApp igual nos va a devolver el eco del cambio
 // como evento `labels.association`, pero no esperamos a eso: actualizamos
 // `contacto_etiquetas` acá mismo para que el panel se sienta instantáneo.
-etiquetasRouter.post('/etiquetas/:accion(asignar|quitar)', async (req, res) => {
+etiquetasRouter.post('/etiquetas/:accion(asignar|quitar)', ...conNumero((req) => req.body?.linea_id), async (req, res) => {
   const { accion } = req.params;
   const { linea_id, contacto_id, etiqueta_id } = req.body;
 

@@ -5,6 +5,7 @@ import { useAuth } from '../../lib/AuthContext';
 import { useToast } from '../../components/ui';
 import { BORDE, TEXTO_PRIMARIO, TEXTO_SECUNDARIO, TEXTO_TERCIARIO } from '../../lib/tema';
 import type { EstadoLinea } from '../../lib/tipos';
+import { conSesion } from '../../lib/backend';
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL;
 const VERDE_WHATSAPP = '#25D366';
@@ -72,7 +73,7 @@ export function FormWhatsapp({ telefono, lineaSugerida, texto, onTexto, onEnviad
     try {
       const resp = await fetch(`${backendUrl}/enviar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await conSesion({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ telefono, tipo: 'texto', texto, agente_id: usuario.id, linea_id: lineaId }),
       });
       if (!resp.ok) throw new Error(await motivoError(resp));

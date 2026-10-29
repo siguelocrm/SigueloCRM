@@ -4,6 +4,7 @@ import { buscarOCrearConversacion } from '../whatsapp/mensajes-entrantes.js';
 import { TIPOS_ENVIABLES, construirContenidoWA } from '../whatsapp/contenido.js';
 import { marcarEnviadoPorCRM } from '../whatsapp/mensajes-enviados-por-crm.js';
 import { supabase } from '../supabase/client.js';
+import { conNumero } from '../siguelo/usuarios/proteger.js';
 
 export const enviarRouter = Router();
 
@@ -23,8 +24,10 @@ async function esperarSesionActiva(lineaId: string, excluir?: object) {
   }
 }
 
-enviarRouter.post('/enviar', async (req, res) => {
-  const { telefono, tipo = 'texto', texto, media_url, agente_id, linea_id, mimetype } = req.body;
+// SígueloCRM: hay que haber iniciado sesión y tener acceso a ese número; el mensaje queda a nombre de quien lo envía.
+enviarRouter.post('/enviar', ...conNumero((req) => req.body?.linea_id), async (req, res) => {
+  const { telefono, tipo = 'texto', texto, media_url, linea_id, mimetype } = req.body;
+  const agente_id = req.usuarioAutenticado!.id;
 
   if (!telefono) return res.status(400).json({ error: 'Falta telefono' });
   if (!linea_id) return res.status(400).json({ error: 'Falta linea_id' });

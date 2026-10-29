@@ -998,3 +998,242 @@ alter table siguelo_pagos
 alter table siguelo_pagos drop constraint if exists siguelo_pagos_estado_check;
 alter table siguelo_pagos add constraint siguelo_pagos_estado_check
   check (estado in ('leyendo', 'no_es', 'revisar', 'rechazado', 'datos', 'reservado', 'inscrito'));
+
+-- =========================================================
+-- Usuarios: jerarquía y acceso por número
+-- Roles: dueño principal (el primer usuario de la empresa; nadie lo puede
+-- editar), dueño de negocio (rol 'dueno'), gerente ('supervisor') y vendedor.
+-- Cada uno solo administra a los que están debajo de él, y solo ve los chats,
+-- contactos y mensajes de los números que tiene asignados.
+-- =========================================================
+
+-- ---------- 29. Quién está debajo de quién y qué números ve ----------
+create table if not exists siguelo_accesos (
+  usuario_id uuid primary key references usuarios (id) on delete cascade,
+  empresa_id uuid not null references empresas (id) on delete cascade,
+  -- Quién lo creó / a quién responde (null = el dueño principal).
+  jefe_id uuid references usuarios (id) on delete set null,
+  principal boolean not null default false,
+  -- true = todos los números (también los que se agreguen después); si no, solo "lineas".
+  todas_lineas boolean not null default true,
+  lineas uuid[] not null default '{}',
+  actualizado_en timestamptz not null default now()
+);
+create unique index if not exists siguelo_accesos_principal_idx on siguelo_accesos (empresa_id) where principal;
+-- Hasta cuándo tiene acceso (null = sin vencimiento). Al dueño principal no le vence nunca.
+alter table siguelo_accesos add column if not exists vence_en timestamptz;
+
+-- El primer usuario de cada empresa (el que creó la empresa) es el dueño principal, y vuelve a ser dueño.
+insert into siguelo_accesos (usuario_id, empresa_id, principal, todas_lineas)
+select distinct on (u.empresa_id) u.id, u.empresa_id, true, true
+from usuarios u
+where not exists (select 1 from siguelo_accesos a where a.empresa_id = u.empresa_id and a.principal)
+order by u.empresa_id, u.creado_en
+on conflict (usuario_id) do nothing;
+update usuarios u set rol = 'dueno', activo = true from siguelo_accesos a where a.usuario_id = u.id and a.principal and (u.rol <> 'dueno' or not u.activo);
+
+-- Los demás quedan debajo del dueño principal, con los números que ya tenían.
+insert into siguelo_accesos (usuario_id, empresa_id, jefe_id, todas_lineas, lineas)
+select u.id, u.empresa_id, p.usuario_id, u.rol <> 'vendedor',
+       case when u.rol = 'vendedor' and u.linea_id is not null then array[u.linea_id] else '{}'::uuid[] end
+from usuarios u
+join siguelo_accesos p on p.empresa_id = u.empresa_id and p.principal
+on conflict (usuario_id) do nothing;
+
+alter table siguelo_accesos enable row level security;
+drop policy if exists "siguelo_accesos_select" on siguelo_accesos;
+create policy "siguelo_accesos_select" on siguelo_accesos for select
+  using (empresa_id = (select empresa_id from usuario_actual()));
+-- Se escribe solo por el servidor (Usuarios en el CRM), que revisa la jerarquía.
+
+-- ---------- 30. Funciones de permisos ----------
+-- El usuario actual, solo si está activo y su acceso no venció (reemplaza la de instalar.sql):
+-- así un usuario desactivado o vencido no ve nada en ninguna pantalla.
+create or replace function usuario_actual()
+returns usuarios
+language sql
+stable
+security definer
+set search_path = public
+as $function$
+  select u.* from usuarios u
+  left join siguelo_accesos a on a.usuario_id = u.id
+  where u.id = auth.uid() and u.activo and (a.vence_en is null or a.vence_en > now() or a.principal);
+$function$;
+
+-- Cada uno puede leer su propia fila (para que la página le avise si está desactivado o vencido).
+drop policy if exists "usuarios_select_propio" on usuarios;
+create policy "usuarios_select_propio" on usuarios for select using (id = auth.uid());
+
+-- Nivel: 4 dueño principal · 3 dueño de negocio · 2 gerente · 1 vendedor.
+create or replace function siguelo_nivel_rol(p_rol rol_usuario) returns integer
+language sql immutable as $$
+  select case p_rol when 'dueno' then 3 when 'supervisor' then 2 else 1 end;
+$$;
+
+create or replace function siguelo_nivel(p_usuario uuid) returns integer
+language sql stable security definer set search_path = public as $$
+  select case
+    when a.principal then 4
+    when not u.activo or (a.vence_en is not null and a.vence_en <= now()) then 0
+    else siguelo_nivel_rol(u.rol)
+  end
+  from usuarios u left join siguelo_accesos a on a.usuario_id = u.id
+  where u.id = p_usuario;
+$$;
+
+-- ¿El usuario actual ve este número? (sin fila en siguelo_accesos: como antes, el vendedor solo su línea)
+create or replace function siguelo_ve_linea(p_linea uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((
+    select case
+      when a.usuario_id is null then u.rol <> 'vendedor' or p_linea = u.linea_id
+      when a.principal or a.todas_lineas then true
+      else p_linea = any (a.lineas)
+    end
+    from usuarios u left join siguelo_accesos a on a.usuario_id = u.id
+    where u.id = auth.uid() and u.activo and (a.vence_en is null or a.vence_en > now() or a.principal)
+  ), false);
+$$;
+
+-- ¿Ve todos los números?
+create or replace function siguelo_ve_todo() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((
+    select case when a.usuario_id is null then u.rol <> 'vendedor' else a.principal or a.todas_lineas end
+    from usuarios u left join siguelo_accesos a on a.usuario_id = u.id
+    where u.id = auth.uid() and u.activo and (a.vence_en is null or a.vence_en > now() or a.principal)
+  ), false);
+$$;
+
+-- ¿Ese usuario está debajo del usuario actual? (el dueño principal: todos menos él mismo)
+create or replace function siguelo_es_subordinado(p_usuario uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  with recursive cadena as (
+    select a.jefe_id, 1 as n from siguelo_accesos a where a.usuario_id = p_usuario
+    union all
+    select a.jefe_id, c.n + 1 from siguelo_accesos a join cadena c on a.usuario_id = c.jefe_id where c.n < 30
+  )
+  select p_usuario <> auth.uid()
+     and siguelo_nivel(auth.uid()) >= 2
+     and (select empresa_id from usuarios where id = p_usuario) = (select empresa_id from usuarios where id = auth.uid())
+     and not coalesce((select principal from siguelo_accesos where usuario_id = p_usuario), false)
+     and (
+       coalesce((select principal from siguelo_accesos where usuario_id = auth.uid()), false)
+       or exists (select 1 from cadena where jefe_id = auth.uid())
+     );
+$$;
+
+-- ¿Ve este contacto? Si ve todos los números, o si tiene un chat en uno de sus números, o si no tiene ningún chat
+-- (cargado a mano). Mira todos los chats, también los que el usuario no ve.
+create or replace function siguelo_ve_contacto(p_telefono text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select siguelo_ve_todo()
+    or exists (
+      select 1 from conversaciones c join lineas_whatsapp l on l.id = c.linea_id
+      where c.contacto_telefono = p_telefono and l.empresa_id = (select empresa_id from usuarios where id = auth.uid()) and siguelo_ve_linea(c.linea_id)
+    )
+    or not exists (
+      select 1 from conversaciones c join lineas_whatsapp l on l.id = c.linea_id
+      where c.contacto_telefono = p_telefono and l.empresa_id = (select empresa_id from usuarios where id = auth.uid())
+    );
+$$;
+
+revoke execute on function siguelo_nivel(uuid) from public, anon;
+revoke execute on function siguelo_ve_linea(uuid) from public, anon;
+revoke execute on function siguelo_ve_todo() from public, anon;
+revoke execute on function siguelo_es_subordinado(uuid) from public, anon;
+grant execute on function siguelo_nivel(uuid) to authenticated, service_role;
+grant execute on function siguelo_ve_linea(uuid) to authenticated, service_role;
+grant execute on function siguelo_ve_todo() to authenticated, service_role;
+grant execute on function siguelo_es_subordinado(uuid) to authenticated, service_role;
+revoke execute on function siguelo_ve_contacto(text) from public, anon;
+grant execute on function siguelo_ve_contacto(text) to authenticated, service_role;
+
+-- ---------- 31. Permisos del CRM según los números de cada uno ----------
+-- Reemplazan los del curso (instalar.sql), que solo limitaban al vendedor a una línea.
+drop policy if exists "lineas_select" on lineas_whatsapp;
+create policy "lineas_select" on lineas_whatsapp for select
+  using (empresa_id = (select empresa_id from usuario_actual()) and siguelo_ve_linea(id));
+
+drop policy if exists "lineas_admin" on lineas_whatsapp;
+-- Los dueños administran los números que ven (agregar uno nuevo: solo quien ve todos).
+create policy "lineas_admin" on lineas_whatsapp for all
+  using ((select rol from usuario_actual()) = 'dueno' and empresa_id = (select empresa_id from usuario_actual()) and siguelo_ve_linea(id))
+  with check ((select rol from usuario_actual()) = 'dueno' and empresa_id = (select empresa_id from usuario_actual()) and siguelo_ve_linea(id));
+
+-- Usuarios: se crean, editan y eliminan solo a los de abajo, y nunca con un rol igual o más alto que el propio.
+drop policy if exists "usuarios_insert" on usuarios;
+create policy "usuarios_insert" on usuarios for insert
+  with check (
+    empresa_id = (select empresa_id from usuario_actual())
+    and siguelo_nivel(auth.uid()) >= 2
+    and siguelo_nivel_rol(rol) < siguelo_nivel(auth.uid())
+  );
+
+drop policy if exists "usuarios_update" on usuarios;
+create policy "usuarios_update" on usuarios for update
+  using (empresa_id = (select empresa_id from usuario_actual()) and siguelo_es_subordinado(id))
+  with check (
+    empresa_id = (select empresa_id from usuario_actual())
+    and siguelo_nivel_rol(rol) < siguelo_nivel(auth.uid())
+  );
+
+drop policy if exists "contactos_select" on contactos;
+create policy "contactos_select" on contactos for select
+  using (empresa_id = (select empresa_id from usuario_actual()) and siguelo_ve_contacto(telefono));
+
+drop policy if exists "contactos_update" on contactos;
+create policy "contactos_update" on contactos for update
+  using (empresa_id = (select empresa_id from usuario_actual()) and siguelo_ve_contacto(telefono));
+
+drop policy if exists "conversaciones_select" on conversaciones;
+create policy "conversaciones_select" on conversaciones for select
+  using (
+    linea_id in (select id from lineas_whatsapp where empresa_id = (select empresa_id from usuario_actual()))
+    and siguelo_ve_linea(linea_id)
+  );
+
+drop policy if exists "conversaciones_update" on conversaciones;
+create policy "conversaciones_update" on conversaciones for update
+  using (
+    linea_id in (select id from lineas_whatsapp where empresa_id = (select empresa_id from usuario_actual()))
+    and siguelo_ve_linea(linea_id)
+  );
+
+drop policy if exists "mensajes_select" on mensajes;
+create policy "mensajes_select" on mensajes for select
+  using (
+    conversacion_id in (
+      select c.id from conversaciones c
+      join lineas_whatsapp l on l.id = c.linea_id
+      where l.empresa_id = (select empresa_id from usuario_actual()) and siguelo_ve_linea(c.linea_id)
+    )
+  );
+
+drop policy if exists "mensajes_insert" on mensajes;
+create policy "mensajes_insert" on mensajes for insert
+  with check (
+    conversacion_id in (
+      select c.id from conversaciones c
+      join lineas_whatsapp l on l.id = c.linea_id
+      where l.empresa_id = (select empresa_id from usuario_actual()) and siguelo_ve_linea(c.linea_id)
+    )
+  );
+
+drop policy if exists "mensajes_programados_todo" on mensajes_programados;
+create policy "mensajes_programados_todo" on mensajes_programados for all
+  using (
+    conversacion_id in (
+      select c.id from conversaciones c
+      join lineas_whatsapp l on l.id = c.linea_id
+      where l.empresa_id = (select empresa_id from usuario_actual()) and siguelo_ve_linea(c.linea_id)
+    )
+  )
+  with check (
+    conversacion_id in (
+      select c.id from conversaciones c
+      join lineas_whatsapp l on l.id = c.linea_id
+      where l.empresa_id = (select empresa_id from usuario_actual()) and siguelo_ve_linea(c.linea_id)
+    )
+  );

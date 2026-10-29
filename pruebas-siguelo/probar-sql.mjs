@@ -157,4 +157,71 @@ console.log('✓ permisos de la Fase 2');
 
 await db.exec(siguelo); // repetir todo el archivo con datos cargados
 console.log('✓ siguelo.sql se puede volver a pegar con datos cargados');
+
+// ---------- Usuarios: jerarquía y acceso por número ----------
+// (Solo hay una empresa: se arma de cero quién está debajo de quién.)
+const club = empresa;
+await db.query(`delete from siguelo_accesos`);
+const [P, D, G, V] = ['10', '11', '12', '13'].map((n) => `00000000-0000-0000-0000-0000000000${n}`);
+await db.query(`insert into usuarios (id, empresa_id, nombre, rol, creado_en) values ($1, $2, 'Dueño principal', 'supervisor', now() - interval '1 year')`, [P, club]);
+await db.query(`insert into usuarios (id, empresa_id, nombre, rol) values ($1, $4, 'Dueño de negocio', 'dueno'), ($2, $4, 'Gerente', 'supervisor'), ($3, $4, 'Vendedor', 'vendedor')`, [D, G, V, club]);
+await db.exec(siguelo); // al pegarlo, el primer usuario queda como dueño principal
+assert.equal((await uno(`select rol from usuarios where id = $1`, [P])).rol, 'dueno', 'el dueño principal vuelve a ser dueño');
+assert.equal((await uno(`select principal from siguelo_accesos where usuario_id = $1`, [P])).principal, true);
+assert.equal((await uno(`select jefe_id from siguelo_accesos where usuario_id = $1`, [D])).jefe_id, P, 'los demás quedan debajo del dueño principal');
+const [L1, L2] = [(await uno(`insert into lineas_whatsapp (empresa_id, nombre, numero) values ($1, 'L-Quilla', '1') returning id`, [club])).id, (await uno(`insert into lineas_whatsapp (empresa_id, nombre, numero) values ($1, 'L-Cercado', '2') returning id`, [club])).id];
+await db.query(`update siguelo_accesos set todas_lineas = false, lineas = $2 where usuario_id = $1`, [D, [L2]]);
+await db.query(`update siguelo_accesos set jefe_id = $1, todas_lineas = false, lineas = $3 where usuario_id = $2`, [D, G, [L2]]);
+await db.query(`update siguelo_accesos set jefe_id = $1, todas_lineas = false, lineas = $3 where usuario_id = $2`, [G, V, [L2]]);
+
+// Nadie de abajo puede editar al dueño principal ni a su jefe.
+let r = await como(D, `update usuarios set rol = 'vendedor' where id = $1 returning id`, [P]);
+assert.equal(r.rows.length, 0, 'el dueño de negocio no puede tocar al dueño principal');
+assert.equal((await uno(`select rol from usuarios where id = $1`, [P])).rol, 'dueno');
+r = await como(G, `update usuarios set activo = false where id = $1 returning id`, [D]);
+assert.equal(r.rows.length, 0, 'el gerente no puede tocar a su jefe');
+r = await como(D, `update usuarios set nombre = 'Gerente 2' where id = $1 returning id`, [G]);
+assert.equal(r.rows.length, 1, 'el dueño de negocio sí edita a su gerente');
+await assert.rejects(como(G, `update usuarios set rol = 'dueno' where id = $1`, [V]), /row-level security/, 'nadie da un rol igual o más alto que el suyo');
+await assert.rejects(como(G, `update usuarios set rol = 'supervisor' where id = $1`, [V]), /row-level security/);
+r = await como(P, `update usuarios set nombre = 'Vende' where id = $1 returning id`, [V]);
+assert.equal(r.rows.length, 1, 'el dueño principal edita a cualquiera de abajo');
+await assert.rejects(como(G, `insert into usuarios (id, empresa_id, nombre, rol) values (gen_random_uuid(), $1, 'X', 'supervisor')`, [club]), /row-level security/);
+console.log('✓ el dueño principal no se puede editar; cada uno solo administra a los de abajo y con roles más bajos');
+
+// Cada uno ve solo los chats, mensajes y contactos de sus números.
+const cv1 = (await uno(`insert into conversaciones (linea_id, contacto_telefono) values ($1, '59181111111') returning id`, [L1])).id;
+const cv2 = (await uno(`insert into conversaciones (linea_id, contacto_telefono) values ($1, '59182222222') returning id`, [L2])).id;
+await db.query(`insert into mensajes (conversacion_id, remitente, contenido) values ($1, 'cliente', 'hola 1'), ($2, 'cliente', 'hola 2')`, [cv1, cv2]);
+await db.query(`insert into contactos (empresa_id, telefono) values ($1, '59181111111'), ($1, '59182222222'), ($1, '59183333333')`, [club]);
+const ver = async (uid) => ({
+  conv: (await como(uid, `select id from conversaciones where id in ($1, $2) order by id`, [cv1, cv2])).rows.map((x) => x.id).sort(),
+  msj: (await como(uid, `select contenido from mensajes where conversacion_id in ($1, $2) order by contenido`, [cv1, cv2])).rows.map((x) => x.contenido),
+  tel: (await como(uid, `select telefono from contactos where telefono in ('59181111111', '59182222222', '59183333333') order by telefono`)).rows.map((x) => x.telefono),
+  lineas: (await como(uid, `select nombre from lineas_whatsapp where nombre like 'L-%' order by nombre`)).rows.map((x) => x.nombre),
+});
+assert.deepEqual(await ver(P), { conv: [cv1, cv2].sort(), msj: ['hola 1', 'hola 2'], tel: ['59181111111', '59182222222', '59183333333'], lineas: ['L-Cercado', 'L-Quilla'] });
+assert.deepEqual(await ver(V), { conv: [cv2], msj: ['hola 2'], tel: ['59182222222', '59183333333'], lineas: ['L-Cercado'] }, 'el vendedor solo ve su número (y los contactos sin chat)');
+assert.deepEqual((await ver(D)).msj, ['hola 2'], 'el dueño de negocio con un solo número tampoco ve los otros');
+await assert.rejects(como(V, `insert into mensajes (conversacion_id, remitente, contenido) values ($1, 'agente', 'x')`, [cv1]), /row-level security/, 'no escribe en un chat de otro número');
+await db.query(`update siguelo_accesos set lineas = '{}' where usuario_id = $1`, [V]);
+assert.deepEqual((await ver(V)).conv, [], 'sin números asignados no ve ningún chat');
+await db.query(`update siguelo_accesos set lineas = $2 where usuario_id = $1`, [V, [L2]]);
+await db.query(`update usuarios set activo = false where id = $1`, [V]);
+assert.deepEqual((await ver(V)).conv, [], 'un usuario inactivo no ve nada');
+await assert.rejects(como(D, `delete from lineas_whatsapp where id = $1 returning id`, [L1]).then((x) => { if (!x.rows.length) throw new Error('row-level security: nada borrado'); }), /row-level security/, 'no borra un número que no tiene');
+console.log('✓ cada uno ve solo los chats, mensajes y contactos de sus números');
+
+// Acceso con vencimiento: vencido = no ve nada ni administra a nadie (solo lee su propia fila).
+await db.query(`update usuarios set activo = true where id = $1`, [V]);
+await db.query(`update siguelo_accesos set vence_en = now() - interval '1 minute' where usuario_id = $1`, [G]);
+assert.deepEqual((await ver(G)).conv, [], 'vencido: ningún chat');
+assert.equal((await como(G, `update usuarios set nombre = 'X' where id = $1 returning id`, [V])).rows.length, 0, 'vencido: no administra');
+assert.deepEqual((await como(G, `select id from usuarios`)).rows.map((x) => x.id), [G], 'vencido: solo ve su propia fila (para el aviso)');
+await db.query(`update siguelo_accesos set vence_en = now() + interval '1 month' where usuario_id = $1`, [G]);
+assert.deepEqual((await ver(G)).conv, [cv2], 'renovado: vuelve a ver sus chats');
+await db.query(`update siguelo_accesos set vence_en = now() - interval '1 day' where usuario_id = $1`, [P]);
+assert.equal((await ver(P)).conv.length, 2, 'al dueño principal no le vence nunca');
+await db.query(`update siguelo_accesos set vence_en = null where usuario_id = $1`, [P]);
+console.log('✓ un acceso vencido o desactivado no ve nada; al renovarlo vuelve; al dueño principal no le vence');
 console.log('\nTodo OK');

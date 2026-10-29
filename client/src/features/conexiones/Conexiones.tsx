@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../lib/AuthContext';
 import { tinte, NAVY, TEAL, AMBER, ESTADO_LINEA_STYLE, BORDE, SOMBRA_CARD, TEXTO_PRIMARIO, TEXTO_SECUNDARIO, TEXTO_TERCIARIO } from '../../lib/tema';
 import type { LineaWhatsapp } from '../../lib/tipos';
+import { conSesion } from '../../lib/backend';
 
 const puntoEstado: Record<LineaWhatsapp['estado'], string> = { activo: '#12B76A', conectando: AMBER, desconectado: '#98A2B3' };
 
@@ -59,14 +60,14 @@ export default function Conexiones() {
     setLineaConQr(linea.id);
     setQrDataUrl(null);
     try {
-      await fetch(`${backendUrl}/lineas/${linea.id}/conectar`, { method: 'POST' });
+      await fetch(`${backendUrl}/lineas/${linea.id}/conectar`, { method: 'POST', headers: await conSesion() });
     } catch (err) {
       console.error(err);
     }
     detenerPolling();
     intervaloRef.current = setInterval(async () => {
       try {
-        const resp = await fetch(`${backendUrl}/lineas/${linea.id}/estado`);
+        const resp = await fetch(`${backendUrl}/lineas/${linea.id}/estado`, { headers: await conSesion() });
         const data = await resp.json();
         if (data.qr) setQrDataUrl(data.qr);
         if (data.estado === 'activo') {
@@ -82,7 +83,7 @@ export default function Conexiones() {
   };
 
   const desconectar = async (linea: LineaWhatsapp) => {
-    await fetch(`${backendUrl}/lineas/${linea.id}/desconectar`, { method: 'POST' });
+    await fetch(`${backendUrl}/lineas/${linea.id}/desconectar`, { method: 'POST', headers: await conSesion() });
     cargar();
   };
 
@@ -111,7 +112,7 @@ export default function Conexiones() {
     if (!window.confirm(`¿Eliminar la línea "${linea.nombre}"? Esta acción no se puede deshacer.`)) return;
     setEliminando(linea.id);
     try {
-      await fetch(`${backendUrl}/lineas/${linea.id}`, { method: 'DELETE' });
+      await fetch(`${backendUrl}/lineas/${linea.id}`, { method: 'DELETE', headers: await conSesion() });
       cargar();
     } finally {
       setEliminando(null);

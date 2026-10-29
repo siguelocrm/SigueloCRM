@@ -35,6 +35,7 @@ const tablas: Record<string, Fila[]> = {
   respuestas_rapidas: [
     { id: 'rr1', titulo: 'Precios', atajo: 'precios', tipo: 'texto', contenido: 'Nuestros precios son…' },
     { id: 'rr2', titulo: 'Ubicación', atajo: 'ubi', tipo: 'imagen', contenido: 'Así llegas' },
+    { id: 'rr3', titulo: 'QR de inscripción', atajo: 'qr', tipo: 'imagen', contenido: 'Escanea para pagar' },
   ],
   siguelo_respuesta_negocio: [{ respuesta_id: 'rr2', negocio_id: 'n1' }],
   respuestas_automaticas: [
@@ -130,6 +131,22 @@ const tablas: Record<string, Fila[]> = {
     { id: 'p3', contacto_id: 'c4', telefono: '59170000004', curso_id: 'k1', media_url: QR, estado: 'inscrito', lectura: {}, controles: [], motivo: null, monto: 150, transaccion: 'TX99001', datos: { nombre: 'Juan Pérez', cp1: '1234567 LP' }, accion: null, creado_en: iso(ahora - 26 * H), actualizado_en: iso(ahora - 25 * H) },
     { id: 'p4', contacto_id: null, telefono: '59170000009', curso_id: null, media_url: QR, estado: 'rechazado', lectura: {}, controles: [{ codigo: 'monto', nombre: 'Monto', ok: false, detalle: '' }], motivo: 'el monto (Bs 100) no alcanza al precio (Bs 150)', monto: 100, transaccion: 'TX1', datos: {}, accion: null, creado_en: iso(ahora - 5 * H), actualizado_en: iso(ahora - 5 * H) },
   ],
+  usuarios: [
+    { id: 'u1', empresa_id: E, nombre: 'Gustavo Herbas', rol: 'dueno', linea_id: null, activo: true, creado_en: iso(ahora - 300 * 24 * H) },
+    { id: 'u2', empresa_id: E, nombre: 'Carla Rojas', rol: 'dueno', linea_id: null, activo: true, creado_en: iso(ahora - 30 * 24 * H) },
+    { id: 'u3', empresa_id: E, nombre: 'Mario Quispe', rol: 'supervisor', linea_id: null, activo: true, creado_en: iso(ahora - 20 * 24 * H) },
+    { id: 'u4', empresa_id: E, nombre: 'Lucía Vargas', rol: 'vendedor', linea_id: 'l3', activo: true, creado_en: iso(ahora - 10 * 24 * H) },
+    { id: 'u5', empresa_id: E, nombre: 'Pedro Mamani', rol: 'vendedor', linea_id: 'l1', activo: false, creado_en: iso(ahora - 5 * 24 * H) },
+  ],
+  siguelo_accesos: [
+    { usuario_id: 'u1', jefe_id: null, principal: true, todas_lineas: true, lineas: [], vence_en: null },
+    { usuario_id: 'u2', jefe_id: 'u1', principal: false, todas_lineas: false, lineas: ['l3'], vence_en: iso(ahora + 300 * 24 * H) },
+    { usuario_id: 'u3', jefe_id: 'u2', principal: false, todas_lineas: false, lineas: ['l3'], vence_en: null },
+    { usuario_id: 'u4', jefe_id: 'u3', principal: false, todas_lineas: false, lineas: ['l3'], vence_en: iso(ahora + 25 * 24 * H) },
+    { usuario_id: 'u5', jefe_id: 'u1', principal: false, todas_lineas: false, lineas: ['l1'], vence_en: iso(ahora - 2 * 24 * H) },
+  ],
+  siguelo_club_info: [{ empresa_id: E, conectado: true, vendedor: 'WhatsApp SígueloCRM', sucursales: [{ id: 'suc-cercado', nombre: 'Cercado' }, { id: 'suc-quilla', nombre: 'Quillacollo' }, { id: 'suc-alto', nombre: 'El Alto' }, { id: 'suc-sur', nombre: 'Zona Sur' }], error: null }],
+  siguelo_cuando_ia: [{ empresa_id: E, tipo: 'respuesta', item_id: 'rr3', cuando: 'cuando el cliente quiere inscribirse o pregunta cómo pagar' }],
   siguelo_asistente: [
     { id: 'a1', rol: 'usuario', texto: '¿Cuándo salen los recordatorios?', acciones: [], aplicado_en: null, resultado: null, creado_en: iso(ahora - 10 * 60000) },
     { id: 'a2', rol: 'asistente', texto: 'En "Primer Contacto" salen al día 1 y al día 4 desde que el cliente entra a la etapa, de 8:00 a 20:00 y como máximo 30 por día en cada número.', acciones: [], aplicado_en: null, resultado: null, creado_en: iso(ahora - 9 * 60000) },

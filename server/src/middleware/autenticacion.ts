@@ -33,18 +33,22 @@ export function requiereRol(...rolesPermitidos: RolUsuario[]) {
 
     const { data: perfil } = await supabase
       .from('usuarios')
-      .select('id, empresa_id, rol')
+      .select('*')
       .eq('id', user.id)
       .single();
     if (!perfil) {
       return res.status(403).json({ error: 'La cuenta no tiene un perfil de usuario' });
+    }
+    // SígueloCRM: un usuario desactivado (o con el acceso vencido) no puede usar el servidor.
+    if ((perfil as { activo?: boolean }).activo === false) {
+      return res.status(403).json({ error: 'Tu usuario está desactivado o tu acceso venció.' });
     }
 
     if (!rolesPermitidos.includes(perfil.rol)) {
       return res.status(403).json({ error: 'No tenés permiso para hacer esto' });
     }
 
-    req.usuarioAutenticado = perfil as UsuarioAutenticado;
+    req.usuarioAutenticado = { id: perfil.id, empresa_id: perfil.empresa_id, rol: perfil.rol } as UsuarioAutenticado;
     next();
   };
 }

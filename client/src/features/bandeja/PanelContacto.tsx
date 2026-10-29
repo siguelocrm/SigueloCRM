@@ -12,6 +12,7 @@ import ProgramadosContacto from './ProgramadosContacto';
 import { EVENTO_CAMBIO } from './ProgramarMensaje';
 import { tinte, TEAL, AMBER, TEMPERATURA_STYLE, BORDE, SOMBRA_CARD, TEXTO_PRIMARIO, TEXTO_SECUNDARIO, TEXTO_TERCIARIO, colorEtiquetaWhatsapp } from '../../lib/tema';
 import type { Contacto, EtiquetaWhatsapp, Nota, Tarea, Temperatura } from '../../lib/tipos';
+import { conSesion } from '../../lib/backend';
 
 function Card({ titulo, accion, children }: { titulo: string; accion?: { label: string; onClick: () => void }; children: React.ReactNode }) {
   return (
@@ -150,7 +151,7 @@ export default function PanelContacto({ telefono: telefonoCrudo, lineaId, asigna
     try {
       const resp = await fetch(`${backendUrl}/etiquetas/${accion}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await conSesion({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ linea_id: lineaId, contacto_id: contacto.id, etiqueta_id: etiquetaId }),
       });
       const data = await resp.json();

@@ -4,13 +4,14 @@ import { obtenerSesion } from '../whatsapp/sesiones.js';
 import { buscarOCrearConversacion } from '../whatsapp/mensajes-entrantes.js';
 import { enviarPasos } from '../whatsapp/bot-automatico.js';
 import { iniciarFlujo } from '../whatsapp/flujo.js';
+import { conNumero } from '../siguelo/usuarios/proteger.js';
 
 export const botRouter = Router();
 
 // Dispara a mano, desde el chat, la secuencia de pasos de una respuesta
 // automática — para cuando el cliente no escribió la palabra clave (o el
 // agente prefiere mandarla él mismo en vez de esperar a que matchee sola).
-botRouter.post('/respuestas-automaticas/:id/disparar', async (req, res) => {
+botRouter.post('/respuestas-automaticas/:id/disparar', ...conNumero((req) => req.body?.linea_id), async (req, res) => {
   const { id } = req.params;
   const { telefono, linea_id } = req.body;
 

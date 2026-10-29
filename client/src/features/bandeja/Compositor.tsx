@@ -6,6 +6,7 @@ import ProgramarMensaje from './ProgramarMensaje';
 import { useContacto } from './hooks/useContacto';
 import { useToast } from '../../components/ui';
 import type { Conversacion, Mensaje, RespuestaAutomatica, RespuestaRapida, TipoMensaje, Usuario } from '../../lib/tipos';
+import { conSesion } from '../../lib/backend';
 
 // El navegador graba en el formato que soporte su implementación de
 // MediaRecorder — se prueban en orden de preferencia (ogg/opus es lo más
@@ -144,7 +145,7 @@ export default function Compositor({ mensajes, seleccionada, usuario, respuestas
     try {
       const resp = await fetch(`${backendUrl}/respuestas-automaticas/${bot.id}/disparar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await conSesion({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ telefono: seleccionada.contacto_telefono, linea_id: seleccionada.linea_id }),
       });
       if (!resp.ok) throw new Error(await mensajeErrorEnvio(resp, 'No se pudo mandar ese bot.'));
@@ -186,7 +187,7 @@ export default function Compositor({ mensajes, seleccionada, usuario, respuestas
     try {
       const resp = await fetch(`${backendUrl}/enviar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await conSesion({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ telefono: seleccionada.contacto_telefono, tipo: 'texto', texto, agente_id: usuario.id, linea_id: seleccionada.linea_id }),
       });
       if (!resp.ok) throw new Error(await mensajeErrorEnvio(resp, 'No se pudo enviar por WhatsApp. Revisa que el backend esté corriendo.'));
@@ -218,7 +219,7 @@ export default function Compositor({ mensajes, seleccionada, usuario, respuestas
       const esDocumento = tipo === 'pdf' || tipo === 'documento';
       const resp = await fetch(`${backendUrl}/enviar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await conSesion({ 'Content-Type': 'application/json' }),
         // El nombre del archivo solo viaja como `texto` para documentos,
         // donde el backend lo usa como fileName — en imágenes se mostraría
         // como un caption no deseado debajo de la foto. `mimetype` real del
@@ -280,7 +281,7 @@ export default function Compositor({ mensajes, seleccionada, usuario, respuestas
 
       const resp = await fetch(`${backendUrl}/enviar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await conSesion({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ telefono: seleccionada.contacto_telefono, tipo: 'audio', media_url: mediaUrl, agente_id: usuario.id, linea_id: seleccionada.linea_id }),
       });
       if (!resp.ok) throw new Error(await mensajeErrorEnvio(resp, 'No se pudo enviar el audio.'));
@@ -365,7 +366,7 @@ export default function Compositor({ mensajes, seleccionada, usuario, respuestas
     try {
       const resp = await fetch(`${backendUrl}/enviar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await conSesion({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           telefono: seleccionada.contacto_telefono,
           tipo: r.tipo,

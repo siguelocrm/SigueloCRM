@@ -457,6 +457,8 @@ export type SigueloDatabase = {
       bot_sesiones: Tabla<{ conversacion_id: string; regla_id: string; nodo_id: string; linea_id: string; telefono: string; actualizado_en: string }>;
       siguelo_club: Tabla<{ empresa_id: string; url: string; clave_publica: string; usuario: string; contrasena: string; actualizado_en: string }>;
       siguelo_club_info: Tabla<{ empresa_id: string; conectado: boolean; vendedor: string | null; sucursales: { id: string; nombre: string; departamento?: string | null }[]; error: string | null; actualizado_en: string }>;
+      usuarios: Tabla<{ id: string; empresa_id: string; nombre: string; rol: 'dueno' | 'supervisor' | 'vendedor' | 'atendedor_online'; linea_id: string | null; activo: boolean; creado_en: string }>;
+      siguelo_accesos: Tabla<{ usuario_id: string; empresa_id: string; jefe_id: string | null; principal: boolean; todas_lineas: boolean; lineas: string[]; vence_en: string | null; actualizado_en: string }>;
       siguelo_embudos: Tabla<{ id: string; empresa_id: string; nombre: string; creado_en: string }>;
       siguelo_pagos: Tabla<PagoRow>;
       campos_personalizados: Tabla<{ id: string; empresa_id: string; nombre: string; tipo: string; opciones: string[]; orden: number }>;

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabase } from '../supabase/client.js';
 import { requiereRol } from '../middleware/autenticacion.js';
+import { accesoDe, esSubordinado } from '../siguelo/usuarios/accesos.js';
 
 export const usuariosRouter = Router();
 
@@ -53,8 +54,10 @@ usuariosRouter.patch('/usuarios/:id/password', requiereRol('supervisor', 'dueno'
   if (!objetivo || objetivo.empresa_id !== quien.empresa_id) {
     return res.status(404).json({ error: 'No se encontró ese usuario en tu empresa' });
   }
-  if (!ROLES_QUE_PUEDE_RESETEAR[quien.rol]?.includes(objetivo.rol)) {
-    return res.status(403).json({ error: 'No tenés permiso para cambiar la contraseña de ese usuario' });
+  // SígueloCRM: solo a los que están debajo de uno (al dueño principal no lo toca nadie).
+  const yo = await accesoDe(quien.id);
+  if (!yo || !(await esSubordinado(yo, id)) || !ROLES_QUE_PUEDE_RESETEAR[quien.rol]?.includes(objetivo.rol)) {
+    return res.status(403).json({ error: 'Solo puedes cambiar la contraseña de las personas que están debajo de ti' });
   }
 
   const { error } = await supabase.auth.admin.updateUserById(id, { password });
@@ -63,46 +66,8 @@ usuariosRouter.patch('/usuarios/:id/password', requiereRol('supervisor', 'dueno'
 });
 
 // Crea un agente nuevo: la cuenta de login (Supabase Auth) y su fila en `usuarios`.
-usuariosRouter.post('/usuarios', requiereRol('supervisor', 'dueno'), async (req, res) => {
-  const { email, password, nombre, rol, empresa_id, linea_id } = req.body;
-
-  if (!email || !password || !nombre || !rol || !empresa_id) {
-    return res.status(400).json({ error: 'Faltan datos' });
-  }
-  if (password.length < 6) {
-    return res.status(400).json({ error: 'La contraseña necesita al menos 6 caracteres' });
-  }
-  if (empresa_id !== req.usuarioAutenticado!.empresa_id) {
-    return res.status(403).json({ error: 'No podés crear usuarios para otra empresa' });
-  }
-  if (!['vendedor', 'atendedor_online', 'supervisor', 'dueno'].includes(rol)) {
-    return res.status(400).json({ error: 'Ese rol no existe' });
-  }
-
-  try {
-    const { data: nuevoAuth, error: errorAuth } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-    });
-    if (errorAuth) throw errorAuth;
-
-    const { error: errorUsuario } = await supabase.from('usuarios').insert({
-      id: nuevoAuth.user.id,
-      empresa_id,
-      nombre,
-      rol,
-      linea_id: rol === 'vendedor' ? linea_id || null : null,
-    });
-    if (errorUsuario) {
-      // si falló la fila de `usuarios`, no dejamos un login huérfano sin perfil
-      await supabase.auth.admin.deleteUser(nuevoAuth.user.id);
-      throw errorUsuario;
-    }
-
-    res.json({ ok: true, id: nuevoAuth.user.id });
-  } catch (err) {
-    console.error('Error creando usuario:', (err as Error).message);
-    res.status(500).json({ error: (err as Error).message });
-  }
+// SígueloCRM: la pantalla de Usuarios ahora usa /siguelo/usuarios (con jerarquía y números);
+// esta ruta queda cerrada para que nadie cree a alguien con un rol igual o más alto que el suyo.
+usuariosRouter.post('/usuarios', requiereRol('supervisor', 'dueno'), (_req, res) => {
+  res.status(410).json({ error: 'Crea usuarios desde Administrar → Usuarios (ahora con jerarquía y números por persona).' });
 });
