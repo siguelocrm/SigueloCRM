@@ -18,6 +18,7 @@ import {
   Sparkles,
   GraduationCap,
   Share2,
+  Megaphone,
   type LucideIcon,
   Settings,
 } from 'lucide-react';
@@ -44,6 +45,7 @@ export const SECCIONES: Seccion[] = [
   { id: 'bot', icon: Bot, label: 'Bot y flujos', grupo: 'Automatizar', soloAdmin: true },
   { id: 'respuestas', icon: Reply, label: 'Respuestas rápidas', grupo: 'Automatizar' },
   { id: 'programados', icon: CalendarClock, label: 'Programados', grupo: 'Automatizar' },
+  { id: 'masivos', icon: Megaphone, label: 'Mensajes masivos', grupo: 'Automatizar', soloAdmin: true },
   { id: 'seguimiento', icon: Repeat, label: 'Seguimiento', grupo: 'Automatizar', soloAdmin: true },
   { id: 'ia', icon: Sparkles, label: 'IA', grupo: 'Automatizar', soloAdmin: true },
   { id: 'inscripciones', icon: GraduationCap, label: 'Inscripciones', grupo: 'Automatizar', soloAdmin: true },

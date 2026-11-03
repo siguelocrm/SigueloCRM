@@ -21,10 +21,11 @@ const VIRTUALES = {
     import Inscripciones from './features/inscripciones/Inscripciones';
     import UsuariosSiguelo from './features/usuarios/UsuariosSiguelo';
     import Redes from './features/redes/Redes';
+    import Masivos from './features/masivos/Masivos';
     const q = new URLSearchParams(location.search);
     if (q.get('tema') === 'claro') document.documentElement.dataset.theme = 'light';
     const vista = q.get('vista');
-    const Pagina = vista === 'negocios' ? <Negocios /> : vista === 'embudo' ? <Pipeline onAbrirChat={() => {}} /> : vista === 'ia' ? <IA onAbrirChat={(t) => { window.__chat = t; }} /> : vista === 'inscripciones' ? <Inscripciones onAbrirChat={(t) => { window.__chat = t; }} /> : vista === 'usuarios' ? <UsuariosSiguelo /> : vista === 'redes' ? <Redes /> : <Seguimiento />;
+    const Pagina = vista === 'negocios' ? <Negocios /> : vista === 'embudo' ? <Pipeline onAbrirChat={() => {}} /> : vista === 'ia' ? <IA onAbrirChat={(t) => { window.__chat = t; }} /> : vista === 'inscripciones' ? <Inscripciones onAbrirChat={(t) => { window.__chat = t; }} /> : vista === 'usuarios' ? <UsuariosSiguelo /> : vista === 'redes' ? <Redes /> : vista === 'masivos' ? <Masivos /> : <Seguimiento />;
     createRoot(document.getElementById('root')).render(
       <ToastProvider><div style={{ height: '100dvh', display: 'flex', background: 'var(--bg)', fontFamily: 'var(--fuente-sans)' }}>{Pagina}</div></ToastProvider>
     );`,

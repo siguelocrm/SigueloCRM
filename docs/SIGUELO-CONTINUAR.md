@@ -68,7 +68,12 @@ Entra a http://localhost:5173. Los envíos automáticos los hace el **servidor**
    Instagram tiene que ser cuenta **profesional** conectada a su página. Lo que la IA no sabe te lo pregunta a tu WhatsApp
    personal (avisos de IA → Ajustes, tipo "Redes sociales") con un código: respondes **"R12 tu respuesta"** y lo publica y
    aprende (pestaña **Lo que aprendió**). Si no respondes en 6 h, publica una respuesta que lo lleva a tu WhatsApp.
-10. Prueba todo con un **número secundario** (automatizar WhatsApp tiene riesgo de bloqueo).
+10. **Automatizar → Mensajes masivos** → **Nuevo envío**: nombre, desde qué número, a quiénes (los que tienen chat con
+    ese número, todos tus contactos o una lista pegada; se puede filtrar por etapa y etiqueta de WhatsApp, y por defecto no
+    les llega a los de **Venta perdida**), el mensaje (2 o 3 **versiones**: a cada uno le llega una al azar; con `{nombre}`,
+    `{sucursal}`… y una imagen o PDF si quieres), **"Enviar prueba"** a tu número y el ritmo (horario, pausa al azar entre
+    mensajes y máximo por día **por número**). Sale de a uno; lo puedes pausar, reanudar o cancelar, y ver a quién le llegó.
+11. Prueba todo con un **número secundario** (automatizar WhatsApp tiene riesgo de bloqueo).
 
 ### Guardar el trabajo (git)
 Pídele a la IA: *"haz el commit de lo que hay (sin push)"*. No hagas `git push` mientras no tengas la ficha del profe o tu
@@ -110,6 +115,7 @@ Con otra IA que no sea Claude sirve lo mismo, siempre que pueda leer y editar lo
 | ⏳ | Clientes que compran el CRM, planes y cobros | por decidir (ver "Pendientes") |
 | + | Facebook e Instagram: la IA responde comentarios, oculta/borra negativos, te pregunta y aprende | ✅ (ver `git log`) |
 | ⏳ | Mensajes privados de Facebook e Instagram | falta la revisión de Meta (ver "Pendientes") |
+| + | Mensajes masivos: a quiénes (filtros o lista), versiones, prueba, horario, pausas y tope por número | ✅ (ver `git log`) |
 
 ---
 
@@ -146,9 +152,11 @@ npm test
 - `integracion-usuarios.mts`: jerarquía, números por persona y vencimiento (reglas del servidor).
 - `integracion-redes.mts`: comentarios de Facebook/Instagram con una Meta y una OpenAI falsas (responder, ocultar, borrar,
   preguntarte "R12", tu respuesta por WhatsApp, lo aprendido, respuesta de respaldo).
+- `integracion-masivos.mts`: mensajes masivos (filtros y lista pegada, pausas, horario, tope por número, sin WhatsApp,
+  pausa sola por errores y que no arranquen el seguimiento como "le escribiste").
 - `hooks.mjs` cambia `db.js` y `whatsapp/sesiones.js` por los de prueba; las pruebas fuerzan una URL de Supabase falsa.
 - Pantallas: `npm run banco` y abre http://localhost:5199/banco?vista=seguimiento (o `negocios`, `embudo`, `ia`,
-  `inscripciones`, `usuarios`, `redes`): la pantalla real con datos de ejemplo en memoria (`banco/mock-supabase.ts`).
+  `inscripciones`, `usuarios`, `redes`, `masivos`): la pantalla real con datos de ejemplo en memoria (`banco/mock-supabase.ts`).
 - `mock-bot.mjs` reemplaza al bot del profe en las pruebas (anota qué regla o flujo activó la IA).
 
 ### Cómo funciona (resumen)
@@ -204,6 +212,15 @@ npm test
   Rutas en `redes/rutas.ts`: `/siguelo/meta/app`, `/iniciar`, `/volver` (sin sesión, validada con `state`), `/token`
   (plan B), `/siguelo/redes/responder` y la página pública `/siguelo/privacidad`.
 
+- **Mensajes masivos** (`masivos/`, secciones 7b y 35): `siguelo_masivos` (número, versiones del texto, imagen/PDF,
+  filtro, horario, pausa y tope) y `siguelo_masivo_envios` (una fila por teléfono, en orden al azar). Las tablas van en la
+  7b porque `siguelo_actividad` (sección 8) no cuenta un masivo como "le escribiste" (tampoco `motor.ts` ni
+  `hayNovedadSinRevisar` de `cola.ts`). `masivos.ts`: cada 5 s, un envío por número (el masivo más antiguo primero), solo en
+  su horario, pausa al azar, tope por día por número sumando todos sus masivos, revisa `onWhatsApp` antes de enviar, crea
+  el contacto y el chat si no existen, y se pausa solo con 3 errores seguidos. `motivo` = `fuera` / `tope` /
+  `desconectado` (la pantalla lo explica) o el texto de la pausa. Rutas en `masivos/rutas.ts` (dueños y gerentes, con
+  acceso al número): `/siguelo/masivos/contar`, `/siguelo/masivos`, `/:id/accion` y `/prueba`. No usa la IA.
+
 ### Pendientes conocidos e ideas
 - El selector de etapa dentro del chat (curso: `HiloMensajes`/`PanelContacto`) lista etapas de todos los embudos.
 - Dashboard y Reportes no separan por embudo.
@@ -221,6 +238,9 @@ npm test
   se responde dentro de las 24 h del último mensaje del cliente. Con eso, se agregaría como otro "canal" del lector de IA.
 - **TikTok:** su API de comentarios y mensajes no está abierta a cuentas comunes (pide aprobación de desarrollador y
   responder mensajes depende del país). Por ahora no se puede.
+- Masivos: con PDF, en el chat del CRM se ve el archivo (el texto va como leyenda en WhatsApp y queda en el detalle del
+  envío). No hay "darse de baja" propio: los que dicen "stop" pasan a Venta perdida (si el stop está activo en Seguimiento)
+  y el filtro por defecto los deja fuera. Máximo 5000 personas por envío.
 - Redes: si hay más de 10 comentarios nuevos en 3 min, el resto sale en la vuelta siguiente; solo mira las últimas 10
   publicaciones de cada cuenta.
 - Sistema del club: si el comprobante llega en PDF, la reserva queda sin foto y con "pagado por QR" en 0 (la nota lo dice);

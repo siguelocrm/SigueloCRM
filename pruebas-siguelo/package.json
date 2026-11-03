@@ -2,9 +2,9 @@
   "name": "pruebas-siguelo",
   "private": true,
   "type": "module",
-  "description": "Pruebas de SígueloCRM (seguimiento, negocios, IA, pagos, asistente y sistema del club) con un Postgres en memoria, WhatsApp, OpenAI y club falsos. Nunca tocan tu Supabase ni mandan mensajes.",
+  "description": "Pruebas de SígueloCRM (seguimiento, negocios, IA, pagos, asistente y sistema del club, redes y mensajes masivos) con un Postgres en memoria, WhatsApp, OpenAI y club falsos. Nunca tocan tu Supabase ni mandan mensajes.",
   "scripts": {
-    "test": "npm run calculo && npm run sql && npm run seguimiento && npm run ia && npm run pagos && npm run asistente && npm run club && npm run usuarios && npm run redes",
+    "test": "npm run calculo && npm run sql && npm run seguimiento && npm run ia && npm run pagos && npm run asistente && npm run club && npm run usuarios && npm run redes && npm run masivos",
     "calculo": "tsx calculo.test.mts",
     "sql": "node probar-sql.mjs",
     "seguimiento": "node --import tsx --import ./hooks.mjs integracion.mts",
@@ -14,7 +14,8 @@
     "club": "node --import tsx --import ./hooks.mjs integracion-club.mts",
     "usuarios": "node --import tsx --import ./hooks.mjs integracion-usuarios.mts",
     "redes": "node --import tsx --import ./hooks.mjs integracion-redes.mts",
-    "banco": "node ../node_modules/vite/bin/vite.js --config banco/vite.config.mjs"
+    "banco": "node ../node_modules/vite/bin/vite.js --config banco/vite.config.mjs",
+    "masivos": "node --import tsx --import ./hooks.mjs integracion-masivos.mts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.2.17",

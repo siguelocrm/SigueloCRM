@@ -35,6 +35,7 @@ import Negocios from '../negocios/Negocios';
 import IA from '../ia/IA';
 import Inscripciones from '../inscripciones/Inscripciones';
 import Redes from '../redes/Redes';
+import Masivos from '../masivos/Masivos';
 import { soloDelNegocio, useNegocios } from '../negocios/useNegocios';
 import Oportunidades from '../oportunidades/Oportunidades';
 import { EstadoVacio, useToast } from '../../components/ui';
@@ -217,6 +218,7 @@ export default function Bandeja() {
     if (seccion === 'ia') return <IA onAbrirChat={abrirChatDeContacto} />;
     if (seccion === 'inscripciones') return <Inscripciones onAbrirChat={abrirChatDeContacto} />;
     if (seccion === 'redes') return <Redes />;
+    if (seccion === 'masivos') return <Masivos />;
     if (seccion === 'oportunidades') return <Oportunidades onAbrirChat={abrirChatDeContacto} />;
     return <EstadoVacio icono={seccionActual.icon} titulo={seccionActual.label} texto="Esta sección todavía no está construida." />;
   };

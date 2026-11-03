@@ -180,8 +180,14 @@ export async function revisarEmpresa(aj: AjustesRow): Promise<void> {
         db.from('mensajes').select('id, remitente, contenido, creado_en').eq('conversacion_id', a.conversacion_id).eq('remitente', 'agente').gt('creado_en', seg.visto_agente ?? '1970-01-01').order('creado_en'),
       ]);
       const idsTuyos = (tuyos || []).map((m) => m.id);
-      const { data: automaticos } = idsTuyos.length ? await db.from('siguelo_cola').select('mensaje_id').in('mensaje_id', idsTuyos) : { data: [] };
-      const deCola = new Set((automaticos || []).map((x) => x.mensaje_id));
+      // Lo que mandó el propio seguimiento o un mensaje masivo no cuenta como escrito por ti.
+      const [{ data: automaticos }, { data: masivos }] = idsTuyos.length
+        ? await Promise.all([
+            db.from('siguelo_cola').select('mensaje_id').in('mensaje_id', idsTuyos),
+            db.from('siguelo_masivo_envios').select('mensaje_id').in('mensaje_id', idsTuyos),
+          ])
+        : [{ data: [] }, { data: [] }];
+      const deCola = new Set([...(automaticos || []), ...(masivos || [])].map((x) => x.mensaje_id));
       const nuevos = [...(delCliente || []), ...(tuyos || []).filter((m) => !deCola.has(m.id))].sort((x, y) => C.ms(x.creado_en) - C.ms(y.creado_en));
       for (const m of nuevos) {
         if (etapa.tipo === 'perdida' || !m.contenido?.trim()) continue;

@@ -109,6 +109,7 @@ class Consulta {
   or(texto) { this.filtros.push({ or: texto }); return this; }
   order(c, { ascending = true } = {}) { this.orden.push(`${c} ${ascending ? 'asc' : 'desc'}`); return this; }
   limit(n) { this.lim = n; return this; }
+  range(desde, hasta) { this.lim = hasta - desde + 1; this.desde = desde; return this; }
   maybeSingle() { this.uno = 'quizas'; return this; }
   single() { this.uno = 'uno'; return this; }
   then(ok, mal) { return this.correr().then(ok, mal); }
@@ -155,6 +156,7 @@ class Consulta {
         sql = `select ${this.cols} from ${this.t}${await this.where(params)}`;
         if (this.orden.length) sql += ` order by ${this.orden.join(', ')}`;
         if (this.lim) sql += ` limit ${this.lim}`;
+        if (this.desde) sql += ` offset ${this.desde}`;
       } else if (this.op === 'insert' || this.op === 'upsert') {
         const filas = this.filas.map((f) => (CON_CREADO_EN.has(this.t) && !('creado_en' in f) ? { ...f, creado_en: new RealDate(reloj.ahora).toISOString() } : f));
         if (!filas.length) return { data: [], error: null };

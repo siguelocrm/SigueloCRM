@@ -9,6 +9,7 @@ import { revisarPagos } from './pagos/inscripcion.js';
 import { revisarRedes } from './redes/redes.js';
 import type { AjustesRow } from './tipos.js';
 import { desactivarVencidos } from './usuarios/accesos.js';
+import { procesarMasivos, reanudarAlArrancar } from './masivos/masivos.js';
 
 // Seguimiento automático por etapa (SígueloCRM). Se prende desde la pantalla
 // "Seguimiento"; mientras esté apagado no hace nada. Necesita las tablas de
@@ -89,6 +90,7 @@ const conCandadoLector = candado('la lectura de la IA');
 const conCandadoSalida = candado('los envíos de la IA');
 const conCandadoPagos = candado('los pagos');
 const conCandadoRedes = candado('las redes sociales');
+const conCandadoMasivos = candado('los mensajes masivos');
 
 export function iniciarIA(): void {
   db.from('siguelo_ia_salida')
@@ -122,6 +124,10 @@ export function iniciarSeguimiento(): void {
     .update({ estado: 'pendiente' })
     .eq('estado', 'enviando')
     .then(() => undefined, () => undefined);
+
+  // Mensajes masivos: no dependen de que el seguimiento esté prendido.
+  reanudarAlArrancar().catch(() => undefined);
+  setInterval(() => conCandadoMasivos(procesarMasivos), 5_000);
 
   setTimeout(() => conCandado(vueltaDelMotor), 10_000);
   setInterval(() => conCandado(vueltaDelMotor), MOTOR_CADA_MS);

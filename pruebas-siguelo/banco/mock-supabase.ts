@@ -119,6 +119,18 @@ const tablas: Record<string, Fila[]> = {
     { id: 'r2', tipo: 'respondio', texto: 'Bruno: Respondió: atender. Sus recordatorios esperan hasta que le escribas.', creado_en: iso(ahora - 90 * 60000) },
     { id: 'r3', tipo: 'reactivacion', texto: 'Ana Rojas: Le escribiste: empieza su reactivación por si no responde.', creado_en: iso(ahora - H) },
   ],
+  siguelo_masivos: [
+    { id: 'm1', empresa_id: E, nombre: 'Vacaciones útiles enero', linea_id: 'l1', textos: ['Hola {nombre} 👋 Este verano abrimos las vacaciones útiles de ajedrez en {sucursal}. ¿Te paso los horarios?', '{nombre}, ¡ya están las inscripciones para el curso de verano en {sucursal}! ¿Quieres que te reserve un lugar?'], media_tipo: 'imagen', media_nombre: 'afiche-verano.jpg', estado: 'enviando', inicia_en: iso(ahora - 3 * H), hora_inicio: '08:00', hora_fin: '20:00', maximo_diario: 150, total: 240, enviados: 96, errores: 4, motivo: null, creado_en: iso(ahora - 3 * H), terminado_en: null },
+    { id: 'm2', empresa_id: E, nombre: 'Cambio de horario sábados', linea_id: 'l2', textos: ['Hola {nombre}, desde este sábado las clases empiezan a las 9:00.'], media_tipo: null, media_nombre: null, estado: 'pausado', inicia_en: iso(ahora - 26 * H), hora_inicio: '08:00', hora_fin: '20:00', maximo_diario: 100, total: 80, enviados: 31, errores: 3, motivo: 'Se pausó solo: 3 errores de envío seguidos. Revisa el número en Conexiones y pulsa "Reanudar".', creado_en: iso(ahora - 26 * H), terminado_en: null },
+    { id: 'm3', empresa_id: E, nombre: 'Promo diciembre', linea_id: 'l1', textos: ['¡Hola {nombre}! En diciembre la inscripción es gratis 🎁'], media_tipo: null, media_nombre: null, estado: 'terminado', inicia_en: iso(ahora - 20 * 24 * H), hora_inicio: '09:00', hora_fin: '19:00', maximo_diario: 150, total: 120, enviados: 117, errores: 3, motivo: null, creado_en: iso(ahora - 20 * 24 * H), terminado_en: iso(ahora - 19 * 24 * H) },
+  ],
+  siguelo_masivo_envios: [
+    { id: 'e1', masivo_id: 'm1', telefono: '59170000001', nombre: 'Ana Rojas', estado: 'enviado', motivo: null, enviado_en: iso(ahora - 2 * H), orden: 0 },
+    { id: 'e2', masivo_id: 'm1', telefono: '59170000002', nombre: 'Bruno Vargas', estado: 'enviado', motivo: null, enviado_en: iso(ahora - 2 * H + 90_000), orden: 1 },
+    { id: 'e3', masivo_id: 'm1', telefono: '59170000005', nombre: null, estado: 'error', motivo: 'Ese número no tiene WhatsApp', enviado_en: null, orden: 2 },
+    { id: 'e4', masivo_id: 'm1', telefono: '59170000003', nombre: 'Carla Méndez', estado: 'pendiente', motivo: null, enviado_en: null, orden: 3 },
+  ],
+  etiquetas_whatsapp: [{ id: 'et1', linea_id: 'l1', nombre: 'Clientes 2025', eliminada: false }, { id: 'et2', linea_id: 'l1', nombre: 'Interesados verano', eliminada: false }],
   lineas_whatsapp: [{ id: 'l1', nombre: 'Quillacollo', numero: '59171111111', estado: 'activo' }, { id: 'l2', nombre: 'El Alto', numero: '59172222222', estado: 'activo' }, { id: 'l3', nombre: 'Cercado', numero: '59173333333', estado: 'activo' }],
   siguelo_cursos: [
     { id: 'k1', empresa_id: E, negocio_id: null, nombre: 'Curso de mecánica de motos', activo: true, precio: 150, moneda: 'Bs', qr_url: QR, destinatario: 'Juan Pérez Gómez', cuenta: '10000012345678', link_grupo: 'https://chat.whatsapp.com/ABC', datos: ['nombre', 'cp1'], etapa_id: null, max_horas: 72, textos: {}, creado_en: iso(ahora - 30 * 24 * H) },

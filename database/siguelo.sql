@@ -208,11 +208,66 @@ drop policy if exists "siguelo_registro_select" on siguelo_registro;
 create policy "siguelo_registro_select" on siguelo_registro for select
   using (empresa_id = (select empresa_id from usuario_actual()));
 
+-- ---------- 7b. Mensajes masivos (van acá porque la sección 8 los usa; el resto en la sección 35) ----------
+-- Un envío masivo: desde qué número, el mensaje (varias versiones: sale una al
+-- azar), a quiénes (filtro) y a qué ritmo (horario, pausa al azar, tope por día).
+create table if not exists siguelo_masivos (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id uuid not null references empresas (id) on delete cascade,
+  nombre text not null,
+  linea_id uuid not null references lineas_whatsapp (id) on delete cascade,
+  textos text[] not null default '{}',
+  -- Imagen o PDF (opcional): el texto va como leyenda de la imagen o en un mensaje aparte del PDF.
+  media_tipo text check (media_tipo is null or media_tipo in ('imagen', 'pdf')),
+  media_url text,
+  media_nombre text,
+  filtro jsonb not null default '{}'::jsonb,
+  estado text not null default 'programado'
+    check (estado in ('programado', 'enviando', 'pausado', 'terminado', 'cancelado')),
+  inicia_en timestamptz not null default now(),
+  zona_horaria text not null default 'America/La_Paz',
+  hora_inicio text not null default '08:00',
+  hora_fin text not null default '20:00',
+  pausa_min_seg integer not null default 40 check (pausa_min_seg >= 10),
+  pausa_max_seg integer not null default 120 check (pausa_max_seg >= 10),
+  maximo_diario integer not null default 150 check (maximo_diario between 1 and 1000),
+  total integer not null default 0,
+  enviados integer not null default 0,
+  errores integer not null default 0,
+  motivo text,
+  creado_por uuid references usuarios (id) on delete set null,
+  creado_en timestamptz not null default now(),
+  actualizado_en timestamptz not null default now(),
+  terminado_en timestamptz
+);
+
+-- A quién le toca: una fila por número de teléfono.
+create table if not exists siguelo_masivo_envios (
+  id uuid primary key default gen_random_uuid(),
+  masivo_id uuid not null references siguelo_masivos (id) on delete cascade,
+  empresa_id uuid not null references empresas (id) on delete cascade,
+  contacto_id uuid references contactos (id) on delete set null,
+  telefono text not null,
+  nombre text,
+  orden integer not null default 0,
+  estado text not null default 'pendiente'
+    check (estado in ('pendiente', 'enviando', 'enviado', 'error', 'cancelado')),
+  texto text,
+  motivo text,
+  mensaje_id uuid,
+  whatsapp_id text,
+  enviado_en timestamptz,
+  unique (masivo_id, telefono)
+);
+create index if not exists siguelo_masivo_envios_pendientes_idx on siguelo_masivo_envios (masivo_id, estado, orden);
+create index if not exists siguelo_masivo_envios_mensaje_idx on siguelo_masivo_envios (mensaje_id) where mensaje_id is not null;
+create index if not exists siguelo_masivo_envios_whatsapp_idx on siguelo_masivo_envios (whatsapp_id) where whatsapp_id is not null;
+
 -- ---------- 8. Actividad de cada contacto (la usa el servidor) ----------
 -- Por cada contacto que está en una etapa con mensajes configurados: su chat
 -- (la conversación abierta o la más reciente) y cuándo fue el primer mensaje,
 -- el último del cliente, el último nuestro y el último nuestro escrito a mano
--- (sin contar los que mandó el propio seguimiento).
+-- (sin contar los que mandó el propio seguimiento ni los mensajes masivos).
 create or replace function siguelo_actividad(p_empresa uuid)
 returns table (
   contacto_id uuid,
@@ -260,6 +315,7 @@ as $$
         where m.remitente = 'agente'
           and not exists (select 1 from siguelo_cola q where q.mensaje_id = m.id)
           and (m.whatsapp_id is null or not exists (select 1 from siguelo_cola q where q.whatsapp_id = m.whatsapp_id))
+          and not exists (select 1 from siguelo_masivo_envios x where x.mensaje_id = m.id)
       ) as ultimo_manual
     from chats ch
     join mensajes m on m.conversacion_id = ch.id
@@ -1372,3 +1428,21 @@ language sql volatile security definer set search_path = public as $$
 $$;
 revoke execute on function siguelo_redes_codigo() from public, anon, authenticated;
 grant execute on function siguelo_redes_codigo() to service_role;
+
+-- ---------- 35. Mensajes masivos: permisos ----------
+-- Las tablas están en la sección 7b. Los crea, pausa y cancela el servidor
+-- (rutas /siguelo/masivos); desde la página solo se ven los de tus números.
+alter table siguelo_masivos enable row level security;
+alter table siguelo_masivo_envios enable row level security;
+create index if not exists siguelo_masivos_empresa_idx on siguelo_masivos (empresa_id, estado);
+
+drop policy if exists "siguelo_masivos_select" on siguelo_masivos;
+create policy "siguelo_masivos_select" on siguelo_masivos for select
+  using (empresa_id = (select empresa_id from usuario_actual()) and siguelo_ve_linea(linea_id));
+
+drop policy if exists "siguelo_masivo_envios_select" on siguelo_masivo_envios;
+create policy "siguelo_masivo_envios_select" on siguelo_masivo_envios for select
+  using (exists (
+    select 1 from siguelo_masivos m
+    where m.id = masivo_id and m.empresa_id = (select empresa_id from usuario_actual()) and siguelo_ve_linea(m.linea_id)
+  ));

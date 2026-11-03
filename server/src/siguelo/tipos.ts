@@ -433,6 +433,60 @@ type Tabla<Row extends Record<string, unknown>> = {
   Relationships: [];
 };
 
+// Mensajes masivos (secciones 7b y 35 de database/siguelo.sql).
+export type FiltroMasivo = {
+  // chats: los que tienen chat con este número · todos: todos los contactos · lista: números pegados
+  origen: 'chats' | 'todos' | 'lista';
+  etapas?: string[];
+  etiquetas?: string[];
+  sin_perdidos?: boolean;
+  // Solo con origen "lista": "59170000000" o "59170000000, Juan".
+  lista?: string[];
+};
+export type EstadoMasivo = 'programado' | 'enviando' | 'pausado' | 'terminado' | 'cancelado';
+export type MasivoRow = {
+  id: string;
+  empresa_id: string;
+  nombre: string;
+  linea_id: string;
+  textos: string[];
+  media_tipo: 'imagen' | 'pdf' | null;
+  media_url: string | null;
+  media_nombre: string | null;
+  filtro: FiltroMasivo;
+  estado: EstadoMasivo;
+  inicia_en: string;
+  zona_horaria: string;
+  hora_inicio: string;
+  hora_fin: string;
+  pausa_min_seg: number;
+  pausa_max_seg: number;
+  maximo_diario: number;
+  total: number;
+  enviados: number;
+  errores: number;
+  motivo: string | null;
+  creado_por: string | null;
+  creado_en: string;
+  actualizado_en: string;
+  terminado_en: string | null;
+};
+export type MasivoEnvioRow = {
+  id: string;
+  masivo_id: string;
+  empresa_id: string;
+  contacto_id: string | null;
+  telefono: string;
+  nombre: string | null;
+  orden: number;
+  estado: 'pendiente' | 'enviando' | 'enviado' | 'error' | 'cancelado';
+  texto: string | null;
+  motivo: string | null;
+  mensaje_id: string | null;
+  whatsapp_id: string | null;
+  enviado_en: string | null;
+};
+
 export type SigueloDatabase = {
   public: {
     Tables: {
@@ -509,6 +563,10 @@ export type SigueloDatabase = {
       siguelo_redes_comentarios: Tabla<ComentarioRedRow>;
       siguelo_aprendido: Tabla<{ id: string; empresa_id: string; negocio_id: string | null; pregunta: string; respuesta: string; creado_en: string }>;
       siguelo_embudos: Tabla<{ id: string; empresa_id: string; nombre: string; creado_en: string }>;
+      siguelo_masivos: Tabla<MasivoRow>;
+      siguelo_masivo_envios: Tabla<MasivoEnvioRow>;
+      etiquetas_whatsapp: Tabla<{ id: string; linea_id: string; whatsapp_id: string; nombre: string; color: number | null; eliminada: boolean }>;
+      contacto_etiquetas: Tabla<{ contacto_id: string; etiqueta_id: string; creado_en: string }>;
       siguelo_pagos: Tabla<PagoRow>;
       campos_personalizados: Tabla<{ id: string; empresa_id: string; nombre: string; tipo: string; opciones: string[]; orden: number }>;
       contacto_campos: Tabla<{ contacto_id: string; campo_id: string; valor: string | null }>;

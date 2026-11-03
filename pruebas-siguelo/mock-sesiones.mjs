@@ -4,6 +4,9 @@ export const linea = { activa: true };
 let n = 0;
 
 const sock = (lineaId) => ({
+  async onWhatsApp(jid) {
+    return (linea.sinWhatsapp || []).includes(String(jid).split('@')[0]) ? [] : [{ jid, exists: true }];
+  },
   async sendMessage(jid, contenido) {
     if (linea.falla) throw new Error('Connection Closed (falso)');
     enviados.push({ jid, linea: lineaId, texto: contenido.text ?? contenido.caption, imagen: contenido.image?.url, documento: contenido.document?.url, en: Date.now() });

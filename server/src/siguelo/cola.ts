@@ -131,7 +131,10 @@ async function hayNovedadSinRevisar(item: ColaRow, seg: SeguimientoRow): Promise
   if (C.ms(ultimo.creado_en) <= C.ms(seg.visto_agente)) return false;
   const filtro = ultimo.whatsapp_id ? `mensaje_id.eq.${ultimo.id},whatsapp_id.eq.${ultimo.whatsapp_id}` : `mensaje_id.eq.${ultimo.id}`;
   const { data: propio } = await db.from('siguelo_cola').select('id').or(filtro).limit(1);
-  return !propio?.length;
+  if (propio?.length) return false;
+  // Un mensaje masivo tampoco es algo que escribiste a mano.
+  const { data: masivo } = await db.from('siguelo_masivo_envios').select('id').or(filtro).limit(1);
+  return !masivo?.length;
 }
 
 type Resultado = 'sigue' | 'enviado' | 'error' | 'tope';
