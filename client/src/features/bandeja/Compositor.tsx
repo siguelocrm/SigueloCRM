@@ -495,7 +495,7 @@ export default function Compositor({ mensajes, seleccionada, usuario, respuestas
               className="text-left rounded-lg px-2 py-1.5"
               style={{ backgroundColor: 'var(--surface-2)' }}
             >
-              <div className="text-[11px] font-medium truncate" style={{ color: 'var(--fg)' }}>"{bot.palabra_clave}"</div>
+              <div className="text-[11px] font-medium truncate" style={{ color: 'var(--fg)' }}>{bot.nombre || `"${bot.palabra_clave}"`}</div>
               <div className="text-[10px] truncate" style={{ color: 'var(--fg-3)' }}>
                 {disparandoBotId === bot.id ? 'Mandando…' : `${bot.pasos.length} paso${bot.pasos.length === 1 ? '' : 's'}`}
               </div>

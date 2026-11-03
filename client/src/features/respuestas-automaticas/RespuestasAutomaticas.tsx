@@ -30,9 +30,23 @@ const inputStyle = { border: `1px solid ${BORDE}`, color: TEXTO_PRIMARIO } as co
 const ICONO_PASO = { texto: MessageSquare, imagen: ImageIcon, pdf: FileText, espera: Clock } as const;
 const ETIQUETA_PASO = { texto: 'Texto', imagen: 'Imagen', pdf: 'PDF', espera: 'Espera' } as const;
 
+// Cuándo se activa una regla o flujo, para mostrarlo en la lista.
+function cuandoSeActiva(r: RespuestaAutomatica) {
+  if (r.disparador && r.disparador !== 'palabra_clave') {
+    return <span style={{ color: TEAL }}>{DISPARADORES.find((d) => d.valor === r.disparador)?.etiqueta}</span>;
+  }
+  return (
+    <>
+      {MODOS.find((m) => m.valor === r.modo_coincidencia)?.etiqueta.replace(' la palabra', '') || 'El mensaje contiene'}:{' '}
+      <span style={{ color: TEAL }}>{(r.palabras_clave?.length ? r.palabras_clave : [r.palabra_clave]).map((p) => `"${p}"`).join(', ')}</span>
+    </>
+  );
+}
+
 export default function RespuestasAutomaticas() {
   const { usuario } = useAuth();
   const [reglas, setReglas] = useState<RespuestaAutomatica[]>([]);
+  const [nombre, setNombre] = useState('');
   const [disparador, setDisparador] = useState<Disparador>('palabra_clave');
   const [palabrasClave, setPalabrasClave] = useState<string[]>([]);
   const [palabraNueva, setPalabraNueva] = useState('');
@@ -106,6 +120,10 @@ export default function RespuestasAutomaticas() {
   };
 
   const guardar = async () => {
+    if (!nombre.trim()) {
+      setError('Ponle un nombre a la regla para reconocerla después.');
+      return;
+    }
     const pasosValidos = pasos.filter((p) => {
       if (p.tipo === 'texto') return !!p.contenido?.trim();
       if (p.tipo === 'espera') return !!p.duracion_segundos && p.duracion_segundos > 0;
@@ -121,6 +139,7 @@ export default function RespuestasAutomaticas() {
     if (pasosValidos.length === 0) return;
     setError('');
     const datosRegla = {
+      nombre: nombre.trim(),
       disparador,
       palabras_clave: disparador === 'palabra_clave' ? palabras : [],
       // palabra_clave se mantiene como texto a mostrar (ej. en el chat).
@@ -157,6 +176,7 @@ export default function RespuestasAutomaticas() {
       return;
     }
     setEditandoId(regla.id);
+    setNombre(regla.nombre || '');
     setDisparador(regla.disparador || 'palabra_clave');
     setPalabrasClave(regla.palabras_clave?.length ? regla.palabras_clave : regla.palabra_clave ? [regla.palabra_clave] : []);
     setPalabraNueva('');
@@ -170,6 +190,7 @@ export default function RespuestasAutomaticas() {
   const cancelarEdicion = () => {
     setEditandoId(null);
     setCreandoRegla(false);
+    setNombre('');
     setDisparador('palabra_clave');
     setPalabrasClave([]);
     setPalabraNueva('');
@@ -215,6 +236,18 @@ export default function RespuestasAutomaticas() {
             </div>
             <input ref={inputImagenRef} type="file" accept="image/*" hidden onChange={(e) => e.target.files?.[0] && subirArchivo(e.target.files[0], 'imagen')} />
             <input ref={inputPdfRef} type="file" accept="application/pdf" hidden onChange={(e) => e.target.files?.[0] && subirArchivo(e.target.files[0], 'pdf')} />
+
+            <label className="flex flex-col gap-1.5 text-xs font-semibold" style={{ color: 'var(--fg-2)' }}>
+              Nombre de la regla
+              <input
+                value={nombre}
+                onChange={(e) => setNombre(e.target.value)}
+                placeholder="Ej. Precios del curso"
+                className="rounded-lg px-2.5 outline-none text-[13.5px] font-normal"
+                style={{ ...inputStyle, height: 40 }}
+              />
+              <span className="text-[10.5px] font-normal" style={{ color: TEXTO_TERCIARIO }}>Solo lo ves tú: sirve para reconocerla en la lista, en el chat y en Negocios.</span>
+            </label>
 
             <label className="flex flex-col gap-1.5 text-xs font-semibold" style={{ color: 'var(--fg-2)' }}>
               ¿Cuándo responde el bot?
@@ -382,15 +415,7 @@ export default function RespuestasAutomaticas() {
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-[13.5px] font-semibold" style={{ color: TEXTO_PRIMARIO }}>
                       {r.tipo === 'flujo' && <span className="mr-1.5 align-middle"><Chip icono={GitBranch}>Flujo</Chip></span>}
-                      {r.tipo === 'flujo' && r.nombre ? `${r.nombre} · ` : ''}
-                      {r.disparador && r.disparador !== 'palabra_clave'
-                        ? <span style={{ color: TEAL }}>{DISPARADORES.find((d) => d.valor === r.disparador)?.etiqueta}</span>
-                        : (
-                          <>
-                            {MODOS.find((m) => m.valor === r.modo_coincidencia)?.etiqueta.replace(' la palabra', '') || 'El mensaje contiene'}:{' '}
-                            <span style={{ color: TEAL }}>{(r.palabras_clave?.length ? r.palabras_clave : [r.palabra_clave]).map((p) => `"${p}"`).join(', ')}</span>
-                          </>
-                        )}
+                      {r.nombre || cuandoSeActiva(r)}
                     </span>
                     <div className="flex items-center gap-2 shrink-0">
                       {r.demora_segundos > 0 && (
@@ -404,6 +429,7 @@ export default function RespuestasAutomaticas() {
                     </div>
                   </div>
                   <div className="flex flex-col gap-1 mt-1.5">
+                    {r.nombre && <div className="text-[12px]" style={{ color: 'var(--fg-2)' }}>{cuandoSeActiva(r)}</div>}
                     {r.tipo === 'flujo' && (
                       <div className="text-[12px]" style={{ color: 'var(--fg-2)' }}>
                         {(r.flujo?.nodes || []).filter((n) => n.type !== 'inicio').length} bloques · {(r.flujo?.nodes || []).filter((n) => n.type === 'pregunta').length} preguntas con ramas
