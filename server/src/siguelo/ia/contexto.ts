@@ -10,12 +10,12 @@ export type EtapaCorta = { id: string; nombre: string; tipo: 'normal' | 'ganada'
 // cuando: lo que escribiste en "Cuándo la usa la IA" (Negocios → Respuestas rápidas / Bot).
 export type RespuestaCorta = { id: string; titulo: string; tipo: string; contenido: string; cuando?: string };
 export type BotCorto = { id: string; nombre: string; cuando: string };
-export type OtroNegocio = { id: string; nombre: string; sucursal: string | null; direccion: string | null; horario: string | null; zonas: string | null };
+export type OtroNegocio = { id: string; nombre: string; sucursal: string | null; direccion: string | null; horario: string | null; zonas: string | null; ubicacion?: string | null };
 
 export type DatosContexto = {
   ia: Pick<IaRow, 'estilo' | 'firma' | 'instrucciones' | 'ejemplos' | 'acciones'>;
   ahora: string;
-  negocio: Pick<NegocioRow, 'nombre' | 'sucursal' | 'direccion' | 'horario' | 'zonas' | 'info_ia'>;
+  negocio: Pick<NegocioRow, 'nombre' | 'sucursal' | 'direccion' | 'horario' | 'zonas' | 'info_ia' | 'ubicacion'>;
   etapas: EtapaCorta[];
   etapaActual: string | null;
   nombreCliente: string;
@@ -52,7 +52,12 @@ export type ResultadoIA = {
   pase: { negocio_id: string; mensaje: string; nota: string } | null;
   qr: string | null;
   bot: string | null;
+  // De qué lugar mandar el pin de la ubicación: AQUI (este negocio) o el id de otro negocio.
+  ubicacion: string | null;
 };
+
+// En "ubicacion", este negocio (el resto son ids de otros negocios).
+export const AQUI = 'aqui';
 
 export const TIPOS_AVISO: Record<TipoAviso, string> = {
   fuera: 'Le interesa algo que no está en la información del negocio',
@@ -86,7 +91,7 @@ const recortar = (s: unknown, n: number) => {
 type Mapa = Map<string, string>;
 const corto = (prefijo: string, lista: { id: string }[]): Mapa => new Map(lista.map((x, i) => [`${prefijo}${i + 1}`, x.id]));
 
-export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensajes: MensajeChat[]; ids: { etapas: Mapa; respuestas: Mapa; negocios: Mapa; grupos: Mapa; cursos: Mapa; bots: Mapa } } {
+export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensajes: MensajeChat[]; ids: { etapas: Mapa; respuestas: Mapa; negocios: Mapa; grupos: Mapa; cursos: Mapa; bots: Mapa; ubicaciones: Mapa } } {
   const ac = d.ia.acciones;
   const ids = {
     etapas: corto('e', d.etapas),
@@ -95,6 +100,10 @@ export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensaj
     grupos: corto('g', ac.grupos ? d.grupos : []),
     cursos: corto('k', d.cursos),
     bots: corto('b', d.bots || []),
+    ubicaciones: corto('u', [
+      ...(d.negocio.ubicacion?.trim() ? [{ id: AQUI }] : []),
+      ...d.otrosNegocios.filter((x) => x.ubicacion?.trim()),
+    ]),
   };
   const idDe = (m: Mapa, id: string) => [...m.entries()].find(([, v]) => v === id)?.[0];
   const e = d.ia.estilo;
@@ -127,6 +136,13 @@ export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensaj
     .join('\n');
   const cursos = d.cursos.map((x) => `- ${idDe(ids.cursos, x.id)}: "${x.nombre}", ${x.precio}`).join('\n');
   const bots = (d.bots || []).map((x) => `- ${idDe(ids.bots, x.id)}: "${x.nombre}" — ACTÍVALO CUANDO: ${recortar(x.cuando, 200)}`).join('\n');
+  const ubicaciones = [...ids.ubicaciones.entries()]
+    .map(([k, id]) => {
+      if (id === AQUI) return `- ${k}: ESTE negocio (${n.nombre}${n.sucursal ? `, sucursal ${n.sucursal}` : ''})${n.direccion ? `, ${n.direccion}` : ''}`;
+      const o = d.otrosNegocios.find((x) => x.id === id)!;
+      return `- ${k}: ${o.nombre}${o.sucursal ? ` (sucursal ${o.sucursal})` : ''}${o.direccion ? `, ${o.direccion}` : ''}`;
+    })
+    .join('\n');
 
   const campos = [
     '"resumen": "una línea: qué quiere el cliente y en qué está"',
@@ -146,6 +162,7 @@ export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensaj
           ...(otros ? ['"pase": null o { "negocio_id": "id", "mensaje": "primer mensaje que le escribirá esa sucursal", "nota": "contexto corto para el equipo" }'] : []),
           ...(cursos ? ['"qr": "id del curso cuyo QR de pago hay que mandarle, o null"'] : []),
           ...(bots ? ['"bot": "id de la regla o flujo del bot que hay que activar ahora, o null"'] : []),
+          ...(ubicaciones ? ['"ubicacion": "id del lugar cuya ubicación en el mapa hay que mandarle ahora, o null"'] : []),
         ]
       : []),
   ];
@@ -164,6 +181,7 @@ ${
 ${d.club.trim()}
 """
 - Para horarios, cupos y mensualidades usa estos datos. No ofrezcas un grupo LLENO: ofrece otro horario del mismo curso o, si no hay, otra sucursal. Si quedan pocos cupos, puedes decirlo.
+- Si pregunta por horarios en general, NO le mandes la lista completa: primero pregúntale qué curso o cursos le interesan (y, si sirve, qué días o a qué hora puede). Cuando lo diga, dale solo los horarios de esos cursos que le sirven, uno por línea.
 
 `
       : ''
@@ -173,7 +191,7 @@ ${d.club.trim()}
 """
 ${d.aula.trim()}
 """
-- Si preguntan por clases virtuales u online, ofrece estos planes con su precio y horario. Para inscribirse, que pague por QR y mande el comprobante.
+- Si preguntan por clases virtuales u online, ofrece estos planes con su precio y horario, uno por línea. Si son muchos, primero pregunta qué días o qué tipo de plan le conviene. Para inscribirse, que pague por QR y mande el comprobante.
 
 `
       : ''
@@ -207,6 +225,8 @@ RESPUESTA AL CLIENTE ("puede_responder" y "respuesta"):
 - Escribe lo que el negocio le enviaría ahora por WhatsApp, contestando sus últimos mensajes y teniendo en cuenta toda la conversación.
 - Usa SOLO la ficha del negocio y lo que ya se dijo. Si falta un dato (precio, disponibilidad, un producto que no figura, un caso particular), NO lo inventes: "puede_responder": false, "respuesta": "" y "necesita_al_dueno": true.
 - Si el cliente no espera respuesta (solo dijo "ok" o "gracias" al final), "respuesta": "" o una despedida muy corta. Si no quiere más mensajes, "respuesta": "".
+- Si pregunta algo general (horarios, precios, cursos, productos) y hay varias opciones, no le mandes todo junto: primero pregúntale qué le interesa (qué curso o producto, para quién, qué días le quedan bien) y después dale solo lo que corresponde.
+- Cuando des horarios, precios u opciones, pon cada uno en su propia línea (empezando con un guion o un emoji). Nunca todo seguido en un mismo párrafo.
 - Nunca prometas descuentos, fechas ni nada que no esté en la ficha. No hables del CRM ni de la IA. Si te preguntan si eres un bot, no lo niegues: di que eres el asistente virtual del negocio.
 - Estilo: tono ${v('tono', e.tono)}; ${v('trato', e.trato)}; ${v('emojis', e.emojis)}; largo ${v('largo', e.largo)}; formato: ${v('saltos', e.saltos)}.${e.usar_nombre ? ' Puedes usar el nombre del cliente si es un nombre de persona.' : ' No uses el nombre del cliente.'}${d.ia.instrucciones.trim() ? `\n- Instrucciones del dueño: ${d.ia.instrucciones.trim()}` : ''}${d.ia.ejemplos.trim() ? `\n- Ejemplos de cómo escribe el dueño (imita su forma, no copies los datos):\n"""\n${d.ia.ejemplos.trim()}\n"""` : ''}${
           respuestas
@@ -252,6 +272,15 @@ REGLAS Y FLUJOS DEL BOT QUE PUEDES ACTIVAR (id: nombre — cuándo):
 ${bots}
 - Cuando se cumpla el "cuándo" de uno, pon su id en "bot": el bot le manda sus propios mensajes (y sus preguntas, si es un flujo). Tu respuesta debe ser corta o vacía para no repetir lo que manda el bot.`
             : ''
+        }${
+          ubicaciones
+            ? `
+
+UBICACIONES EN EL MAPA QUE PUEDES MANDAR (id: lugar):
+${ubicaciones}
+- Si pregunta dónde están, la dirección, cómo llegar o pide la ubicación, pon el id de ese lugar en "ubicacion": se le manda sola la ubicación en el mapa (el pin de Google Maps). En tu respuesta dile la dirección en una línea; no escribas links. Puedes mandarla todas las veces que la pida.
+- Si pregunta por otra sucursal, manda la ubicación de esa sucursal.`
+            : ''
         }`
       : ''
   }`;
@@ -274,6 +303,7 @@ export function validarResultado(j: Record<string, unknown>, ids: ReturnType<typ
   const paseCrudo = j.pase && typeof j.pase === 'object' ? (j.pase as Record<string, unknown>) : null;
   const negocioPase = paseCrudo ? real(ids.negocios, paseCrudo.negocio_id) : null;
   const respuesta = conRespuesta ? String(j.respuesta ?? '').trim().slice(0, 2000) : '';
+  const ubicacion = conRespuesta ? real(ids.ubicaciones, j.ubicacion) : null;
   return {
     resumen: recortar(j.resumen, 200),
     interes: recortar(j.interes, 100),
@@ -295,5 +325,6 @@ export function validarResultado(j: Record<string, unknown>, ids: ReturnType<typ
         : null,
     qr: conRespuesta ? real(ids.cursos, j.qr) : null,
     bot: conRespuesta ? real(ids.bots, j.bot) : null,
+    ubicacion,
   };
 }

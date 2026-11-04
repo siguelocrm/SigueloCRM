@@ -210,7 +210,7 @@ export default function AjustesIA({ ajustes, existe, lineas, puedeEditar, onGuar
         <Campo etiqueta="Ejemplos de cómo respondes tú (opcional)" ayuda="Pega 2 o 3 respuestas tuyas: la IA imita la forma, no copia los datos.">
           <textarea value={b.ejemplos} disabled={!puedeEditar} onChange={(e) => setB({ ...b, ejemplos: e.target.value })} rows={4} className="rounded-lg outline-none text-[13px] font-normal bg-[var(--surface)]" style={estiloArea} />
         </Campo>
-        <Campo etiqueta="Si no sabe la respuesta">
+        <Campo etiqueta="Si no sabe la respuesta" ayuda="Con “No responde y te avisa” el cliente no recibe nada hasta que le escribas tú. Recomendado: el “déjame consultarlo”.">
           <select value={b.si_no_sabe} disabled={!puedeEditar} onChange={(e) => setB({ ...b, si_no_sabe: e.target.value as Ajustes['si_no_sabe'] })} className={`${claseCampo} font-normal`} style={estiloCampo}>
             <option value="avisar">No responde y te avisa</option>
             <option value="espera">Manda un “déjame consultarlo” y te avisa</option>
@@ -237,7 +237,7 @@ export default function AjustesIA({ ajustes, existe, lineas, puedeEditar, onGuar
           <input type="time" value={b.hasta} disabled={!puedeEditar} onChange={(e) => setB({ ...b, hasta: e.target.value })} aria-label="Hasta" className={claseCampo} style={estiloCampo} />
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Campo etiqueta="Espera antes de responder: desde (segundos)">{num('espera_min_seg')}</Campo>
+          <Campo etiqueta="Espera antes de responder: desde (segundos)" ayuda="Se suma a unos 20 a 30 segundos en los que la IA espera que el cliente termine de escribir y piensa la respuesta.">{num('espera_min_seg')}</Campo>
           <Campo etiqueta="hasta (segundos)">{num('espera_max_seg')}</Campo>
           <Campo etiqueta="Máximo de respuestas por cliente al día">{num('max_por_cliente_dia')}</Campo>
           <Campo etiqueta="Máximo de respuestas al día (todas)">{num('max_respuestas_dia')}</Campo>

@@ -10,7 +10,8 @@ import { formatoMonto } from '../pagos/comprobante.js';
 import { datosClubParaIA } from '../club/club.js';
 import { datosAulaParaIA } from '../aula/aula.js';
 import { aprendidoDe, textoAprendido } from '../redes/redes.js';
-import { armarMensajes, validarResultado, type DatosContexto, type LineaConversacion, type ResultadoIA } from './contexto.js';
+import { AQUI, armarMensajes, validarResultado, type DatosContexto, type LineaConversacion, type ResultadoIA } from './contexto.js';
+import { empaquetar } from './ubicacion.js';
 import type { CursoRow, EtapaVentaRow, IaRow, LecturaRow, NegocioRow, PorLeerRow, SalidaRow, TipoAviso } from '../tipos.js';
 
 // La IA lee cada conversación cuando el cliente termina de escribir y, con la
@@ -21,10 +22,10 @@ import type { CursoRow, EtapaVentaRow, IaRow, LecturaRow, NegocioRow, PorLeerRow
 
 type Config = { ia: IaRow; clave: string; zona: string };
 
-const QUIETO_SEG = 45; // deja que el cliente termine de escribir (suelen mandar varios mensajes)
+const QUIETO_SEG = 20; // deja que el cliente termine de escribir (suelen mandar varios mensajes)
 const NO_RESPONDER_VIEJOS_MS = 2 * HORA; // no se contestan mensajes viejos
 const REPETIR_AVISO_MS = 6 * HORA; // el mismo tipo de aviso del mismo cliente, como mucho cada 6 h
-const ESPERA_REPETIR_MS = 12 * HORA; // el "déjame consultarlo", como mucho cada 12 h
+const ESPERA_REPETIR_MS = 30 * MIN; // el "déjame consultarlo", como mucho cada media hora
 const ms = (iso: string | null | undefined) => (iso ? new Date(iso).getTime() || 0 : 0);
 const digitos = (t: string | null | undefined) => String(t || '').replace(/\D/g, '');
 
@@ -157,9 +158,11 @@ async function encolarAviso(x: Contexto, tipo: TipoAviso, motivo: string): Promi
 // Arma lo que se le manda al cliente: la respuesta, las respuestas rápidas, el link del grupo y el pase.
 async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> {
   const { c } = x;
-  if (c.ia.modo === 'apagado' || r.no_quiere_mas || x.lectura.sin_respuestas) return '';
+  if (c.ia.modo === 'apagado') return '';
+  if (r.no_quiere_mas) return 'no le respondió: no quiere más mensajes';
+  if (x.lectura.sin_respuestas) return 'no le respondió: apagaste la IA en este chat';
   const etapa = x.etapas.find((e) => e.id === x.contacto?.etapa_id);
-  if (etapa?.tipo === 'perdida') return '';
+  if (etapa?.tipo === 'perdida') return `no le respondió: está en "${etapa.nombre}"`;
   // Solo si el cliente fue el último en escribir, y hace poco.
   if (!x.clienteUltimo || Date.now() - ms(x.fila.ultimo_cliente) > NO_RESPONDER_VIEJOS_MS) return '';
 
@@ -176,7 +179,14 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
   const lineaOtro = otro ? await lineaDeNegocio(otro.id) : null;
   const curso = r.qr ? x.cursos.find((k) => k.id === r.qr && k.qr_url) : undefined;
   const bot = r.bot ? x.bots.find((b) => b.id === r.bot) : undefined;
-  if (!texto && !respuestas.length && !grupo && !curso && !bot && !(otro && lineaOtro)) return '';
+  // La ubicación en el mapa: la de este negocio o la de otra sucursal.
+  const lugar = r.ubicacion === AQUI ? x.negocio : r.ubicacion ? x.otros.find((n) => n.id === r.ubicacion) : undefined;
+  const mapa = lugar?.ubicacion?.trim() ? lugar : undefined;
+  if (!texto && !respuestas.length && !grupo && !curso && !bot && !mapa && !(otro && lineaOtro)) {
+    if (!r.necesita_al_dueno) return '';
+    const yaEspero = c.ia.si_no_sabe === 'espera' && c.ia.texto_espera.trim() && Date.now() - ms(x.lectura.espera_enviada) <= ESPERA_REPETIR_MS;
+    return `no le respondió porque no tiene esa información en la ficha${yaEspero ? ' (el "déjame consultarlo" ya se le mandó hace poco)' : c.ia.si_no_sabe === 'avisar' ? ' (en Ajustes está "No responde y te avisa")' : ''}: respóndele tú o agrega el dato en Negocios`;
+  }
   if (texto && c.ia.firma.trim() && !texto.includes(c.ia.firma.trim())) texto += `\n${c.ia.firma.trim()}`;
 
   const motivo = await motivoSinAuto(c, x.fila.conversacion_id, x.ultimaPersona);
@@ -215,6 +225,7 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
   if (grupo) filas.push({ ...base, origen: 'grupo', referencia: grupo.id, contenido: `Aquí tienes el link para unirte a "${grupo.nombre}":\n${grupo.link}`, orden: filas.length });
   if (curso) filas.push({ ...base, origen: 'qr', referencia: curso.id, tipo: 'imagen', media_url: curso.qr_url, contenido: `QR para pagar ${curso.nombre}: ${formatoMonto(curso.precio, curso.moneda)}`, orden: filas.length });
   if (bot) filas.push({ ...base, origen: 'bot', referencia: bot.id, contenido: `Activa "${bot.nombre}" del bot`, orden: filas.length });
+  if (mapa) filas.push({ ...base, origen: 'respuesta', referencia: 'ubicacion', tipo: 'ubicacion', contenido: empaquetar(mapa.sucursal ? `${mapa.nombre} (${mapa.sucursal})` : mapa.nombre, mapa.direccion, mapa.ubicacion!.trim()), orden: filas.length });
   if (otro && lineaOtro) {
     // Sale por el número del otro negocio, un rato después de la respuesta.
     filas.push({
@@ -242,7 +253,7 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
     return '';
   }
   if (espera && estado === 'pendiente') x.lectura.espera_enviada = new Date().toISOString();
-  const que = [texto && `"${texto.slice(0, 80)}${texto.length > 80 ? '…' : ''}"`, ...respuestas.map((rr) => `"${rr.titulo}"`), grupo && `link de "${grupo.nombre}"`, curso && `QR de "${curso.nombre}"`, bot && `activa "${bot.nombre}" del bot`, otro && `pase a ${otro.nombre}`]
+  const que = [texto && `"${texto.slice(0, 80)}${texto.length > 80 ? '…' : ''}"`, ...respuestas.map((rr) => `"${rr.titulo}"`), grupo && `link de "${grupo.nombre}"`, curso && `QR de "${curso.nombre}"`, bot && `activa "${bot.nombre}" del bot`, mapa && `ubicación de ${mapa.nombre}`, otro && `pase a ${otro.nombre}`]
     .filter(Boolean)
     .join(' + ');
   return estado === 'pendiente' ? `respondiendo: ${que}` : `respuesta lista para que la apruebes${base.motivo ? ` (${base.motivo})` : ''}: ${que}`;
@@ -277,7 +288,9 @@ async function aplicar(x: Contexto, r: ResultadoIA): Promise<string[]> {
   if ((r.necesita_al_dueno || r.aviso) && r.motivo) {
     x.lectura.atencion = { tipo: r.aviso || 'pregunta', motivo: r.motivo, ts: Date.now(), hecho: null };
     hechos.push(`para que lo veas: ${r.motivo}`);
-    if (r.aviso && (await encolarAviso(x, r.aviso, r.motivo))) hechos.push('aviso a tu WhatsApp');
+    // Si no sabe la respuesta, siempre te avisa (aunque la IA no lo marque como aviso).
+    const tipoAviso = r.aviso || (r.necesita_al_dueno ? 'pregunta' : null);
+    if (tipoAviso && (await encolarAviso(x, tipoAviso, r.motivo))) hechos.push('aviso a tu WhatsApp');
   }
   const rta = await gestionarRespuesta(x, r);
   if (rta) hechos.push(rta);
@@ -467,6 +480,7 @@ export async function probarMensaje(c: Config, negocioId: string, texto: string)
       pase: r.pase ? { ...r.pase, negocio: otros.find((n) => n.id === r.pase!.negocio_id)?.nombre ?? '' } : null,
       qr: cursos.find((k) => k.id === r.qr)?.nombre ?? null,
       bot: bots.find((b) => b.id === r.bot)?.nombre ?? null,
+      ubicacion: r.ubicacion === AQUI ? negocio.nombre : (otros.find((n) => n.id === r.ubicacion)?.nombre ?? null),
     },
   };
 }

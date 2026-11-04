@@ -245,6 +245,14 @@ npm test
   `pago.aula.inscrito_en` (nunca se inscribe dos veces; la contraseña no se guarda). `datosAulaParaIA` va al lector, a
   "Probar" y a Redes (solo si hay un curso del aula para ese negocio). Rutas en `aula/rutas.ts`.
 
+- **Ubicación y silencios de la IA** (sección 37): cada negocio tiene `ubicacion` (link de Google Maps o "lat, lng"). La IA
+  ve "UBICACIONES EN EL MAPA" (`u0` = este negocio, `u1`… otras sucursales) y devuelve `"ubicacion"`; `salida.ts` manda el
+  pin (`ia/ubicacion.ts`: lee las coordenadas del link, sigue los links cortos `maps.app.goo.gl`; si no puede, manda el
+  link) y en el chat queda "📍 Ubicación de …: link". Se puede mandar todas las veces. Si la IA no sabe algo: siempre te
+  avisa (tipo "pregunta") y el registro dice por qué no respondió; el "déjame consultarlo" se repite como mucho cada 30 min.
+  La IA espera 20 s (antes 45 s) a que el cliente termine de escribir. Reglas del prompt: ante horarios u opciones en
+  general, primero pregunta qué le interesa; cada opción en su línea.
+
 ### Pendientes conocidos e ideas
 - El selector de etapa dentro del chat (curso: `HiloMensajes`/`PanelContacto`) lista etapas de todos los embudos.
 - Dashboard y Reportes no separan por embudo.

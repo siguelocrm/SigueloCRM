@@ -9,7 +9,7 @@ const sock = (lineaId) => ({
   },
   async sendMessage(jid, contenido) {
     if (linea.falla) throw new Error('Connection Closed (falso)');
-    enviados.push({ jid, linea: lineaId, texto: contenido.text ?? contenido.caption, imagen: contenido.image?.url, documento: contenido.document?.url, en: Date.now() });
+    enviados.push({ jid, linea: lineaId, texto: contenido.text ?? contenido.caption, imagen: contenido.image?.url, documento: contenido.document?.url, ubicacion: contenido.location, en: Date.now() });
     return { key: { id: `WID-${++n}` } };
   },
 });

@@ -1492,3 +1492,11 @@ alter table siguelo_cursos add column if not exists aula boolean not null defaul
 -- El pago guarda los datos de la inscripción en el aula
 -- ({ alumno, plan, usuario_id, usuario, nueva, inscrito_en }).
 alter table siguelo_pagos add column if not exists aula jsonb;
+
+-- ---------- 37. Ubicación en el mapa de cada negocio ----------
+-- El link de Google Maps de la sucursal: la IA le manda el pin de la ubicación
+-- (no solo el texto de la dirección) cada vez que el cliente la pide.
+alter table siguelo_negocios add column if not exists ubicacion text;
+alter table siguelo_ia_salida drop constraint if exists siguelo_ia_salida_tipo_check;
+alter table siguelo_ia_salida add constraint siguelo_ia_salida_tipo_check
+  check (tipo in ('texto', 'imagen', 'pdf', 'documento', 'audio', 'ubicacion'));

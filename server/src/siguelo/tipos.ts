@@ -165,6 +165,8 @@ export type NegocioRow = {
   grupos: GrupoNegocio[];
   // Sucursal de este negocio en el sistema del club (null = no está conectado).
   club_sucursal_id?: string | null;
+  // Link de Google Maps (o "latitud, longitud"): la IA manda el pin de la ubicación.
+  ubicacion?: string | null;
   creado_en: string;
   actualizado_en: string;
 };
@@ -241,7 +243,7 @@ export type SalidaRow = {
   telefono: string;
   origen: OrigenSalida;
   referencia: string | null;
-  tipo: 'texto' | 'imagen' | 'pdf' | 'documento' | 'audio';
+  tipo: 'texto' | 'imagen' | 'pdf' | 'documento' | 'audio' | 'ubicacion';
   contenido: string;
   media_url: string | null;
   mimetype: string | null;

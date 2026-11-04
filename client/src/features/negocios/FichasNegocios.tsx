@@ -11,6 +11,7 @@ type Borrador = {
   nombre: string;
   sucursal: string;
   direccion: string;
+  ubicacion: string;
   horario: string;
   zonas: string;
   info_ia: string;
@@ -25,6 +26,7 @@ const aBorrador = (n: Negocio | null, lineas: string[]): Borrador => ({
   nombre: n?.nombre ?? '',
   sucursal: n?.sucursal ?? '',
   direccion: n?.direccion ?? '',
+  ubicacion: n?.ubicacion ?? '',
   horario: n?.horario ?? '',
   zonas: n?.zonas ?? '',
   info_ia: n?.info_ia ?? '',
@@ -99,6 +101,8 @@ export default function FichasNegocios({ datos, empresaId, puedeEditar }: Props)
       nombre: borrador.nombre.trim(),
       sucursal: borrador.sucursal.trim() || null,
       direccion: borrador.direccion.trim() || null,
+      // Sin la última versión del SQL la columna no existe: solo se manda si se usa.
+      ...(borrador.ubicacion.trim() || (n && 'ubicacion' in n) ? { ubicacion: borrador.ubicacion.trim() || null } : {}),
       horario: borrador.horario.trim() || null,
       zonas: borrador.zonas.trim() || null,
       info_ia: borrador.info_ia,
@@ -167,6 +171,9 @@ export default function FichasNegocios({ datos, empresaId, puedeEditar }: Props)
             <input value={borrador.horario} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, horario: e.target.value })} placeholder="Ej. lunes a sábado de 8:00 a 19:00" className={`${claseCampo} font-normal`} style={estiloCampo} />
           </Campo>
         </div>
+        <Campo etiqueta="Ubicación en Google Maps" ayuda="En Google Maps busca tu local → Compartir → Copiar vínculo, y pégalo aquí. Cuando el cliente pida la ubicación, la IA le manda el pin del mapa (también la de otras sucursales).">
+          <input value={borrador.ubicacion} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, ubicacion: e.target.value })} placeholder="Ej. https://maps.app.goo.gl/AbCd123" className={`${claseCampo} font-normal`} style={estiloCampo} />
+        </Campo>
         <Campo etiqueta="Zonas que atiende" ayuda="Barrios o ciudades cercanos. La IA los usa para sugerir la sucursal más cercana.">
           <input value={borrador.zonas} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, zonas: e.target.value })} placeholder="Ej. Quillacollo, Tiquipaya, Colcapirhua" className={`${claseCampo} font-normal`} style={estiloCampo} />
         </Campo>

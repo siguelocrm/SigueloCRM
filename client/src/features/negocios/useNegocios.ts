@@ -22,6 +22,8 @@ export interface Negocio {
   grupos?: GrupoNegocio[];
   // Su sucursal en el sistema del club (Inscripciones → Sistema del club).
   club_sucursal_id?: string | null;
+  // Link de Google Maps: la IA manda el pin de la ubicación.
+  ubicacion?: string | null;
 }
 
 export interface GrupoNegocio {

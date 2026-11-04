@@ -295,6 +295,50 @@ await leerPendientes(await config());
 assert.equal(llamadas.length, antesFlujo, 'contesta el flujo del bot, no la IA');
 paso('mientras un flujo del bot espera la respuesta del cliente, la IA no se mete');
 
+// ---------- Ubicación en el mapa (pin), también de otra sucursal y todas las veces que la pida ----------
+const { coordenadasDe } = await import(R + 'ia/ubicacion.ts');
+assert.deepEqual(coordenadasDe('https://www.google.com/maps/place/Club/@-17.3901,-66.2789,17z/data=!3m1!4b1!4m6!3m5!1s0x0:0x0!8m2!3d-17.39012!4d-66.27654'), { lat: -17.39012, lng: -66.27654 }, 'el lugar exacto de un link de Google Maps');
+assert.deepEqual(coordenadasDe('https://maps.google.com/?q=-17.3935,-66.1570'), { lat: -17.3935, lng: -66.157 });
+assert.deepEqual(coordenadasDe('-17.3935, -66.1570'), { lat: -17.3935, lng: -66.157 });
+assert.equal(coordenadasDe('https://maps.app.goo.gl/AbCd123'), null, 'un link corto se resuelve al enviar');
+await pg.query(`update siguelo_negocios set ubicacion = $1 where id = $2`, ['https://maps.google.com/?q=-17.3935,-66.1570', nQuilla]);
+await pg.query(`update siguelo_negocios set ubicacion = $1 where id = $2`, ['-17.3897, -66.1568', nCercado]);
+const hugo = await chat(L1, '59170000030', 'Hugo');
+for (const [pregunta, sucursal] of [['¿Me mandas la ubicación?', 'ESTE negocio'], ['¿Y me pasas la ubicación otra vez?', 'ESTE negocio'], ['¿Y la de Cercado?', 'Tienda Cercado']] as const) {
+  await escribe(hugo.conv, pregunta);
+  avanzar(MIN);
+  responder = (l) => {
+    assert.match(l.sistema, /UBICACIONES EN EL MAPA QUE PUEDES MANDAR/);
+    const u = new RegExp(`- (u\\d+): ${sucursal.replace(/[()]/g, '\\$&')}`).exec(l.sistema)?.[1];
+    assert.ok(u, `ve la ubicación de ${sucursal}`);
+    return { resumen: 'Pide la ubicación', puede_responder: true, respuesta: 'Te paso la ubicación 📍', ubicacion: u };
+  };
+  await leerPendientes(await config());
+  await salida();
+}
+const pines = enviados.filter((e) => e.jid.startsWith('59170000030') && e.ubicacion).map((e) => e.ubicacion);
+assert.equal(pines.length, 3, 'manda el pin cada vez que la pide');
+assert.deepEqual([pines[0].degreesLatitude, pines[0].degreesLongitude, pines[0].name, pines[0].address], [-17.3935, -66.157, 'Tienda Quillacollo (Quillacollo)', 'Av. Blanco Galindo km 13']);
+assert.deepEqual([pines[2].degreesLatitude, pines[2].name], [-17.3897, 'Tienda Cercado (Cercado)'], 'y la de otra sucursal');
+const enChat = await uno(`select contenido from mensajes where conversacion_id = $1 and contenido like '📍%' order by creado_en desc limit 1`, [hugo.conv]);
+assert.match(enChat.contenido, /📍 Ubicación de Tienda Cercado \(Cercado\) \(Calle Jordán 123\): https:\/\/maps\.google\.com\/\?q=-17\.3897,-66\.1568/);
+paso('manda el pin del mapa (también de otra sucursal y todas las veces que la pida), y en el chat queda el link');
+
+// ---------- Si no sabe: te avisa y queda anotado por qué no respondió ----------
+await pg.query(`update siguelo_ia set si_no_sabe = 'avisar' where empresa_id = $1`, [empresa]);
+const ines = await chat(L1, '59170000031', 'Inés');
+await escribe(ines.conv, '¿Tienen estacionamiento para camiones?');
+avanzar(MIN);
+const avisosAntes = enviados.filter((e) => e.jid.startsWith('59179999999')).length;
+responder = () => ({ resumen: 'Pregunta por estacionamiento', puede_responder: false, respuesta: '', necesita_al_dueno: true, motivo: 'Pregunta si hay estacionamiento para camiones', aviso: null });
+await leerPendientes(await config());
+await salida();
+assert.equal(enviados.filter((e) => e.jid.startsWith('59170000031')).length, 0);
+assert.ok(enviados.filter((e) => e.jid.startsWith('59179999999')).length > avisosAntes, 'aunque la IA no lo marque como aviso, te llega a tu WhatsApp');
+const nota = await uno(`select texto from siguelo_registro where contacto_id = $1 order by creado_en desc limit 1`, [ines.contacto.id]);
+assert.match(nota.texto, /no le respondió porque no tiene esa información en la ficha \(en Ajustes está "No responde y te avisa"\)/);
+paso('si no sabe la respuesta, te avisa a tu WhatsApp y queda anotado por qué no le respondió');
+
 const uso = await uno(`select sum(consultas)::int c, sum(entrada)::int e from siguelo_ia_uso`);
 console.log(`\n${ok} pasos OK · ${uso.c} consultas a la IA (${uso.e} tokens de entrada) · mensajes:`);
-for (const e of enviados) console.log('  →', e.jid.split('@')[0], e.imagen ? `[foto ${e.imagen}]` : JSON.stringify(e.texto).slice(0, 110));
+for (const e of enviados) console.log('  →', e.jid.split('@')[0], e.imagen ? `[foto ${e.imagen}]` : e.ubicacion ? `[ubicación ${e.ubicacion.name}]` : JSON.stringify(e.texto).slice(0, 110));

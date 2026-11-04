@@ -128,7 +128,7 @@ export default function ResumenIA({ ajustes, lineas, onAbrirChat }: Props) {
                   {p.motivo && <span className="basis-full text-[12px]" style={{ color: 'var(--warn)' }}>No salió sola porque {p.motivo}.</span>}
                 </div>
                 {items.map((it) =>
-                  it.origen === 'respuesta' ? (
+                  it.origen === 'respuesta' && it.tipo !== 'ubicacion' ? (
                     <textarea
                       key={it.id}
                       value={editados[it.id] ?? it.contenido}
@@ -140,8 +140,14 @@ export default function ResumenIA({ ajustes, lineas, onAbrirChat }: Props) {
                     />
                   ) : (
                     <div key={it.id} className="text-[12.5px] rounded-lg px-3 py-2" style={{ border: `1px solid ${BORDE}`, color: TEXTO_SECUNDARIO }}>
-                      <b>{QUE[it.origen] || it.origen}{it.origen === 'pase' && lineas[it.linea_id] ? ` (por ${lineas[it.linea_id]})` : ''}:</b> {it.tipo !== 'texto' ? `[${it.tipo}] ` : ''}
-                      {it.contenido}
+                      {it.tipo === 'ubicacion' ? (
+                        <><b>📍 Ubicación en el mapa:</b> {it.contenido.split('|')[0]}</>
+                      ) : (
+                        <>
+                          <b>{QUE[it.origen] || it.origen}{it.origen === 'pase' && lineas[it.linea_id] ? ` (por ${lineas[it.linea_id]})` : ''}:</b> {it.tipo !== 'texto' ? `[${it.tipo}] ` : ''}
+                          {it.contenido}
+                        </>
+                      )}
                     </div>
                   ),
                 )}

@@ -4,6 +4,7 @@ import { MIN, fechaDe, instante } from '../horario.js';
 import { registrar } from '../registro.js';
 import { obtenerSesion } from '../../whatsapp/sesiones.js';
 import { construirContenidoWA } from '../../whatsapp/contenido.js';
+import { contenidoUbicacion, desempaquetar, linkDeMapa } from './ubicacion.js';
 import { marcarEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import { enviarPasos } from '../../whatsapp/bot-automatico.js';
 import { iniciarFlujo } from '../../whatsapp/flujo.js';
@@ -101,7 +102,11 @@ async function enviarAlCliente(c: Config, it: SalidaRow): Promise<void> {
       await registrar(c.ia.empresa_id, it.contacto_id, 'ia', `IA activó ${it.contenido.replace(/^Activa /, '')} para +${it.telefono.split('@')[0]}.`);
       return;
     }
-    const contenido = await construirContenidoWA({ tipo: it.tipo, texto: it.contenido, media_url: it.media_url, mimetype: it.mimetype });
+    // La ubicación sale como pin del mapa; en el chat del CRM queda como texto con el link.
+    const lugar = it.tipo === 'ubicacion' ? desempaquetar(it.contenido) : null;
+    const contenido = lugar
+      ? await contenidoUbicacion(lugar.ubicacion, lugar.nombre, lugar.direccion)
+      : await construirContenidoWA({ tipo: it.tipo, texto: it.contenido, media_url: it.media_url, mimetype: it.mimetype });
     const resultado = await sesion.sock.sendMessage(jidDe(it.telefono), contenido);
     const whatsappId = resultado?.key?.id || null;
     if (whatsappId) marcarEnviadoPorCRM(whatsappId);
@@ -111,9 +116,9 @@ async function enviarAlCliente(c: Config, it: SalidaRow): Promise<void> {
         conversacion_id: conversacionId,
         remitente: 'agente',
         agente_id: null,
-        tipo: it.tipo,
-        contenido: it.contenido || null,
-        media_url: it.tipo === 'texto' ? null : it.media_url,
+        tipo: lugar ? 'texto' : it.tipo,
+        contenido: lugar ? `📍 Ubicación de ${lugar.nombre}${lugar.direccion ? ` (${lugar.direccion})` : ''}: ${linkDeMapa(lugar.ubicacion)}` : it.contenido || null,
+        media_url: it.tipo === 'texto' || lugar ? null : it.media_url,
         whatsapp_id: whatsappId,
       })
       .select('id')
