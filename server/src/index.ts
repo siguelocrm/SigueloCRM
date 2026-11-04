@@ -6,6 +6,7 @@ import { usuariosSigueloRouter } from './siguelo/usuarios/rutas.js';
 import { redesRouter } from './siguelo/redes/rutas.js';
 import { masivosRouter } from './siguelo/masivos/rutas.js';
 import { aulaRouter } from './siguelo/aula/rutas.js';
+import { iniciarVigia } from './siguelo/vigia.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -78,6 +79,7 @@ app.listen(env.port, () => {
 iniciarProgramadorDeMensajes();
 iniciarCierreAutomatico();
 iniciarSeguimiento();
+iniciarVigia();
 
 // Reconecta automáticamente todas las líneas que ya tenían una sesión guardada
 // en disco (no hace falta volver a escanear cada vez que reiniciás el backend).
