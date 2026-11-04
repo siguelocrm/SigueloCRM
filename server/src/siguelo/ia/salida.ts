@@ -139,6 +139,52 @@ async function enviarAlCliente(c: Config, it: SalidaRow): Promise<void> {
   }
 }
 
+// ---------- Avisos a tu WhatsApp ----------
+
+// Tu número personal como lo necesita WhatsApp: con código de país (8 dígitos de Bolivia → 591…).
+export function numeroPersonal(crudo: string | null | undefined): string {
+  const t = String(crudo || '').replace(/\D/g, '');
+  return /^[67]\d{7}$/.test(t) ? `591${t}` : t;
+}
+const mismoNumero = (a: string | null | undefined, b: string) => {
+  const x = String(a || '').replace(/\D/g, '');
+  return x.length >= 7 && b.length >= 7 && (x.endsWith(b.slice(-8)) || b.endsWith(x.slice(-8)));
+};
+
+type Salida = { lineaId: string; sock: NonNullable<ReturnType<typeof obtenerSesion>>['sock'] };
+// Desde qué número sale el aviso: el elegido (o el del cliente), conectado y que no sea tu mismo número
+// (WhatsApp no te notifica lo que te mandas a ti mismo). Si no, cualquier otro número conectado de la empresa.
+async function salidaParaAviso(empresaId: string, preferida: string | null, telefono: string): Promise<Salida | { error: string; esperar?: boolean }> {
+  const { data: lineas } = await db.from('lineas_whatsapp').select('id, nombre, numero').eq('empresa_id', empresaId);
+  const todas = lineas || [];
+  const orden = [...todas.filter((l) => l.id === preferida), ...todas.filter((l) => l.id !== preferida)];
+  for (const l of orden) {
+    const s = obtenerSesion(l.id);
+    const propio = s?.sock?.user?.id?.split(':')[0] || l.numero;
+    if (s && s.estado === 'activo' && !mismoNumero(propio, telefono)) return { lineaId: l.id, sock: s.sock };
+  }
+  if (todas.length && todas.every((l) => mismoNumero(obtenerSesion(l.id)?.sock?.user?.id?.split(':')[0] || l.numero, telefono))) {
+    return { error: 'tu número personal es el mismo número que tienes conectado al CRM: WhatsApp no te notifica los mensajes que te mandas a ti mismo. Pon otro número (por ejemplo el de tu celular personal) en IA → Ajustes → Avisos' };
+  }
+  return { error: 'ningún número del CRM está conectado (revisa Conexiones)', esperar: true };
+}
+
+// Para el botón "Mandarme un aviso de prueba" de Ajustes.
+export async function enviarAvisoPrueba(empresaId: string, telefonoCrudo: string, lineaId: string | null): Promise<{ ok: true; numero: string; desde: string } | { ok: false; mensaje: string }> {
+  const telefono = numeroPersonal(telefonoCrudo);
+  if (telefono.length < 10) return { ok: false, mensaje: 'Escribe tu número personal con código de país, por ejemplo 59171234567.' };
+  const s = await salidaParaAviso(empresaId, lineaId, telefono);
+  if ('error' in s) return { ok: false, mensaje: `No se pudo: ${s.error}.` };
+  try {
+    const r = await s.sock.sendMessage(jidDe(telefono), { text: '🔔 *SígueloCRM*\n• Este es un aviso de prueba. Así te llegarán los avisos de la IA, de los pagos y de las redes. ✅' });
+    if (r?.key?.id) marcarEnviadoPorCRM(r.key.id);
+    const { data: l } = await db.from('lineas_whatsapp').select('nombre').eq('id', s.lineaId).maybeSingle();
+    return { ok: true, numero: telefono, desde: l?.nombre || 'un número del CRM' };
+  } catch (err) {
+    return { ok: false, mensaje: `WhatsApp no lo pudo enviar: ${(err as Error).message}` };
+  }
+}
+
 // Avisos a tu WhatsApp: los casos que se juntaron salen en un solo mensaje.
 async function enviarAvisos(c: Config, primero: SalidaRow): Promise<void> {
   const { data: todos } = await db
@@ -158,19 +204,28 @@ async function enviarAvisos(c: Config, primero: SalidaRow): Promise<void> {
     await cerrar(pendientes.map((x) => x.id), { estado: 'cancelado', motivo: `Se llegó al máximo de ${c.ia.avisos.max_dia} avisos de hoy (quedan en la pantalla IA)` });
     return;
   }
-  const sesion = obtenerSesion(primero.linea_id);
-  if (!sesion || sesion.estado !== 'activo') return;
+  const telefono = numeroPersonal(primero.telefono);
+  const salida = await salidaParaAviso(c.ia.empresa_id, primero.linea_id, telefono);
+  if ('error' in salida) {
+    // Sin números conectados se espera; si el problema es tu número, se anota para que lo veas.
+    if (salida.esperar && Date.now() - ms(primero.vence) < LINEA_CAIDA_MAX_MS) return;
+    await cerrar(pendientes.map((x) => x.id), { estado: 'error', motivo: salida.error.slice(0, 200) });
+    await registrar(c.ia.empresa_id, null, 'ia_error', `Avisos: no te llegó un aviso porque ${salida.error}.`);
+    return;
+  }
+  const sesion = salida;
   const lote = pendientes.slice(0, MAX_POR_AVISO);
   const resto = pendientes.length - lote.length;
   const texto = ['🔔 *SígueloCRM*', ...lote.map((x) => x.contenido), resto ? `…y ${resto} más en la pantalla IA del CRM.` : ''].filter(Boolean).join('\n');
   const ids = lote.map((x) => x.id);
   const loteId = randomUUID();
   try {
-    const resultado = await sesion.sock.sendMessage(jidDe(primero.telefono), { text: texto });
+    const resultado = await sesion.sock.sendMessage(jidDe(telefono), { text: texto });
     if (resultado?.key?.id) marcarEnviadoPorCRM(resultado.key.id);
     await cerrar(ids, { estado: 'enviado', lote: loteId, whatsapp_id: resultado?.key?.id || null });
   } catch (err) {
     await cerrar(ids, { estado: 'error', motivo: (err as Error).message.slice(0, 200) });
+    await registrar(c.ia.empresa_id, null, 'ia_error', `Avisos: WhatsApp no pudo mandarte un aviso (${(err as Error).message.slice(0, 120)}).`);
   }
 }
 

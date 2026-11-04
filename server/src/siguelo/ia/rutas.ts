@@ -4,6 +4,7 @@ import { db } from '../db.js';
 import { listarModelos } from './openai.js';
 import { configDeEmpresa, olvidarCache } from './config.js';
 import { probarMensaje } from './lector.js';
+import { enviarAvisoPrueba } from './salida.js';
 import { aplicarAcciones, conversar } from './asistente.js';
 import { conectarClub, olvidarClub } from '../club/club.js';
 import type { IaRow } from '../tipos.js';
@@ -85,6 +86,13 @@ iaRouter.post('/siguelo/ia/asistente/aplicar', soloAdmin, async (req, res) => {
   const r = await aplicarAcciones(req.usuarioAutenticado!.empresa_id, String(req.body?.id ?? ''));
   if (!r.ok) return res.status(400).json({ error: r.mensaje });
   res.json({ ok: true, resultado: r.resultado });
+});
+
+// "Mandarme un aviso de prueba": con el número y la línea que están en la pantalla (aunque no se hayan guardado).
+iaRouter.post('/siguelo/ia/aviso-prueba', soloAdmin, async (req, res) => {
+  const r = await enviarAvisoPrueba(req.usuarioAutenticado!.empresa_id, String(req.body?.telefono ?? ''), typeof req.body?.linea_id === 'string' && req.body.linea_id ? req.body.linea_id : null);
+  if (!r.ok) return res.status(400).json({ error: r.mensaje });
+  res.json({ ok: true, numero: r.numero, desde: r.desde });
 });
 
 // Tu sistema del club: prueba la conexión (funciones públicas y el usuario del vendedor) y la guarda.

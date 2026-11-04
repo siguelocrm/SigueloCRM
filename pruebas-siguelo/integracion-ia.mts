@@ -339,6 +339,32 @@ const nota = await uno(`select texto from siguelo_registro where contacto_id = $
 assert.match(nota.texto, /no le respondió porque no tiene esa información en la ficha \(en Ajustes está "No responde y te avisa"\)/);
 paso('si no sabe la respuesta, te avisa a tu WhatsApp y queda anotado por qué no le respondió');
 
+// ---------- Avisos: número sin código de país, tu mismo número y el aviso de prueba ----------
+const { enviarAvisoPrueba, numeroPersonal } = await import(R + 'ia/salida.ts');
+assert.equal(numeroPersonal('7999-9999'), '59179999999', '8 dígitos: se agrega 591');
+assert.equal(numeroPersonal('+591 79999999'), '59179999999');
+let prueba = await enviarAvisoPrueba(empresa, '79999998', null);
+assert.ok(prueba.ok, (prueba as any).mensaje);
+assert.match(enviados.at(-1)!.jid, /^59179999998@/);
+assert.match(enviados.at(-1)!.texto, /aviso de prueba/);
+await pg.query(`update lineas_whatsapp set numero = '59175555555' where empresa_id = $1`, [empresa]);
+prueba = await enviarAvisoPrueba(empresa, '75555555', null);
+assert.equal(prueba.ok, false);
+assert.match((prueba as any).mensaje, /es el mismo número que tienes conectado al CRM/);
+await pg.query(`update siguelo_ia set avisos = jsonb_set(avisos, '{telefono}', '"75555555"') where empresa_id = $1`, [empresa]);
+const juan = await chat(L1, '59170000032', 'Juan');
+await escribe(juan.conv, '¿Hacen envíos a Oruro?');
+avanzar(MIN);
+responder = () => ({ resumen: 'Pregunta envíos', puede_responder: false, respuesta: '', necesita_al_dueno: true, motivo: 'Pregunta si hacen envíos a Oruro', aviso: 'pregunta' });
+await leerPendientes(await config());
+await salida();
+const fallido = await uno(`select estado, motivo from siguelo_ia_salida where origen = 'aviso' and contacto_id = $1`, [juan.contacto.id]);
+assert.equal(fallido.estado, 'error');
+const notaAviso = await uno(`select texto from siguelo_registro where tipo = 'ia_error' order by creado_en desc limit 1`);
+assert.match(notaAviso.texto, /no te llegó un aviso porque tu número personal es el mismo número/);
+await pg.query(`update lineas_whatsapp set numero = '591' where empresa_id = $1`, [empresa]);
+paso('avisos: agrega el 591, detecta si pusiste el mismo número del CRM (y lo anota) y el aviso de prueba llega');
+
 const uso = await uno(`select sum(consultas)::int c, sum(entrada)::int e from siguelo_ia_uso`);
 console.log(`\n${ok} pasos OK · ${uso.c} consultas a la IA (${uso.e} tokens de entrada) · mensajes:`);
 for (const e of enviados) console.log('  →', e.jid.split('@')[0], e.imagen ? `[foto ${e.imagen}]` : e.ubicacion ? `[ubicación ${e.ubicacion.name}]` : JSON.stringify(e.texto).slice(0, 110));

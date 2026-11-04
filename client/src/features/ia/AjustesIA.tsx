@@ -48,7 +48,7 @@ const NUMEROS = ['espera_min_seg', 'espera_max_seg', 'max_por_cliente_dia', 'max
 interface Props {
   ajustes: Ajustes;
   existe: boolean;
-  lineas: { id: string; nombre: string }[];
+  lineas: { id: string; nombre: string; numero?: string | null }[];
   puedeEditar: boolean;
   onGuardado: () => void;
 }
@@ -120,6 +120,21 @@ export default function AjustesIA({ ajustes, existe, lineas, puedeEditar, onGuar
     onGuardado();
   };
 
+  // Tu número con código de país (8 dígitos de Bolivia → 591…) y si es el mismo que tiene conectado el CRM.
+  const personal = (() => {
+    const t = b.avisos.telefono.replace(/\D/g, '');
+    return /^[67]\d{7}$/.test(t) ? `591${t}` : t;
+  })();
+  const lineaPropia = personal.length >= 8 ? lineas.find((l) => (l.numero || '').replace(/\D/g, '').slice(-8) === personal.slice(-8)) : undefined;
+  const [probandoAviso, setProbandoAviso] = useState(false);
+  const probarAviso = async () => {
+    setProbandoAviso(true);
+    const r = await llamarBackend('/siguelo/ia/aviso-prueba', { telefono: personal, linea_id: b.avisos.linea_id }).catch(() => ({ ok: false, data: null, error: 'No hay conexión con el servidor del CRM.' }));
+    setProbandoAviso(false);
+    if (r.ok) toast(`Listo: se mandó a +${r.data.numero} desde ${r.data.desde}. Revisa tu WhatsApp.`, 'ok');
+    else toast(r.error || 'No se pudo mandar el aviso de prueba.', 'error');
+  };
+
   const guardar = async () => {
     const valores: Record<string, number> = {};
     for (const k of NUMEROS) {
@@ -131,7 +146,7 @@ export default function AjustesIA({ ajustes, existe, lineas, puedeEditar, onGuar
     if (b.avisos.activo && b.avisos.telefono.replace(/\D/g, '').length < 7) return toast('Escribe tu número personal con código de país (ej. 59171234567).', 'error');
     setGuardando(true);
     const { empresa_id: _e, activa: _a, modo: _m, clave_final: _c, ...resto } = b;
-    await guardarCambios({ ...resto, ...valores }, 'Ajustes de la IA guardados');
+    await guardarCambios({ ...resto, avisos: { ...b.avisos, telefono: personal }, ...valores }, 'Ajustes de la IA guardados');
     setGuardando(false);
   };
 
@@ -251,6 +266,11 @@ export default function AjustesIA({ ajustes, existe, lineas, puedeEditar, onGuar
         <div className="grid gap-3 sm:grid-cols-2">
           <Campo etiqueta="Tu número personal" ayuda="Con código de país, ej. 59171234567. La IA nunca le responde a ese número.">
             <input value={b.avisos.telefono} disabled={!puedeEditar} onChange={(e) => setB({ ...b, avisos: { ...b.avisos, telefono: e.target.value } })} inputMode="tel" className={`${claseCampo} font-normal`} style={estiloCampo} />
+            {lineaPropia && (
+              <span className="text-[11.5px] font-normal" style={{ color: 'var(--bad)' }}>
+                Es el mismo número que tienes conectado en el CRM ({lineaPropia.nombre}): WhatsApp no te avisa de los mensajes que te mandas a ti mismo. Pon el número de tu celular personal.
+              </span>
+            )}
           </Campo>
           <Campo etiqueta="Desde qué número te escribe">
             <select value={b.avisos.linea_id ?? ''} disabled={!puedeEditar} onChange={(e) => setB({ ...b, avisos: { ...b.avisos, linea_id: e.target.value || null } })} className={`${claseCampo} font-normal`} style={estiloCampo}>
@@ -278,6 +298,11 @@ export default function AjustesIA({ ajustes, existe, lineas, puedeEditar, onGuar
         <span className="text-[11.5px]" style={{ color: TEXTO_TERCIARIO }}>
           Junta los casos de {b.avisos.juntar_min} minutos en un solo mensaje, no repite lo mismo del mismo cliente en 6 horas y manda como mucho {b.avisos.max_dia} por día.
         </span>
+        {puedeEditar && (
+          <Boton tamano="sm" icono={BellRing} className="self-start" disabled={probandoAviso || personal.length < 10} onClick={probarAviso}>
+            {probandoAviso ? 'Enviando…' : 'Mandarme un aviso de prueba'}
+          </Boton>
+        )}
       </Bloque>
 
       {puedeEditar && <Boton variante="primario" className="self-start" onClick={guardar} disabled={guardando}>{guardando ? 'Guardando…' : 'Guardar ajustes'}</Boton>}
