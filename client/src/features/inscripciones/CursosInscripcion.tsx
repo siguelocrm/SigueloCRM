@@ -14,6 +14,7 @@ interface Props {
   negocios: Negocio[];
   etapas: EtapaVenta[];
   clubConectado: boolean;
+  aulaConectada: boolean;
   puedeEditar: boolean;
   onGuardado: () => void;
 }
@@ -32,7 +33,7 @@ function Campo({ etiqueta, ayuda, children }: { etiqueta: string; ayuda?: string
 
 // Cada curso (o lo que se cobra): precio, QR, a quién le llega el pago, link del
 // grupo, datos que se piden y los textos que recibe el cliente.
-export default function CursosInscripcion({ empresaId, cursos, negocios, etapas, clubConectado, puedeEditar, onGuardado }: Props) {
+export default function CursosInscripcion({ empresaId, cursos, negocios, etapas, clubConectado, aulaConectada, puedeEditar, onGuardado }: Props) {
   const toast = useToast();
   const [campos, setCampos] = useState<CampoPersonalizado[]>([]);
   const [b, setB] = useState<Borrador | null>(null);
@@ -59,13 +60,13 @@ export default function CursosInscripcion({ empresaId, cursos, negocios, etapas,
     if (!b) return;
     const precio = Number(b.precioTexto.replace(',', '.'));
     if (!b.nombre.trim()) return toast('Ponle un nombre al curso.', 'error');
-    if (!Number.isFinite(precio) || precio < 0 || (precio === 0 && !b.club)) return toast('Revisa el precio.', 'error');
+    if (!Number.isFinite(precio) || precio < 0 || (precio === 0 && !b.club && !b.aula)) return toast('Revisa el precio.', 'error');
     if (b.link_grupo.trim() && !/^https:\/\//.test(b.link_grupo.trim())) return toast('El link del grupo tiene que empezar con https://', 'error');
     if (!b.destinatario.trim() && b.cuenta.replace(/\D/g, '').length < 4) return toast('Pon el nombre del titular o el número de cuenta: así se controla que el pago llegó a ti.', 'error');
     const { id, precioTexto: _p, ...sinPrecio } = b;
     // Sin la última versión del SQL, la columna "club" no existe: solo se manda si se usa.
-    const { club, ...resto } = sinPrecio;
-    const fila = { ...resto, ...(club || clubConectado ? { club: !!club } : {}), nombre: b.nombre.trim(), precio, link_grupo: b.link_grupo.trim(), max_horas: Math.min(720, Math.max(1, Math.round(b.max_horas) || 72)), actualizado_en: new Date().toISOString() };
+    const { club, aula, ...resto } = sinPrecio;
+    const fila = { ...resto, ...(club || clubConectado ? { club: !!club } : {}), ...(aula || aulaConectada ? { aula: !!aula } : {}), nombre: b.nombre.trim(), precio, link_grupo: b.link_grupo.trim(), max_horas: Math.min(720, Math.max(1, Math.round(b.max_horas) || 72)), actualizado_en: new Date().toISOString() };
     const { error } = id ? await supabase.from('siguelo_cursos').update(fila).eq('id', id) : await supabase.from('siguelo_cursos').insert(fila);
     if (error) return toast(`No se pudo guardar: ${error.message}`, 'error');
     toast('Curso guardado', 'ok');
@@ -90,7 +91,7 @@ export default function CursosInscripcion({ empresaId, cursos, negocios, etapas,
         </div>
         {(clubConectado || b.club) && (
           <label className="flex items-start gap-2 text-[12.5px] rounded-lg p-2.5" style={{ color: TEXTO_SECUNDARIO, border: `1px solid ${BORDE}` }}>
-            <input type="checkbox" className="mt-0.5" checked={!!b.club} disabled={!puedeEditar} onChange={(e) => setB({ ...b, club: e.target.checked })} />
+            <input type="checkbox" className="mt-0.5" checked={!!b.club} disabled={!puedeEditar} onChange={(e) => setB({ ...b, club: e.target.checked, ...(e.target.checked ? { aula: false } : {}) })} />
             <span>
               <b style={{ color: TEXTO_PRIMARIO }}>Dejar la inscripción como reserva en mi sistema del club.</b> Al pagar, la IA le pide al cliente el nombre del
               tutor, del niño o niña, su fecha de nacimiento y el curso y horario (de los grupos con cupo de su sucursal), y deja la reserva para que
@@ -98,11 +99,21 @@ export default function CursosInscripcion({ empresaId, cursos, negocios, etapas,
             </span>
           </label>
         )}
+        {(aulaConectada || b.aula) && (
+          <label className="flex items-start gap-2 text-[12.5px] rounded-lg p-2.5" style={{ color: TEXTO_SECUNDARIO, border: `1px solid ${BORDE}` }}>
+            <input type="checkbox" className="mt-0.5" checked={!!b.aula} disabled={!puedeEditar} onChange={(e) => setB({ ...b, aula: e.target.checked, ...(e.target.checked ? { club: false } : {}) })} />
+            <span>
+              <b style={{ color: TEXTO_PRIMARIO }}>Inscribir en mi Aula virtual.</b> Al pagar, la IA elige el plan del aula por lo que habló el cliente y lo que pagó,
+              le pide el nombre de quien tomará las clases si no lo dijo, le crea su cuenta en el aula (o usa la que ya tiene con su celular), lo
+              inscribe con su pago y le manda su usuario y contraseña. Pon precio 0: el precio es el de cada plan del aula.
+            </span>
+          </label>
+        )}
         <div className="grid gap-3 sm:grid-cols-2">
           <Campo etiqueta="Nombre">
             <input value={b.nombre} onChange={(e) => setB({ ...b, nombre: e.target.value })} placeholder="Curso de mecánica de motos" className={`${claseCampo} font-normal`} style={estiloCampo} />
           </Campo>
-          <Campo etiqueta={b.club ? 'Precio (0 = lo calcula tu sistema del club)' : 'Precio'}>
+          <Campo etiqueta={b.club ? 'Precio (0 = lo calcula tu sistema del club)' : b.aula ? 'Precio (0 = el del plan del aula)' : 'Precio'}>
             <span className="flex gap-1.5">
               <input value={b.moneda} onChange={(e) => setB({ ...b, moneda: e.target.value })} aria-label="Moneda" className={`${claseCampo} font-normal w-16`} style={estiloCampo} />
               <input value={b.precioTexto} onChange={(e) => setB({ ...b, precioTexto: e.target.value })} inputMode="decimal" placeholder="150" className={`${claseCampo} font-normal flex-1 min-w-0`} style={estiloCampo} />
@@ -149,7 +160,7 @@ export default function CursosInscripcion({ empresaId, cursos, negocios, etapas,
           </Campo>
         </div>
 
-        {!b.club && <div className="flex flex-col gap-1.5">
+        {!b.club && !b.aula && <div className="flex flex-col gap-1.5">
           <span className="text-[12.5px] font-semibold" style={{ color: TEXTO_SECUNDARIO }}>Datos que se le piden al pagar</span>
           <label className="flex items-center gap-2 text-[12.5px]" style={{ color: TEXTO_SECUNDARIO }}>
             <input type="checkbox" checked={b.datos.includes('nombre')} onChange={(e) => cambiarDato('nombre', e.target.checked)} /> Nombre completo
@@ -168,7 +179,7 @@ export default function CursosInscripcion({ empresaId, cursos, negocios, etapas,
           <summary className="cursor-pointer text-[12.5px] font-semibold" style={{ color: 'var(--accent)' }}>Textos que recibe el cliente</summary>
           <div className="flex flex-col gap-2.5 mt-2.5">
             <span className="text-[11.5px]" style={{ color: TEXTO_TERCIARIO }}>Puedes usar {'{nombre}'}, {'{curso}'} y {'{monto}'}.</span>
-            {(Object.keys(NOMBRE_TEXTOS) as (keyof TextosCurso)[]).map((k) => (
+            {(Object.keys(NOMBRE_TEXTOS) as (keyof TextosCurso)[]).filter((k) => b.aula || (k !== 'aula' && k !== 'aula_ya')).map((k) => (
               <Campo key={k} etiqueta={NOMBRE_TEXTOS[k]}>
                 <textarea value={b.textos[k]} onChange={(e) => setB({ ...b, textos: { ...b.textos, [k]: e.target.value } })} rows={2} className="rounded-lg outline-none text-[13px] font-normal bg-[var(--surface)] resize-y" style={estiloArea} />
               </Campo>
@@ -201,6 +212,7 @@ export default function CursosInscripcion({ empresaId, cursos, negocios, etapas,
                 {!k.qr_url && ' · sin QR'}
                 {!k.link_grupo && ' · sin link de grupo'}
                 {k.club && ' · reserva en tu sistema del club'}
+                {k.aula && ' · se inscribe en el Aula virtual'}
               </span>
             </div>
             <Boton tamano="sm" onClick={() => editar(k)}>{puedeEditar ? 'Editar' : 'Ver'}</Boton>

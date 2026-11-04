@@ -5,6 +5,7 @@ import { iaRouter } from './siguelo/ia/rutas.js';
 import { usuariosSigueloRouter } from './siguelo/usuarios/rutas.js';
 import { redesRouter } from './siguelo/redes/rutas.js';
 import { masivosRouter } from './siguelo/masivos/rutas.js';
+import { aulaRouter } from './siguelo/aula/rutas.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,6 +47,7 @@ app.use(iaRouter);
 app.use(usuariosSigueloRouter);
 app.use(redesRouter);
 app.use(masivosRouter);
+app.use(aulaRouter);
 
 // Para saber si el CRM arrancó bien: el despliegue la consulta después de
 // publicar una versión nueva y, si no responde, vuelve a la anterior.

@@ -1446,3 +1446,49 @@ create policy "siguelo_masivo_envios_select" on siguelo_masivo_envios for select
     select 1 from siguelo_masivos m
     where m.id = masivo_id and m.empresa_id = (select empresa_id from usuario_actual()) and siguelo_ve_linea(m.linea_id)
   ));
+
+-- =========================================================
+-- Tu Aula virtual (Aula Infinity Chess)
+-- La IA ve en vivo los planes de los cursos virtuales (precio, duración, clases
+-- y grupo con su horario). Cuando un alumno paga por WhatsApp y el comprobante
+-- está bien, el CRM le crea su cuenta en el aula (o usa la que ya tiene por su
+-- celular), lo inscribe en el plan con su pago y le manda sus datos de acceso.
+-- El CRM entra con una cuenta de profesor o director que creas tú en el aula.
+-- =========================================================
+
+-- ---------- 36. Conexión con el Aula virtual ----------
+-- Sin políticas: solo la lee el servidor (la página nunca ve la contraseña).
+create table if not exists siguelo_aula (
+  empresa_id uuid primary key references empresas (id) on delete cascade,
+  url text not null,
+  clave_publica text not null,
+  usuario text not null,
+  contrasena text not null,
+  -- La dirección del aula que se les manda a los alumnos.
+  enlace text not null default '',
+  actualizado_en timestamptz not null default now()
+);
+alter table siguelo_aula enable row level security;
+
+-- Lo que sí ve la página: si está conectada, con qué cuenta y los planes.
+create table if not exists siguelo_aula_info (
+  empresa_id uuid primary key references empresas (id) on delete cascade,
+  conectado boolean not null default false,
+  cuenta text,
+  enlace text,
+  planes jsonb not null default '[]'::jsonb,
+  error text,
+  actualizado_en timestamptz not null default now()
+);
+alter table siguelo_aula_info enable row level security;
+drop policy if exists "siguelo_aula_info_select" on siguelo_aula_info;
+create policy "siguelo_aula_info_select" on siguelo_aula_info for select
+  using (empresa_id = (select empresa_id from usuario_actual()));
+
+-- Un curso "del aula": al pagar, el alumno queda inscrito en el Aula virtual
+-- (con precio 0, el plan lo elige la IA con la conversación y el monto).
+alter table siguelo_cursos add column if not exists aula boolean not null default false;
+
+-- El pago guarda los datos de la inscripción en el aula
+-- ({ alumno, plan, usuario_id, usuario, nueva, inscrito_en }).
+alter table siguelo_pagos add column if not exists aula jsonb;

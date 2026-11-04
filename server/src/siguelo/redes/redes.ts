@@ -4,6 +4,7 @@ import { registrar } from '../registro.js';
 import { llamar } from '../ia/config.js';
 import { describirEstilo } from '../ia/contexto.js';
 import { datosClubParaIA } from '../club/club.js';
+import { datosAulaParaIA } from '../aula/aula.js';
 import { borrar, comentarios, ocultar, responder, type AppMeta, type ComentarioMeta } from './meta.js';
 import type { ComentarioRedRow, CuentaRedRow, IaRow, NegocioRow } from '../tipos.js';
 
@@ -64,12 +65,14 @@ const comoWhatsapp = (red: CuentaRedRow['red'], numero: string) =>
   !numero ? '' : red === 'facebook' ? `https://wa.me/${numero}` : `${numero.startsWith('591') && numero.length === 11 ? numero.slice(3) : numero} (WhatsApp)`;
 
 async function decidir(c: Config, cuenta: CuentaRedRow, negocio: NegocioRow | null, k: ComentarioMeta, padre: string | null): Promise<Decision | { error: string }> {
-  const [aprendido, club, { data: recientes }, numero] = await Promise.all([
+  const [aprendido, clubEnVivo, aula, { data: recientes }, numero] = await Promise.all([
     aprendidoDe(c.ia.empresa_id, negocio?.id ?? null),
     datosClubParaIA(c.ia.empresa_id, negocio?.club_sucursal_id, fechaDe(Date.now(), c.zona)),
+    datosAulaParaIA(c.ia.empresa_id, negocio?.id ?? null),
     db.from('siguelo_redes_comentarios').select('respuesta').eq('cuenta_id', cuenta.id).eq('accion', 'respondido').order('respondido_en', { ascending: false }).limit(8),
     whatsappDe(cuenta),
   ]);
+  const club = [clubEnVivo, aula].filter(Boolean).join('\n\n');
   const whatsapp = comoWhatsapp(cuenta.red, numero);
   const red = cuenta.red === 'facebook' ? 'Facebook' : 'Instagram';
   const ficha = negocio

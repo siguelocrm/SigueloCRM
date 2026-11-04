@@ -10,14 +10,16 @@ import PagosInscripcion from './PagosInscripcion';
 import CursosInscripcion from './CursosInscripcion';
 import ReporteInscripcion from './ReporteInscripcion';
 import ClubInscripcion, { type InfoClub } from './ClubInscripcion';
+import AulaInscripcion, { type InfoAula } from './AulaInscripcion';
 import type { Curso } from './tipos';
 
-type Pestana = 'pagos' | 'cursos' | 'reporte' | 'club';
+type Pestana = 'pagos' | 'cursos' | 'reporte' | 'club' | 'aula';
 const PESTANAS: { id: Pestana; texto: string }[] = [
   { id: 'pagos', texto: 'Pagos' },
   { id: 'cursos', texto: 'Cursos' },
   { id: 'reporte', texto: 'Inscritos' },
   { id: 'club', texto: 'Sistema del club' },
+  { id: 'aula', texto: 'Aula virtual' },
 ];
 
 // Inscripción con pago (SígueloCRM, Fase 5): el cliente paga con el QR, manda el
@@ -32,15 +34,18 @@ export default function Inscripciones({ onAbrirChat }: { onAbrirChat?: (telefono
   const [zona, setZona] = useState('America/La_Paz');
   const [iaLista, setIaLista] = useState(true);
   const [club, setClub] = useState<InfoClub>(null);
+  const [aula, setAula] = useState<InfoAula>(null);
   const puedeEditar = usuario?.rol === 'dueno' || usuario?.rol === 'supervisor';
 
   const cargar = useCallback(async () => {
-    const [k, aj, ia, cl] = await Promise.all([
+    const [k, aj, ia, cl, au] = await Promise.all([
       supabase.from('siguelo_cursos').select('*').order('creado_en').returns<Curso[]>(),
       supabase.from('siguelo_ajustes').select('zona_horaria').maybeSingle(),
       supabase.from('siguelo_ia').select('activa, clave_final').maybeSingle(),
       supabase.from('siguelo_club_info').select('conectado, vendedor, sucursales, error').maybeSingle(),
+      supabase.from('siguelo_aula_info').select('conectado, cuenta, enlace, planes, error').maybeSingle(),
     ]);
+    setAula(au.error ? null : ((au.data as InfoAula) ?? { conectado: false, cuenta: null, enlace: null, planes: [], error: null }));
     setClub(cl.error ? null : ((cl.data as InfoClub) ?? { conectado: false, vendedor: null, sucursales: [], error: null }));
     if (k.error) return setFaltaSql(true);
     setFaltaSql(false);
@@ -92,7 +97,7 @@ export default function Inscripciones({ onAbrirChat }: { onAbrirChat?: (telefono
           </button>
         ))}
       </div>
-      {pestana === 'pagos' && <PagosInscripcion cursos={cursos} zona={zona} puedeEditar={puedeEditar} onAbrirChat={onAbrirChat} />}
+      {pestana === 'pagos' && <PagosInscripcion cursos={cursos} zona={zona} puedeEditar={puedeEditar} onAbrirChat={onAbrirChat} planesAula={aula?.planes} />}
       {pestana === 'cursos' && (
         <CursosInscripcion
           empresaId={usuario.empresa_id}
@@ -100,12 +105,15 @@ export default function Inscripciones({ onAbrirChat }: { onAbrirChat?: (telefono
           negocios={negocios.disponible ? negocios.negocios : []}
           etapas={[...etapas].sort((a, b) => a.orden - b.orden)}
           clubConectado={!!club?.conectado}
+          aulaConectada={!!aula?.conectado}
           puedeEditar={puedeEditar}
           onGuardado={cargar}
         />
       )}
       {pestana === 'club' &&
         (club ? <ClubInscripcion info={club} puedeEditar={puedeEditar} onCambio={cargar} /> : <span className="text-[12.5px]" style={{ color: 'var(--warn)' }}>Para conectarlo, vuelve a pegar database/siguelo.sql en Supabase (trae esta parte).</span>)}
+      {pestana === 'aula' &&
+        (aula ? <AulaInscripcion info={aula} puedeEditar={puedeEditar} onCambio={cargar} /> : <span className="text-[12.5px]" style={{ color: 'var(--warn)' }}>Para conectarla, vuelve a pegar database/siguelo.sql en Supabase (trae esta parte).</span>)}
       {pestana === 'reporte' && <ReporteInscripcion cursos={cursos} zona={zona} />}
     </div>
   );

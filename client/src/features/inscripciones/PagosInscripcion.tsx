@@ -14,11 +14,13 @@ interface Props {
   zona: string;
   puedeEditar: boolean;
   onAbrirChat?: (telefono: string) => void;
+  // Planes del Aula virtual (para mostrar el nombre del plan).
+  planesAula?: { id: string; nombre: string }[];
 }
 
 // Los comprobantes que llegaron: los que tienes que revisar arriba, con lo que
 // leyó la IA y cada control. Confirmar o rechazar lo hace el servidor.
-export default function PagosInscripcion({ cursos, zona, puedeEditar, onAbrirChat }: Props) {
+export default function PagosInscripcion({ cursos, zona, puedeEditar, onAbrirChat, planesAula }: Props) {
   const toast = useToast();
   const [filtro, setFiltro] = useState<Filtro>('atender');
   const [pagos, setPagos] = useState<Pago[]>([]);
@@ -52,9 +54,12 @@ export default function PagosInscripcion({ cursos, zona, puedeEditar, onAbrirCha
       motivo = r.trim() || 'no pudimos validar los datos del pago';
     } else {
       const delClub = cursos.find((k) => k.id === curso)?.club;
+      const delAula = cursos.find((k) => k.id === curso)?.aula;
       const pregunta =
         p.estado === 'reservado' ? '¿Mandarle el link del grupo ya, sin esperar que confirmes la reserva en tu sistema del club?'
         : p.estado === 'datos' && delClub ? '¿Volver a intentar dejar la reserva en tu sistema del club con los datos que tiene?'
+        : p.estado === 'datos' && delAula ? '¿Volver a intentar inscribirlo en el Aula virtual con los datos que tiene?'
+        : p.estado === 'revisar' && delAula ? '¿Confirmar este pago? Se le avisa al cliente y se inscribe en el Aula virtual.'
         : p.estado === 'datos' ? '¿Mandarle el link del grupo sin esperar sus datos?'
         : '¿Confirmar este pago? Se le avisa al cliente y se le piden sus datos.';
       if (!window.confirm(pregunta)) return;
@@ -132,6 +137,11 @@ export default function PagosInscripcion({ cursos, zona, puedeEditar, onAbrirCha
                     Para el club: {[p.club.tutor && `tutor ${p.club.tutor}`, ...p.club.estudiantes.map((e) => [e.nombre, e.fecha_nacimiento, e.curso_texto].filter(Boolean).join(', '))].filter(Boolean).join(' · ')}
                   </span>
                 )}
+                {p.aula && (p.aula.alumno || p.aula.usuario) && (
+                  <span className="text-[12px]" style={{ color: TEXTO_TERCIARIO }}>
+                    Aula virtual: {[p.aula.alumno, planesAula?.find((x) => x.id === p.aula?.plan)?.nombre, p.aula.usuario && `usuario ${p.aula.usuario}${p.aula.nueva ? ' (cuenta nueva)' : ''}`].filter(Boolean).join(' · ')}
+                  </span>
+                )}
                 {p.estado === 'reservado' && (
                   <span className="text-[12px]" style={{ color: 'var(--accent)' }}>Confírmala en tu sistema del club → Reservas de vendedores. Al confirmarla, le llega el link solo.</span>
                 )}
@@ -149,7 +159,7 @@ export default function PagosInscripcion({ cursos, zona, puedeEditar, onAbrirCha
                     </>
                   )}
                   {puedeEditar && !pendiente && (p.estado === 'datos' || p.estado === 'reservado') && (
-                    <Boton tamano="sm" onClick={() => pedir(p, 'confirmar')}>{p.estado === 'datos' && curso?.club ? 'Volver a intentar la reserva' : 'Mandarle el link ya'}</Boton>
+                    <Boton tamano="sm" onClick={() => pedir(p, 'confirmar')}>{p.estado === 'datos' && curso?.club ? 'Volver a intentar la reserva' : p.estado === 'datos' && curso?.aula ? 'Volver a intentar en el aula' : 'Mandarle el link ya'}</Boton>
                   )}
                   {onAbrirChat && <Boton tamano="sm" variante="fantasma" onClick={() => onAbrirChat(p.telefono)}>Abrir chat</Boton>}
                 </div>

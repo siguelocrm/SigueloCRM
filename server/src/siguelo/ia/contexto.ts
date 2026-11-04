@@ -30,6 +30,8 @@ export type DatosContexto = {
   bots?: BotCorto[];
   // Horarios, cupos y precios en vivo de su sucursal en el sistema del club ('' si no está conectado).
   club?: string;
+  // Planes de los cursos virtuales del Aula ('' si no está conectada o este negocio no los vende).
+  aula?: string;
   // Lo que respondió el dueño a preguntas que no estaban en la ficha (Redes sociales).
   aprendido?: string;
 };
@@ -162,6 +164,16 @@ ${
 ${d.club.trim()}
 """
 - Para horarios, cupos y mensualidades usa estos datos. No ofrezcas un grupo LLENO: ofrece otro horario del mismo curso o, si no hay, otra sucursal. Si quedan pocos cupos, puedes decirlo.
+
+`
+      : ''
+  }${
+    d.aula?.trim()
+      ? `CURSOS VIRTUALES EN VIVO (del Aula virtual; si algo no coincide con la ficha, manda esto):
+"""
+${d.aula.trim()}
+"""
+- Si preguntan por clases virtuales u online, ofrece estos planes con su precio y horario. Para inscribirse, que pague por QR y mande el comprobante.
 
 `
       : ''

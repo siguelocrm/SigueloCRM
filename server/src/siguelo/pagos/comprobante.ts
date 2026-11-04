@@ -82,7 +82,7 @@ type Control = ControlPago & { grave: boolean; paraCliente?: string };
 // (y se le explica al cliente); uno que no se pudo comprobar lo deja para revisar.
 export function controlar(
   l: LecturaComprobante,
-  curso: Pick<CursoRow, 'precio' | 'moneda' | 'destinatario' | 'cuenta' | 'max_horas'> | null,
+  curso: (Pick<CursoRow, 'precio' | 'moneda' | 'destinatario' | 'cuenta' | 'max_horas'> & Pick<Partial<CursoRow>, 'aula'>) | null,
   extra: { pagadoEn: number | null; ahora: number; repetido: boolean; yaInscrito: boolean },
 ): Veredicto {
   const cs: Control[] = [];
@@ -93,7 +93,7 @@ export function controlar(
     if (l.monto == null) add({ codigo: 'monto', nombre: 'Monto', ok: false, grave: false, detalle: 'No se pudo leer el monto' });
     else if (!(Number(curso.precio) > 0)) {
       // Sin precio fijo (por ejemplo, un curso del club: el total depende de cuántos cursos toma).
-      add({ codigo: 'monto', nombre: 'Monto', ok: l.monto > 0, grave: false, detalle: `Pagó ${formatoMonto(l.monto, moneda)} (el total lo calcula tu sistema del club)` });
+      add({ codigo: 'monto', nombre: 'Monto', ok: l.monto > 0, grave: false, detalle: `Pagó ${formatoMonto(l.monto, moneda)} (${curso.aula ? 'el plan del aula se elige con la conversación' : 'el total lo calcula tu sistema del club'})` });
     } else {
       const ok = l.monto + 0.001 >= Number(curso.precio);
       add({
@@ -184,5 +184,8 @@ export function elegirCurso<T extends Pick<CursoRow, 'id' | 'nombre' | 'precio'>
     const porNombre = candidatos.filter((c) => normalizarTexto(c.nombre) && glosa.includes(normalizarTexto(c.nombre)));
     if (porNombre.length === 1) return porNombre[0];
   }
+  // Un solo curso sin precio fijo (del club o del aula): el monto lo decide ese sistema.
+  const sinPrecio = candidatos.filter((c) => !(Number(c.precio) > 0));
+  if (sinPrecio.length === 1) return sinPrecio[0];
   return null;
 }

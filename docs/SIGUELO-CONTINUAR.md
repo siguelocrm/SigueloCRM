@@ -73,7 +73,17 @@ Entra a http://localhost:5173. Los envíos automáticos los hace el **servidor**
     les llega a los de **Venta perdida**), el mensaje (2 o 3 **versiones**: a cada uno le llega una al azar; con `{nombre}`,
     `{sucursal}`… y una imagen o PDF si quieres), **"Enviar prueba"** a tu número y el ritmo (horario, pausa al azar entre
     mensajes y máximo por día **por número**). Sale de a uno; lo puedes pausar, reanudar o cancelar, y ver a quién le llegó.
-11. Prueba todo con un **número secundario** (automatizar WhatsApp tiene riesgo de bloqueo).
+11. **Tu Aula virtual** (Automatizar → Inscripciones → **Aula virtual**):
+    1. En tu aula, **Personas → Crear cuenta**: una cuenta para el CRM (ej. "whatsapp") de tipo **Profesor** o **Director**;
+       entra una vez con ella para elegir su contraseña.
+    2. En el **Supabase de tu aula** → Project Settings → API Keys: copia la **Project URL** y la clave pública.
+    3. Pégalos en "Aula virtual" con el usuario y la contraseña de esa cuenta → **Conectar y probar** (muestra los planes).
+    4. En **Inscripciones → Cursos**, crea un curso "Aula virtual" con **precio 0**, el QR y el titular de la cuenta, y marca
+       **"Inscribir en mi Aula virtual"**.
+    La IA ofrece los planes del aula en vivo. Al pagar, elige el plan (por lo que dijo el cliente o por el monto), pide el
+    nombre de quien tomará las clases si falta, crea su cuenta en el aula (o usa la que ya tiene con ese celular y nombre),
+    lo inscribe con su pago y le manda el link, su usuario y su contraseña temporal.
+12. Prueba todo con un **número secundario** (automatizar WhatsApp tiene riesgo de bloqueo).
 
 ### Guardar el trabajo (git)
 Pídele a la IA: *"haz el commit de lo que hay (sin push)"*. No hagas `git push` mientras no tengas la ficha del profe o tu
@@ -115,6 +125,7 @@ Con otra IA que no sea Claude sirve lo mismo, siempre que pueda leer y editar lo
 | ⏳ | Clientes que compran el CRM, planes y cobros | por decidir (ver "Pendientes") |
 | + | Facebook e Instagram: la IA responde comentarios, oculta/borra negativos, te pregunta y aprende | ✅ (ver `git log`) |
 | ⏳ | Mensajes privados de Facebook e Instagram | falta la revisión de Meta (ver "Pendientes") |
+| + | Aula virtual: planes en vivo para la IA; al pagar, cuenta nueva o la que tiene, inscripción con su pago y datos de acceso | ✅ (ver `git log`) |
 | + | Mensajes masivos: a quiénes (filtros o lista), versiones, prueba, horario, pausas y tope por número | ✅ (ver `git log`) |
 
 ---
@@ -154,6 +165,8 @@ npm test
   preguntarte "R12", tu respuesta por WhatsApp, lo aprendido, respuesta de respaldo).
 - `integracion-masivos.mts`: mensajes masivos (filtros y lista pegada, pausas, horario, tope por número, sin WhatsApp,
   pausa sola por errores y que no arranquen el seguimiento como "le escribiste").
+- `integracion-aula.mts`: el Aula virtual con un aula falsa (conectar, planes para la IA, cuenta nueva o la que tiene,
+  fechas como el aula, pedir nombre o plan, reintento sin inscribir dos veces).
 - `hooks.mjs` cambia `db.js` y `whatsapp/sesiones.js` por los de prueba; las pruebas fuerzan una URL de Supabase falsa.
 - Pantallas: `npm run banco` y abre http://localhost:5199/banco?vista=seguimiento (o `negocios`, `embudo`, `ia`,
   `inscripciones`, `usuarios`, `redes`, `masivos`): la pantalla real con datos de ejemplo en memoria (`banco/mock-supabase.ts`).
@@ -221,6 +234,17 @@ npm test
   `desconectado` (la pantalla lo explica) o el texto de la pausa. Rutas en `masivos/rutas.ts` (dueños y gerentes, con
   acceso al número): `/siguelo/masivos/contar`, `/siguelo/masivos`, `/:id/accion` y `/prueba`. No usa la IA.
 
+- **Aula virtual** (`aula/`, sección 36): otro proyecto de Supabase (Aula Infinity Chess). `aula.ts` entra con una cuenta de
+  profesor o director (correo `usuario@aula.infinitychess.local`), lee `planes` y `grupos` (REST), busca al alumno con
+  `listar_personas` (mismo celular y nombre; hermanos con el mismo celular = cuentas distintas), crea la cuenta con la
+  función `cuentas` (`accion: 'crear'`, usuario = nombre + apellido + 3 últimos dígitos, contraseña temporal de 6 números)
+  y llama `registrar_inscripcion` con las fechas como la página del aula (si tiene una vigente, empieza al día siguiente;
+  con clases y grupo, hasta la última clase; si no, desde + días − 1). Credenciales en `siguelo_aula`; la página ve
+  `siguelo_aula_info`. Un curso con `aula` (precio 0): en `inscripcion.ts`, `completarAula` lee la conversación con la IA
+  (alumno y plan; si no, el único plan o el único con ese precio), pide lo que falta y `inscribirAula` anota
+  `pago.aula.inscrito_en` (nunca se inscribe dos veces; la contraseña no se guarda). `datosAulaParaIA` va al lector, a
+  "Probar" y a Redes (solo si hay un curso del aula para ese negocio). Rutas en `aula/rutas.ts`.
+
 ### Pendientes conocidos e ideas
 - El selector de etapa dentro del chat (curso: `HiloMensajes`/`PanelContacto`) lista etapas de todos los embudos.
 - Dashboard y Reportes no separan por embudo.
@@ -238,6 +262,8 @@ npm test
   se responde dentro de las 24 h del último mensaje del cliente. Con eso, se agregaría como otro "canal" del lector de IA.
 - **TikTok:** su API de comentarios y mensajes no está abierta a cuentas comunes (pide aprobación de desarrollador y
   responder mensajes depende del país). Por ahora no se puede.
+- Aula: no revisa cupos de los grupos ni deja la inscripción "para aprobar" (se inscribe sola al confirmarse el pago; si
+  algo falla queda en Pagos). Si un alumno ya tiene cuenta con otro celular o con otro nombre, se le crea otra.
 - Masivos: con PDF, en el chat del CRM se ve el archivo (el texto va como leyenda en WhatsApp y queda en el detalle del
   envío). No hay "darse de baja" propio: los que dicen "stop" pasan a Venta perdida (si el stop está activo en Seguimiento)
   y el filtro por defecto los deja fuera. Máximo 5000 personas por envío.

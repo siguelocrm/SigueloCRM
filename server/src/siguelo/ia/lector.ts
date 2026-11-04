@@ -8,6 +8,7 @@ import { llamar } from './config.js';
 import { cursosConQR, pagoEnCurso } from '../pagos/inscripcion.js';
 import { formatoMonto } from '../pagos/comprobante.js';
 import { datosClubParaIA } from '../club/club.js';
+import { datosAulaParaIA } from '../aula/aula.js';
 import { aprendidoDe, textoAprendido } from '../redes/redes.js';
 import { armarMensajes, validarResultado, type DatosContexto, type LineaConversacion, type ResultadoIA } from './contexto.js';
 import type { CursoRow, EtapaVentaRow, IaRow, LecturaRow, NegocioRow, PorLeerRow, SalidaRow, TipoAviso } from '../tipos.js';
@@ -99,7 +100,10 @@ async function cursosDisponibles(empresaId: string, negocioId: string, conversac
   const ya = new Set((data || []).map((x) => x.referencia));
   return cursos.filter((k) => !ya.has(k.id));
 }
-const cursosCortos = (cursos: CursoRow[]) => cursos.map((k) => ({ id: k.id, nombre: k.nombre, precio: formatoMonto(k.precio, k.moneda) }));
+// Sin precio fijo (club o aula), el precio sale de esos sistemas: no se le dice "Bs 0" a la IA.
+const precioDe = (k: CursoRow) =>
+  Number(k.precio) > 0 ? formatoMonto(k.precio, k.moneda) : k.aula ? 'el precio del plan del Aula virtual que elija' : k.club ? 'la mensualidad según los cursos que tome (sistema del club)' : 'precio a consultar';
+const cursosCortos = (cursos: CursoRow[]) => cursos.map((k) => ({ id: k.id, nombre: k.nombre, precio: precioDe(k) }));
 
 // ¿Por qué no responde sola ahora? ('' si puede)
 async function motivoSinAuto(c: Config, conversacionId: string, ultimaPersona: number): Promise<string> {
@@ -339,7 +343,7 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
   }));
   const ultimaPersona = ms([...lista].reverse().find((m) => m.remitente === 'agente' && m.agente_id)?.creado_en);
 
-  const [etapas, respuestas, otros, cursos, bots, club, aprendido] = await Promise.all([
+  const [etapas, respuestas, otros, cursos, bots, club, aprendido, aula] = await Promise.all([
     etapasDelEmbudo(empresaId, negocio.embudo_id),
     respuestasDisponibles(empresaId, negocio.id, enviadas),
     otrosNegocios(empresaId, negocio.id),
@@ -347,6 +351,7 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
     botsDisponibles(empresaId, fila.linea_id, fila.conversacion_id),
     datosClubParaIA(empresaId, negocio.club_sucursal_id, fechaDe(Date.now(), c.zona)),
     aprendidoDe(empresaId, negocio.id),
+    datosAulaParaIA(empresaId, negocio.id),
   ]);
   const nombre = contacto?.nombre?.trim() || fila.telefono.split('@')[0];
   const datos: DatosContexto = {
@@ -363,6 +368,7 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
     cursos: cursosCortos(cursos),
     bots,
     club,
+    aula,
     aprendido: textoAprendido(aprendido),
   };
   const conRespuesta = c.ia.modo !== 'apagado';
@@ -418,13 +424,14 @@ export async function probarMensaje(c: Config, negocioId: string, texto: string)
   if (!negocio) return { ok: false as const, mensaje: 'Elige un negocio.' };
   const ahora = new Date().toISOString();
   const { data: lineaDelNegocio } = await db.from('siguelo_lineas').select('linea_id').eq('negocio_id', negocio.id).limit(1).maybeSingle();
-  const [etapas, respuestas, otros, cursos, bots, club] = await Promise.all([
+  const [etapas, respuestas, otros, cursos, bots, club, aula] = await Promise.all([
     etapasDelEmbudo(c.ia.empresa_id, negocio.embudo_id),
     respuestasDisponibles(c.ia.empresa_id, negocio.id, new Set()),
     otrosNegocios(c.ia.empresa_id, negocio.id),
     cursosConQR(c.ia.empresa_id, negocio.id),
     lineaDelNegocio ? botsDisponibles(c.ia.empresa_id, lineaDelNegocio.linea_id, '00000000-0000-0000-0000-000000000000') : Promise.resolve([]),
     datosClubParaIA(c.ia.empresa_id, negocio.club_sucursal_id, fechaDe(Date.now(), c.zona)),
+    datosAulaParaIA(c.ia.empresa_id, negocio.id),
   ]);
   const datos: DatosContexto = {
     ia: c.ia,
@@ -443,6 +450,7 @@ export async function probarMensaje(c: Config, negocioId: string, texto: string)
     cursos: cursosCortos(cursos),
     bots,
     club,
+    aula,
   };
   const { mensajes, ids } = armarMensajes(datos, true);
   const res = await llamar(c, mensajes);

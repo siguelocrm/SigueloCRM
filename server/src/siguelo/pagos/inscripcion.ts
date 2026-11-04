@@ -10,6 +10,7 @@ import type { MensajeChat, ParteChat } from '../ia/openai.js';
 import { PROMPT_COMPROBANTE, controlar, elegirCurso, formatoMonto, transaccionNormal, validarLectura } from './comprobante.js';
 import { configClub, gruposClub, lleno, rpcVendedor, subirFoto, tarifasClub, textoHorario, vendedorYo } from '../club/club.js';
 import { armarReserva, faltanClub, mezclarDatosClub } from './reserva.js';
+import { configAula, gruposAula, inscribirEnAula, planesAula, textoPlan, type PlanAula } from '../aula/aula.js';
 import type { CursoRow, DatosClub, EstadoPago, IaRow, PagoPorLeerRow, PagoRow, TextosCurso } from '../tipos.js';
 
 // Inscripción con pago (Fase 5). Cada foto o PDF que manda un cliente a un
@@ -42,6 +43,8 @@ export const TEXTOS_POR_DEFECTO: TextosCurso = {
   revisar: 'Recibimos tu comprobante 🙌 Lo estamos revisando y en un momento te confirmamos.',
   rechazado: 'No pudimos validar tu comprobante: {motivo}. Si crees que es un error, escríbenos por aquí.',
   reservado: '¡Gracias, {nombre}! Ya tenemos todo para la inscripción en {curso}. En breve te la confirmamos y te mandamos el link del grupo. 🙌',
+  aula: '¡Listo! 🎉 {alumno} ya está inscrito en el Aula Infinity Chess ({curso}, del {desde} al {hasta}).\n\nEntra aquí: {enlace}\nUsuario: {usuario}\nContraseña temporal: {clave}\n\nAl entrar te pedirá elegir una contraseña nueva.',
+  aula_ya: '¡Listo! 🎉 {alumno} ya está inscrito en el Aula Infinity Chess ({curso}, del {desde} al {hasta}).\n\nEntra aquí con tu usuario de siempre ({usuario}): {enlace}',
 };
 
 // ¿Hay un pago en curso en esta conversación? Mientras tanto la IA no le responde
@@ -271,6 +274,13 @@ async function confirmar(x: Vuelta, pago: PagoRow, curso: CursoRow, aMano = fals
     await mandar(x, pago, [{ tipo: 'confirmado', texto: rellenar(textosDe(curso).confirmado, contacto.nombre, { curso: curso.nombre, monto: formatoMonto(monto, curso.moneda) }) }]);
     return completarClub(x, pago, curso, true);
   }
+  if (curso.aula) {
+    await actualizar(pago, { motivo: null, accion: null, oportunidad_id: oportunidadId, curso_id: curso.id });
+    if (!aMano) await avisar(x, pago, `💰 ${quien(contacto.nombre, pago.telefono)} pagó ${formatoMonto(monto, curso.moneda)}: ✅ comprobante correcto, se inscribe en el Aula virtual.`);
+    await registrar(empresaId, contacto.id, 'pago', `Pago de ${quien(contacto.nombre, pago.telefono).replace(/\*/g, '')} confirmado${aMano ? ' a mano' : ''} (${formatoMonto(monto, curso.moneda)}): ${hechos.join(' · ') || 'listo'}; se inscribe en el aula.`);
+    await mandar(x, pago, [{ tipo: 'confirmado', texto: rellenar(textosDe(curso).confirmado, contacto.nombre, { curso: curso.nombre, monto: formatoMonto(monto, curso.moneda) }) }]);
+    return completarAula(x, pago, curso, true);
+  }
   const faltan = await datosQueFaltan(x, curso, contacto.id, pago.datos);
   const variables = { curso: curso.nombre, monto: formatoMonto(monto, curso.moneda) };
   const t = textosDe(curso);
@@ -441,6 +451,7 @@ async function leerDatos(x: Vuelta, pago: PagoRow): Promise<void> {
   if (Date.now() - ms(ultimo) < QUIETO_DATOS_MS) return;
 
   if (curso.club) return completarClub(x, pago, curso, false, ultimo);
+  if (curso.aula) return completarAula(x, pago, curso, false, ultimo);
   const faltan = await datosQueFaltan(x, curso, contacto.id, pago.datos);
   if (!faltan.length) return inscribir(x, pago, curso);
   const textos = nuevos.filter((m) => m.tipo === 'texto' && m.contenido?.trim()).map((m) => m.contenido!.trim());
@@ -490,6 +501,7 @@ async function hacerAccion(x: Vuelta, pago: PagoRow): Promise<void> {
   if (accion === 'confirmar') {
     if (!curso) return actualizar(pago, { motivo: 'Elige el curso antes de confirmar' });
     if (pago.estado === 'datos' && curso.club) return completarClub(x, pago, curso, false);
+    if (curso.aula && (pago.estado === 'datos' || (pago.estado === 'revisar' && pago.oportunidad_id))) return completarAula(x, pago, curso, false);
     if (pago.estado === 'datos' || pago.estado === 'reservado') return inscribir(x, pago, curso, true);
     if (pago.estado !== 'inscrito') {
       if (!pago.contacto_id) await actualizar(pago, { contacto_id: await asegurarContacto(x.c.ia.empresa_id, pago.telefono) });
@@ -648,6 +660,101 @@ async function crearReserva(x: Vuelta, pago: PagoRow, curso: CursoRow, grupos: A
     await registrar(x.c.ia.empresa_id, pago.contacto_id, 'pago', `Reserva en el club para ${reserva.datos.estudiantes.map((e) => e.nombre).join(', ')} (${cursos}); total sugerido ${formatoMonto(reserva.total_sugerido, curso.moneda)}, pagado por QR ${formatoMonto(reserva.pago_qr, curso.moneda)}.`);
   } catch (err) {
     await paraRevisar(x, pago, curso, `No se pudo dejar la reserva en el club: ${(err as Error).message}`);
+  }
+}
+
+// ---------- Inscripción en el Aula virtual ----------
+
+// Junta el nombre del alumno y el plan (de toda la conversación: suelen decirlo antes de pagar)
+// y, si está todo, lo inscribe en el aula. Si falta algo, se lo pide.
+async function completarAula(x: Vuelta, pago: PagoRow, curso: CursoRow, primeraVez: boolean, hasta?: string): Promise<void> {
+  const contacto = await contactoDe(pago.contacto_id);
+  const cfg = await configAula(x.c.ia.empresa_id);
+  if (!contacto || !cfg) return paraRevisar(x, pago, curso, !cfg ? 'Falta conectar tu Aula virtual (Inscripciones → Aula virtual)' : 'No se encontró el contacto');
+  if (pago.aula?.inscrito_en) return; // ya quedó inscrito (no se repite)
+  let planes: PlanAula[];
+  let grupos: Awaited<ReturnType<typeof gruposAula>>;
+  try {
+    [planes, grupos] = await Promise.all([planesAula(cfg), gruposAula(cfg).catch(() => [])]);
+  } catch (err) {
+    return paraRevisar(x, pago, curso, `No se pudo leer los planes del aula: ${(err as Error).message}`);
+  }
+  if (!planes.length) return paraRevisar(x, pago, curso, 'Tu aula no tiene planes activos');
+  const ids = new Map<string, PlanAula>(planes.map((p, i) => [`p${i + 1}`, p]));
+  const { data: chat } = pago.conversacion_id
+    ? await db.from('mensajes').select('remitente, tipo, contenido, creado_en').eq('conversacion_id', pago.conversacion_id).order('creado_en', { ascending: false }).limit(30)
+    : { data: [] };
+  const lineas = [...(chat || [])]
+    .reverse()
+    .filter((m) => m.tipo === 'texto' && m.contenido?.trim())
+    .map((m) => `${m.remitente === 'cliente' ? 'Cliente' : 'Nosotros'}: ${m.contenido!.trim()}`);
+  const r = await llamar(x.c, [
+    {
+      role: 'system',
+      content: `Ayudas a inscribir en un aula virtual de ajedrez a alguien que ya pagó. Con lo que dijo en la conversación (antes o después de pagar), arma los datos de la inscripción.
+PLANES (id: plan):
+${[...ids].map(([k, p]) => `- ${k}: ${textoPlan(p, grupos)}`).join('\n')}
+Pagó: ${formatoMonto(pago.monto, curso.moneda)}.
+Responde SOLO con JSON: {"alumno": "nombre completo de quien va a tomar las clases" o null, "plan": "id de la lista" o null}
+No inventes nada: si un dato no está, null. Si el que escribe es el papá o la mamá, el alumno es su hijo o hija (no el que escribe). Si no dijo el plan pero lo que pagó es justo el precio de un solo plan, usa ese.`,
+    },
+    { role: 'user', content: lineas.join('\n') || '(sin mensajes)' },
+  ]);
+  if (!r.ok) {
+    if (r.cupo) return paraRevisar(x, pago, curso, `La IA no pudo leer los datos de la inscripción: ${r.mensaje}`);
+    return actualizar(pago, { intentos: pago.intentos + 1, ...(primeraVez ? { estado: 'datos' } : {}) });
+  }
+  const alumnoLeido = typeof r.json.alumno === 'string' && r.json.alumno.trim() && !/^null$/i.test(r.json.alumno.trim()) ? r.json.alumno.trim().slice(0, 120) : null;
+  const planLeido = typeof r.json.plan === 'string' ? ids.get(r.json.plan.trim()) : undefined;
+  // Si la IA no lo dijo: el único plan, o el único con ese precio.
+  const porPrecio = pago.monto != null ? planes.filter((p) => Math.abs(Number(p.precio) - Number(pago.monto)) < 0.01) : [];
+  const plan = planLeido ?? planes.find((p) => p.id === pago.aula?.plan) ?? (planes.length === 1 ? planes[0] : porPrecio.length === 1 ? porPrecio[0] : undefined);
+  const alumno = alumnoLeido ?? pago.aula?.alumno ?? null;
+  const datos = { ...(pago.aula || {}), alumno, plan: plan?.id ?? null };
+  const faltan = [...(alumno ? [] : ['Nombre completo de quien va a tomar las clases']), ...(plan ? [] : [`El plan que quieres:\n${planes.map((p) => `   – ${textoPlan(p, grupos)}`).join('\n')}`])];
+  const rondas = primeraVez ? 0 : pago.rondas + 1;
+  const ultimo = (chat || [])[0]?.creado_en;
+  const leido = hasta ?? (primeraVez ? ultimo : undefined);
+  await actualizar(pago, { aula: datos, rondas, intentos: 0, estado: 'datos', ...(leido ? { datos_leido: leido } : {}) });
+  if (!faltan.length && plan && alumno) return inscribirAula(x, pago, curso, alumno, plan);
+  if (rondas >= MAX_RONDAS) return paraRevisar(x, pago, curso, `Faltan datos para inscribir en el aula: ${faltan.map((f) => f.split(':')[0]).join(', ')}`);
+  const t = textosDe(curso);
+  await mandar(x, pago, [{ tipo: primeraVez ? 'pedir_datos' : 'falta', texto: rellenar(primeraVez ? t.pedir_datos : t.falta, contacto.nombre, { curso: curso.nombre, datos: faltan.map((f) => `• ${f}`).join('\n') }) }]);
+}
+
+const fechaCorta = (f: string) => f.split('-').reverse().join('/');
+
+async function inscribirAula(x: Vuelta, pago: PagoRow, curso: CursoRow, alumno: string, plan: PlanAula): Promise<void> {
+  const cfg = await configAula(x.c.ia.empresa_id);
+  const contacto = await contactoDe(pago.contacto_id);
+  if (!cfg) return;
+  const monto = Number(pago.monto || 0);
+  try {
+    const hecho = await inscribirEnAula(cfg, {
+      alumno,
+      telefono: pago.telefono.split('@')[0],
+      plan,
+      monto,
+      hoy: fechaDe(Date.now(), x.c.zona),
+      nota: `Desde WhatsApp (SígueloCRM): pagó ${formatoMonto(monto, curso.moneda)} por QR${pago.transaccion ? `, transacción ${pago.transaccion}` : ''}. La IA revisó el comprobante.`,
+    });
+    // Primero se anota (así un reintento nunca lo inscribe dos veces); la contraseña no se guarda.
+    await actualizar(pago, {
+      estado: 'inscrito',
+      motivo: null,
+      accion: null,
+      aula: { alumno, plan: plan.id, usuario_id: hecho.usuario_id, usuario: hecho.usuario, nueva: hecho.nueva, inscrito_en: new Date().toISOString() },
+    });
+    const t = textosDe(curso);
+    const variables = { alumno, curso: plan.nombre, desde: fechaCorta(hecho.desde), hasta: fechaCorta(hecho.hasta), enlace: cfg.enlace, usuario: hecho.usuario, clave: hecho.clave ?? '', monto: formatoMonto(monto, curso.moneda) };
+    const mensajes = [{ tipo: 'aula', texto: rellenar(hecho.nueva ? t.aula! : t.aula_ya!, contacto?.nombre, variables) }];
+    if (curso.link_grupo.trim()) mensajes.push({ tipo: 'link', texto: textoLink(curso, contacto?.nombre ?? null, { curso: plan.nombre, monto: variables.monto }) });
+    await mandar(x, pago, mensajes);
+    const saldo = Number(plan.precio) - monto;
+    await avisar(x, pago, `🎓 ${quien(contacto?.nombre, pago.telefono)}: ${alumno} quedó inscrito en el Aula virtual (${plan.nombre}, del ${variables.desde} al ${variables.hasta})${hecho.nueva ? ` con la cuenta nueva "${hecho.usuario}"` : ` en su cuenta "${hecho.usuario}"`}.${saldo > 0.009 ? ` Queda un saldo de ${formatoMonto(saldo, curso.moneda)}.` : ''}`);
+    await registrar(x.c.ia.empresa_id, pago.contacto_id, 'pago', `${alumno} quedó inscrito en el Aula virtual: ${plan.nombre}, del ${variables.desde} al ${variables.hasta}, pagó ${variables.monto}${hecho.nueva ? `, cuenta nueva "${hecho.usuario}"` : `, cuenta "${hecho.usuario}"`}.`);
+  } catch (err) {
+    await paraRevisar(x, pago, curso, `No se pudo inscribir en el aula: ${(err as Error).message}`);
   }
 }
 
