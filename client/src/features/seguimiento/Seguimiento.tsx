@@ -12,6 +12,7 @@ import ColaSeguimiento from './ColaSeguimiento';
 import ContactosSeguimiento from './ContactosSeguimiento';
 import AjustesSeguimiento from './AjustesSeguimiento';
 import CitasSeguimiento from './CitasSeguimiento';
+import EstadoSeguimiento from './EstadoSeguimiento';
 import { useNegocios } from '../negocios/useNegocios';
 
 type Pestana = 'etapas' | 'cola' | 'contactos' | 'citas' | 'ajustes';
@@ -103,6 +104,8 @@ export default function Seguimiento() {
           <button onClick={() => setPestana('ajustes')} className="text-[12.5px] font-semibold" style={{ color: 'var(--accent)' }}>Ir a Ajustes</button>
         </Tarjeta>
       )}
+
+      <EstadoSeguimiento />
 
       <div role="tablist" className="flex gap-1 overflow-x-auto shrink-0" style={{ borderBottom: `1px solid ${BORDE}` }}>
         {PESTANAS.map((p) => (

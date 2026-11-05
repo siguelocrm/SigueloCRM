@@ -59,8 +59,11 @@ await db.query(
 );
 
 const act = (await db.query(`select * from siguelo_actividad($1)`, [empresa])).rows;
-assert.equal(act.length, 1, 'solo Ana: Beto no está en una etapa con mensajes y Caro no tiene chat');
-const a = act[0];
+// Beto está en Negociación (sin mensajes propios): entra igual, porque usa los de la primera etapa.
+// Caro no tiene chat.
+assert.equal(act.length, 2, 'Ana y Beto (Caro no tiene chat)');
+assert.ok(act.some((x) => x.etapa_id === negociacion.id), 'Beto entra aunque su etapa no tenga mensajes propios');
+const a = act.find((x) => x.contacto_id === ana);
 assert.equal(a.contacto_id, ana);
 assert.equal(a.conversacion_id, abierto, 'elige el chat abierto');
 assert.equal(a.etapa_id, primer.id);
@@ -76,7 +79,7 @@ await assert.rejects(db.query(`insert into siguelo_etapas (etapa_id, empresa_id)
 const negocio = (await uno(`insert into siguelo_negocios (empresa_id, nombre) values ($1, 'Prueba única') returning id`, [empresa])).id;
 await db.query(`insert into siguelo_etapas (etapa_id, empresa_id, negocio_id) values ($1, $2, $3)`, [primer.id, empresa, negocio]);
 await assert.rejects(db.query(`insert into siguelo_etapas (etapa_id, empresa_id, negocio_id) values ($1, $2, $3)`, [primer.id, empresa, negocio]), /duplicate key/);
-assert.equal((await db.query(`select * from siguelo_actividad($1)`, [empresa])).rows.length, 1, 'la config de un negocio no duplica contactos');
+assert.equal((await db.query(`select * from siguelo_actividad($1)`, [empresa])).rows.length, 2, 'la config de un negocio no duplica contactos (siguen Ana y Beto)');
 console.log('✓ una configuración general por etapa y una por negocio');
 
 // El tope diario se guarda por número.

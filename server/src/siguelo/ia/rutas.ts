@@ -6,6 +6,7 @@ import { configDeEmpresa, olvidarCache } from './config.js';
 import { probarMensaje } from './lector.js';
 import { enviarAvisoPrueba } from './salida.js';
 import { estadoIA } from './estado.js';
+import { estadoSeguimiento } from '../estadoSeguimiento.js';
 import { aplicarAcciones, conversar } from './asistente.js';
 import { conectarClub, olvidarClub } from '../club/club.js';
 import type { IaRow } from '../tipos.js';
@@ -93,6 +94,15 @@ iaRouter.post('/siguelo/ia/asistente/aplicar', soloAdmin, async (req, res) => {
 iaRouter.post('/siguelo/ia/estado', soloAdmin, async (req, res) => {
   try {
     res.json({ ok: true, estado: await estadoIA(req.usuarioAutenticado!.empresa_id) });
+  } catch (err) {
+    res.status(500).json({ error: `No se pudo revisar: ${(err as Error).message}` });
+  }
+});
+
+// "¿Por qué no se programa?" del Seguimiento.
+iaRouter.post('/siguelo/seguimiento/estado', soloAdmin, async (req, res) => {
+  try {
+    res.json({ ok: true, estado: await estadoSeguimiento(req.usuarioAutenticado!.empresa_id) });
   } catch (err) {
     res.status(500).json({ error: `No se pudo revisar: ${(err as Error).message}` });
   }

@@ -291,7 +291,14 @@ as $$
     select c.id, c.telefono, c.nombre, c.etapa_id, c.etapa_actualizada_en, c.creado_en
     from contactos c
     where c.empresa_id = p_empresa
-      and c.etapa_id in (select se.etapa_id from siguelo_etapas se where se.empresa_id = p_empresa)
+      and (
+        c.etapa_id in (select se.etapa_id from siguelo_etapas se where se.empresa_id = p_empresa)
+        -- Las etapas normales sin mensajes propios usan los de la primera etapa de su embudo (motor.ts).
+        or (
+          c.etapa_id in (select ev.id from etapas_venta ev where ev.empresa_id = p_empresa and ev.tipo = 'normal')
+          and exists (select 1 from siguelo_etapas se2 where se2.empresa_id = p_empresa)
+        )
+      )
   ),
   chats as (
     select cv.id, cv.linea_id, cv.contacto_telefono, cv.estado, cv.ultima_actividad

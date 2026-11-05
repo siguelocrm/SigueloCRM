@@ -182,6 +182,11 @@ assert.equal(movido.etapa_id, negociacion.id);
 assert.equal(movido.probabilidad_cierre, 40);
 assert.ok((await uno(`select count(*)::int n from siguelo_registro where texto like '%pasó solo%'`)).n === 1);
 paso('terminó sin respuesta: pasa solo a "En Negociación" a los 2 días, con su probabilidad');
+await motor();
+assert.ok((await pendientes(movido.id)).length > 0, 'En Negociación no tiene mensajes propios: usa los de Primer Contacto');
+paso('una etapa sin mensajes propios (adonde la IA mueve al cliente) usa los de la primera etapa');
+// Para que el resto del recorrido siga igual, este contacto queda en pausa.
+await pg.query(`update siguelo_seguimientos set pausado = true where contacto_id = $1`, [movido.id]);
 
 // ---- Tope diario y error de envío ----
 const chatDora = await chat('59170000003', 'Dora', reloj.ahora);
@@ -436,6 +441,15 @@ assert.ok(sGabi.visto_cliente && sGabi.visto_agente, 'y queda anotado lo que ya 
 await motor();
 assert.equal((await segDe(gabi.id)).react.ciclo, sGabi.react.ciclo, 'la vuelta siguiente no la vuelve a empezar');
 paso('primer mensaje: si la IA le responde y te deja en visto, arranca su reactivación');
+
+// ---- "¿Por qué no se programa?" ----
+const { estadoSeguimiento } = await import(R + 'estadoSeguimiento.ts');
+const est = await estadoSeguimiento(empresa);
+assert.ok(est.general.some((r: any) => r.ok && /Seguimiento activo/.test(r.titulo)));
+assert.ok(est.etapas.find((e: any) => e.nombre === negociacion.nombre)?.respaldo, 'avisa qué etapas usan los mensajes de la primera');
+const deGabi = est.chats.find((c: any) => c.telefono === '59170000040');
+assert.match(deGabi?.estado ?? '', /^Programado: .*Reactivación 1 el .*Recordatorio 1 el /);
+paso('"¿Por qué no se programa?" muestra la configuración, cada etapa y en qué está cada chat');
 
 console.log(`\n${ok} pasos OK · mensajes "enviados":`);
 for (const e of enviados) console.log('  →', e.jid, JSON.stringify(e.texto));

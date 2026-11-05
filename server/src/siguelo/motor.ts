@@ -106,13 +106,34 @@ export async function revisarEmpresa(aj: AjustesRow): Promise<void> {
   // Textos de cada etapa: los generales y los propios de algún negocio (que mandan sobre los generales).
   const cfgs = new Map((cfgR.data || []).map((c: EtapaConfigRow) => [`${c.etapa_id}|${c.negocio_id ?? ''}`, c] as const));
   const cfgDe = (etapaId: string, negocioId: string | null) => (negocioId && cfgs.get(`${etapaId}|${negocioId}`)) || cfgs.get(`${etapaId}|`) || null;
+  // Una etapa normal sin recordatorios o sin reactivación propios (por ejemplo "En Negociación", adonde
+  // la IA mueve a los clientes) usa los de la primera etapa de su embudo que los tenga: así el
+  // seguimiento sigue aunque cambie de etapa. "Venta ganada" y "perdida" no.
+  const activa = (s: EtapaConfigRow['recordatorios'] | undefined) => !!s?.activa && (s.pasos || []).length > 0;
+  const configConRespaldo = (etapa: EtapaVentaRow, negocioId: string | null): EtapaConfigRow | null => {
+    const propia = cfgDe(etapa.id, negocioId);
+    if (etapa.tipo !== 'normal') return propia;
+    if (propia && activa(propia.recordatorios) && activa(propia.reactivacion)) return propia;
+    const base = mismoEmbudo(etapa.id)
+      .filter((e) => e.tipo === 'normal')
+      .map((e) => cfgDe(e.id, negocioId))
+      .find((c) => c && (activa(c.recordatorios) || activa(c.reactivacion)));
+    if (!base) return propia;
+    return {
+      ...(propia ?? base),
+      recordatorios: propia && activa(propia.recordatorios) ? propia.recordatorios : base.recordatorios,
+      reactivacion: propia && activa(propia.reactivacion) ? propia.reactivacion : base.reactivacion,
+      // El "pasa solo a otra etapa" no se copia: es propio de cada etapa.
+      al_terminar: propia?.al_terminar ?? { etapa_id: null, dias: 0 },
+    };
+  };
   const segs = new Map((segR.data || []).map((s: SeguimientoRow) => [s.contacto_id, s] as const));
   const pendientes = colaR.data || [];
   const cancelados = new Set((manoR.data || []).map((i) => clave(i.contacto_id, i.tipo, i.paso, i.token)));
   const revisados = new Set<string>();
 
   const contexto = (a: ActividadRow, etapa: EtapaVentaRow, negocioId: string | null): C.Contexto => {
-    const cfg = etapa.tipo === 'perdida' ? null : cfgDe(etapa.id, negocioId);
+    const cfg = etapa.tipo === 'perdida' ? null : configConRespaldo(etapa, negocioId);
     return {
       ahora,
       etapaId: etapa.id,
