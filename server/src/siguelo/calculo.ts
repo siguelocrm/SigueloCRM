@@ -204,3 +204,10 @@ export function avanzar(est: EstadoContacto, tipo: TipoSecuencia, paso: number, 
   if (tipo === 'react' && atrasado) (st as EstadoReact).activo = false;
   return true;
 }
+
+// ¿El nombre de la etapa dice que ya concretó? (inscrito, va a asistir, confirmado, agendado, pagado...)
+// A esas etapas no se les copian los mensajes de la primera etapa.
+export const nombreConcretado = (nombre: string): boolean =>
+  /(inscrit|matricul|asist|confirm|agend|pagad|pago|ganad|compr|reserv)/.test(
+    String(nombre || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(),
+  );

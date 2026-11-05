@@ -73,6 +73,8 @@ export type EtapaConfigRow = {
   al_terminar: AlTerminar;
   // Fase 4: palabras que cambian de etapa.
   palabras?: Partial<PalabrasEtapa> | null;
+  // Los de esta etapa ya concretaron (inscritos, van a asistir): sin recordatorios ni reactivaciones.
+  sin_seguimiento?: boolean;
   actualizado_en: string;
 };
 

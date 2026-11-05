@@ -1534,3 +1534,8 @@ alter table siguelo_ia_preguntas enable row level security;
 drop policy if exists "siguelo_ia_preguntas_select" on siguelo_ia_preguntas;
 create policy "siguelo_ia_preguntas_select" on siguelo_ia_preguntas for select
   using (empresa_id = (select empresa_id from usuario_actual()));
+
+-- ---------- 39. Etapas sin seguimiento (ya concretó) ----------
+-- Los de esta etapa ya concretaron (se inscribieron, van a asistir...): no reciben
+-- recordatorios ni reactivaciones, ni los de la primera etapa.
+alter table siguelo_etapas add column if not exists sin_seguimiento boolean not null default false;

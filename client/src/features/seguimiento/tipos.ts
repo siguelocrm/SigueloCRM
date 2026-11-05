@@ -44,6 +44,8 @@ export interface EtapaSeguimiento {
   al_terminar: AlTerminar;
   // Fase 4: palabras que lo pasan a esta etapa.
   palabras?: { cliente: string[]; parecidas: string[]; tuyas: string[]; respuesta: string } | null;
+  // Los de esta etapa ya concretaron (inscritos, van a asistir): sin recordatorios ni reactivaciones.
+  sin_seguimiento?: boolean;
 }
 
 export type Stop = { activo: boolean; palabras: string[]; parecidas: string[]; respuesta: string };

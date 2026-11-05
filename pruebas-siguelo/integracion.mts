@@ -451,6 +451,29 @@ const deGabi = est.chats.find((c: any) => c.telefono === '59170000040');
 assert.match(deGabi?.estado ?? '', /^Programado: .*Reactivación 1 el .*Recordatorio 1 el /);
 paso('"¿Por qué no se programa?" muestra la configuración, cada etapa y en qué está cada chat');
 
+// ---- Ya concretó (se inscribió, va a asistir): no recibe seguimiento ----
+const inscrito = (await uno(`insert into etapas_venta (empresa_id, nombre, tipo, orden) values ($1, 'Inscrito', 'normal', 50) returning id`, [empresa])).id;
+await pg.query(`update contactos set etapa_id = $1, etapa_actualizada_en = $2 where id = $3`, [inscrito, iso(reloj.ahora), gabi.id]);
+await motor();
+assert.equal((await pendientes(gabi.id)).length, 0, '"Inscrito" por su nombre ya concretó: no le copia los mensajes de la primera etapa');
+const tPia = reloj.ahora;
+const chatPia = await chat('59170000041', 'Pía', tPia);
+await msg(chatPia, 'cliente', tPia, 'Hola');
+await msg(chatPia, 'agente', tPia + 5_000, 'Hola Pía, ¿te reservo un lugar?');
+en(tPia + MIN);
+await motor();
+const pia = await contactoDe('59170000041');
+await pg.query(`update contactos set etapa_id = $1, etapa_actualizada_en = $2 where id = $3`, [negociacion.id, iso(reloj.ahora), pia.id]);
+await motor();
+assert.ok((await pendientes(pia.id)).length > 0, 'en Negociación sí recibe seguimiento');
+await pg.query(`update siguelo_etapas set sin_seguimiento = true where etapa_id = $1 and negocio_id is null`, [negociacion.id]);
+await motor();
+assert.equal((await pendientes(pia.id)).length, 0, 'marcada "Sin seguimiento": ya no recibe nada');
+const estConcretado = await estadoSeguimiento(empresa);
+assert.ok(estConcretado.etapas.find((e: any) => e.nombre === 'Inscrito')?.concretado);
+await pg.query(`update siguelo_etapas set sin_seguimiento = false where etapa_id = $1`, [negociacion.id]);
+paso('los que ya concretaron (Inscrito, o una etapa marcada "Sin seguimiento") no reciben recordatorios ni reactivaciones');
+
 console.log(`\n${ok} pasos OK · mensajes "enviados":`);
 for (const e of enviados) console.log('  →', e.jid, JSON.stringify(e.texto));
 const reg = (await pg.query<any>(`select texto from siguelo_registro order by creado_en`)).rows.map((r: any) => r.texto);

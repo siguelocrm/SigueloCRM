@@ -9,7 +9,7 @@ import { Boton, Tarjeta } from '../../components/ui';
 type Revision = { ok: boolean; titulo: string; detalle?: string; aviso?: boolean };
 type Estado = {
   general: Revision[];
-  etapas: { nombre: string; tipo: string; recordatorios: string; reactivacion: string; respaldo: boolean }[];
+  etapas: { nombre: string; tipo: string; recordatorios: string; reactivacion: string; respaldo: boolean; concretado?: boolean }[];
   chats: { nombre: string; telefono: string; etapa: string; estado: string; ok: boolean }[];
 };
 
@@ -69,7 +69,7 @@ export default function EstadoSeguimiento() {
                 <span className="text-[13px] font-semibold" style={{ color: TEXTO_PRIMARIO }}>Lo que recibe cada etapa</span>
                 {estado.etapas.map((e) => (
                   <span key={e.nombre} className="text-[12.5px]" style={{ color: TEXTO_SECUNDARIO }}>
-                    <b style={{ color: TEXTO_PRIMARIO }}>{e.nombre}:</b> reactivación {e.reactivacion} · recordatorios {e.recordatorios}
+                    <b style={{ color: TEXTO_PRIMARIO }}>{e.nombre}:</b> {e.concretado ? 'sin seguimiento (ya concretó)' : <>reactivación {e.reactivacion} · recordatorios {e.recordatorios}</>}
                     {e.respaldo && <span style={{ color: TEXTO_TERCIARIO }}> (usa los de la primera etapa porque no tiene propios)</span>}
                   </span>
                 ))}

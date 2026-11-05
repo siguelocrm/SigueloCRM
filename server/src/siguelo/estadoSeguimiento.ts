@@ -1,6 +1,7 @@
 import { db } from './db.js';
 import { HORA, enFranja } from './horario.js';
 import type { EtapaConfigRow, Secuencia } from './tipos.js';
+import { nombreConcretado } from './calculo.js';
 
 // "¿Por qué no se programa?" del Seguimiento: la configuración general, los mensajes de cada
 // etapa (y cuáles usan los de la primera etapa) y, chat por chat de las últimas 48 h, en qué
@@ -9,7 +10,7 @@ import type { EtapaConfigRow, Secuencia } from './tipos.js';
 type Revision = { ok: boolean; titulo: string; detalle?: string; aviso?: boolean };
 export type EstadoSeguimiento = {
   general: Revision[];
-  etapas: { nombre: string; tipo: string; recordatorios: string; reactivacion: string; respaldo: boolean }[];
+  etapas: { nombre: string; tipo: string; recordatorios: string; reactivacion: string; respaldo: boolean; concretado?: boolean }[];
   chats: { nombre: string; telefono: string; etapa: string; estado: string; ok: boolean }[];
 };
 
@@ -46,6 +47,10 @@ export async function estadoSeguimiento(empresaId: string): Promise<EstadoSeguim
   for (const e of lista) {
     if (e.tipo !== 'normal') continue;
     const propia = general_.get(e.id);
+    if (propia?.sin_seguimiento || (nombreConcretado(e.nombre) && !activa(propia?.recordatorios) && !activa(propia?.reactivacion))) {
+      resumen.push({ nombre: e.nombre, tipo: e.tipo, recordatorios: 'ninguno', reactivacion: 'ninguna', respaldo: false, concretado: true });
+      continue;
+    }
     const base = lista
       .filter((x) => x.tipo === 'normal' && (embudoDe.get(x.id) ?? null) === (embudoDe.get(e.id) ?? null))
       .map((x) => general_.get(x.id))
@@ -89,6 +94,10 @@ export async function estadoSeguimiento(empresaId: string): Promise<EstadoSeguim
       continue;
     }
     const resumenEtapa = resumen.find((r) => r.nombre === etapa?.nombre);
+    if (resumenEtapa?.concretado) {
+      chats.push({ ...base, ok: true, estado: `Está en "${etapa?.nombre}" (ya concretó): no recibe recordatorios ni reactivaciones.` });
+      continue;
+    }
     if (!resumenEtapa || (resumenEtapa.recordatorios === 'ninguno' && resumenEtapa.reactivacion === 'ninguna')) {
       chats.push({ ...base, ok: false, estado: `Su etapa "${etapa?.nombre ?? '?'}" no tiene mensajes de seguimiento.` });
       continue;

@@ -112,8 +112,14 @@ export async function revisarEmpresa(aj: AjustesRow): Promise<void> {
   const activa = (s: EtapaConfigRow['recordatorios'] | undefined) => !!s?.activa && (s.pasos || []).length > 0;
   const configConRespaldo = (etapa: EtapaVentaRow, negocioId: string | null): EtapaConfigRow | null => {
     const propia = cfgDe(etapa.id, negocioId);
+    // Marcada "Sin seguimiento" (ya concretó): nada, aunque tenga mensajes.
+    if (cfgDe(etapa.id, null)?.sin_seguimiento) {
+      return propia ? { ...propia, recordatorios: { ...propia.recordatorios, activa: false }, reactivacion: { ...propia.reactivacion, activa: false } } : null;
+    }
     if (etapa.tipo !== 'normal') return propia;
     if (propia && activa(propia.recordatorios) && activa(propia.reactivacion)) return propia;
+    // Por su nombre ya concretó (inscrito, va a asistir...): solo lo que tenga propio.
+    if (C.nombreConcretado(etapa.nombre)) return propia;
     const base = mismoEmbudo(etapa.id)
       .filter((e) => e.tipo === 'normal')
       .map((e) => cfgDe(e.id, negocioId))

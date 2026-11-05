@@ -16,7 +16,7 @@ type PasoBorrador = { horas: string; texto: string };
 type SecBorrador = { activa: boolean; modo: Modo; pasos: PasoBorrador[] };
 // Palabras que cambian de etapa (Fase 4): una por línea mientras editas.
 type PalabrasBorrador = { cliente: string; parecidas: string; tuyas: string; respuesta: string };
-type Borrador = { recordatorios: SecBorrador; reactivacion: SecBorrador; destino: string; dias: string; palabras: PalabrasBorrador };
+type Borrador = { recordatorios: SecBorrador; reactivacion: SecBorrador; destino: string; dias: string; palabras: PalabrasBorrador; sinSeguimiento: boolean };
 
 const aBorradorSec = (s: Secuencia): SecBorrador => ({
   activa: s.activa,
@@ -29,6 +29,7 @@ const aBorrador = (c: EtapaSeguimiento): Borrador => ({
   reactivacion: aBorradorSec(c.reactivacion),
   destino: c.al_terminar?.etapa_id || '',
   dias: String(c.al_terminar?.dias ?? 0),
+  sinSeguimiento: !!c.sin_seguimiento,
   palabras: {
     cliente: (c.palabras?.cliente ?? []).join('\n'),
     parecidas: (c.palabras?.parecidas ?? []).join('\n'),
@@ -220,11 +221,14 @@ export default function EtapasSeguimiento({ etapas, configs, negocios, embudos, 
     if (desconocidas.length) return toast(`Esa variable no existe: ${desconocidas.map((v) => `{${v}}`).join(', ')}. Puedes usar ${TEXTO_VARIABLES}.`, 'error');
     setGuardando(true);
     const p = borrador.palabras;
+    const actualGeneral = enEdicion(etapa.id);
     const conPalabras = !negocioId && (p.cliente.trim() || p.parecidas.trim() || p.tuyas.trim() || p.respuesta.trim() || enEdicion(etapa.id)?.palabras);
     const fila = {
       recordatorios,
       reactivacion,
       al_terminar: { etapa_id: borrador.destino || null, dias: borrador.destino ? dias : 0 },
+      // "Sin seguimiento" es de la etapa (textos generales); sin el SQL de la sección 39 no se manda.
+      ...(!negocioId && (borrador.sinSeguimiento || (actualGeneral && 'sin_seguimiento' in actualGeneral)) ? { sin_seguimiento: borrador.sinSeguimiento } : {}),
       // Las palabras son de los textos generales (sin la Fase 4 pegada, no se mandan).
       ...(conPalabras ? { palabras: { cliente: lineas(p.cliente), parecidas: lineas(p.parecidas), tuyas: lineas(p.tuyas), respuesta: p.respuesta.trim() } } : {}),
       actualizado_en: new Date().toISOString(),
@@ -276,6 +280,8 @@ export default function EtapasSeguimiento({ etapas, configs, negocios, embudos, 
             <div className="flex flex-wrap gap-1.5 mt-1">
               {perdida ? (
                 <Etiqueta color="var(--fg-3)" icono={Ban}>Nunca envía mensajes</Etiqueta>
+              ) : general(etapa.id)?.sin_seguimiento ? (
+                <Etiqueta color="var(--ok)" icono={Ban}>Sin seguimiento: ya concretó</Etiqueta>
               ) : !rec && !react && !destino ? (
                 <span className="text-[12px]" style={{ color: TEXTO_TERCIARIO }}>Sin mensajes automáticos</span>
               ) : (
@@ -304,6 +310,16 @@ export default function EtapasSeguimiento({ etapas, configs, negocios, embudos, 
                     <span className="flex-1 min-w-[200px]">{negocio!.nombre} usa los textos generales en esta etapa.</span>
                     {puedeEditar && <Boton tamano="sm" onClick={() => setPersonalizando(true)}>Personalizar para {negocio!.nombre}</Boton>}
                   </div>
+                )}
+                {!negocioId && puedeEditar && (
+                  <label className="flex items-start gap-2 pt-3 text-[12.5px] cursor-pointer" style={{ color: TEXTO_SECUNDARIO }}>
+                    <input type="checkbox" className="mt-0.5" checked={borrador.sinSeguimiento} onChange={(e) => setBorrador({ ...borrador, sinSeguimiento: e.target.checked })} />
+                    <span>
+                      <b style={{ color: TEXTO_PRIMARIO }}>Sin seguimiento: los de esta etapa ya concretaron</b> (se inscribieron, van a asistir…). No reciben
+                      recordatorios ni reactivaciones. Las etapas sin mensajes propios usan los de la primera etapa, salvo estas y las que por su nombre
+                      ya concretaron (inscrito, asistirá, confirmado, agendado, pagado).
+                    </span>
+                  </label>
                 )}
                 {!bloqueado && (
                   <label className="flex items-center gap-2 pt-3 text-[12.5px] flex-wrap" style={{ color: TEXTO_SECUNDARIO }}>
