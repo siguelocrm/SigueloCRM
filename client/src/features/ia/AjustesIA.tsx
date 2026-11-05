@@ -252,7 +252,7 @@ export default function AjustesIA({ ajustes, existe, lineas, puedeEditar, onGuar
           <input type="time" value={b.hasta} disabled={!puedeEditar} onChange={(e) => setB({ ...b, hasta: e.target.value })} aria-label="Hasta" className={claseCampo} style={estiloCampo} />
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Campo etiqueta="Espera antes de responder: desde (segundos)" ayuda="Se suma a unos 20 a 30 segundos en los que la IA espera que el cliente termine de escribir y piensa la respuesta.">{num('espera_min_seg')}</Campo>
+          <Campo etiqueta="Espera antes de responder: desde (segundos)" ayuda="Para responder en unos 5 segundos, pon 0 y 2. A esto se suman unos 2 segundos (espera que el cliente termine de escribir) y lo que tarda la IA en pensar.">{num('espera_min_seg')}</Campo>
           <Campo etiqueta="hasta (segundos)">{num('espera_max_seg')}</Campo>
           <Campo etiqueta="Máximo de respuestas por cliente al día">{num('max_por_cliente_dia')}</Campo>
           <Campo etiqueta="Máximo de respuestas al día (todas)">{num('max_respuestas_dia')}</Campo>

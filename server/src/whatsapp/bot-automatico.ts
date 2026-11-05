@@ -5,6 +5,7 @@ import { obtenerEmpresaIdDeLinea } from './empresa.js';
 import { continuarFlujo, iniciarFlujo } from './flujo.js';
 import { aplicarVariables, palabraQueCoincide } from './coincidencia.js';
 import { reglasDelNumero } from '../siguelo/negocios.js';
+import { marcarEnviadoPorCRM } from './mensajes-enviados-por-crm.js';
 
 const espera = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -201,6 +202,8 @@ export async function enviarPaso(
   }
 
   const resultado = await sock.sendMessage(jid, contenidoWA);
+  // SígueloCRM: marcado como enviado por el CRM (no se duplica y la IA sabe que lo mandó el bot).
+  if (resultado?.key?.id) marcarEnviadoPorCRM(resultado.key.id);
 
   await supabase.from('mensajes').insert({
     conversacion_id: conversacionId,

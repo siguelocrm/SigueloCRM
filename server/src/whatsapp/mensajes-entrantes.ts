@@ -6,6 +6,7 @@ import { obtenerEmpresaIdDeLinea } from './empresa.js';
 import { buscarContactoPorLid, registrarLidDeContacto } from './contactos.js';
 import { intentarResponderAutomaticamente } from './bot-automatico.js';
 import { guardarOrigenDeAnuncio } from './origen-anuncio.js';
+import { mensajeNuevo } from '../siguelo/eventos.js';
 
 interface ResultadoDeteccion {
   tipo: TipoMensaje;
@@ -235,6 +236,8 @@ export async function procesarMensajeEntrante(msg: WAMessage, sock: WASocket, li
     console.error('Error guardando mensaje:', errorMensaje.message);
   } else {
     console.log(`[${lineaId}] 📩 ${telefono} [${tipo}]: ${texto || mediaUrl}`);
+    // SígueloCRM: la IA lo lee en segundos (siguelo/index.ts).
+    mensajeNuevo(lineaId);
   }
 
   if (!errorMensaje && tipo === 'texto') {

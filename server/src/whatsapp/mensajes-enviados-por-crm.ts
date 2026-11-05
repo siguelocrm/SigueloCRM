@@ -6,7 +6,9 @@
 const idsRecientes = new Map<string, NodeJS.Timeout>();
 
 export function marcarEnviadoPorCRM(whatsappId: string): void {
-  const timeout = setTimeout(() => idsRecientes.delete(whatsappId), 30_000);
+  // SígueloCRM: 15 min (antes 30 s) para que la IA sepa qué mandó el bot hace un rato.
+  const timeout = setTimeout(() => idsRecientes.delete(whatsappId), 15 * 60_000);
+  timeout.unref?.(); // no retiene el proceso por este recordatorio
   idsRecientes.set(whatsappId, timeout);
 }
 

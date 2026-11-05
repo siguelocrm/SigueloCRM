@@ -10,6 +10,7 @@ import { revisarRedes } from './redes/redes.js';
 import type { AjustesRow } from './tipos.js';
 import { desactivarVencidos } from './usuarios/accesos.js';
 import { procesarMasivos, reanudarAlArrancar } from './masivos/masivos.js';
+import { alLlegarMensaje } from './eventos.js';
 
 // Seguimiento automático por etapa (SígueloCRM). Se prende desde la pantalla
 // "Seguimiento"; mientras esté apagado no hace nada. Necesita las tablas de
@@ -88,6 +89,52 @@ function candado(nombre: string): (tarea: () => Promise<void>) => Promise<void> 
 }
 const conCandadoLector = candado('la lectura de la IA');
 const conCandadoSalida = candado('los envíos de la IA');
+
+// Respuesta rápida: cuando llega un mensaje de un cliente, la IA lo lee apenas
+// el cliente deja de escribir (2 s sin mensajes nuevos en ese número) y lo que
+// decide sale enseguida, sin esperar la próxima vuelta. Las vueltas de cada
+// 10 s y 5 s siguen como respaldo. Usa los mismos candados (espera si están ocupados).
+const QUIETO_RAPIDO_MS = 2_000;
+const esperando = new Map<string, NodeJS.Timeout>();
+const lineaEmpresa = new Map<string, string>();
+const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function conCandadoEsperando(conCandado: (t: () => Promise<void>) => Promise<void>, tarea: () => Promise<void>): Promise<void> {
+  // El candado no corre la tarea si está ocupado: se reintenta unos segundos.
+  for (let i = 0; i < 40; i++) {
+    let corrio = false;
+    await conCandado(async () => {
+      corrio = true;
+      await tarea();
+    });
+    if (corrio) return;
+    await dormir(250);
+  }
+}
+async function responderRapido(lineaId: string): Promise<void> {
+  if (!lineaEmpresa.has(lineaId)) {
+    const { data } = await db.from('lineas_whatsapp').select('empresa_id').eq('id', lineaId).maybeSingle();
+    if (!data) return;
+    lineaEmpresa.set(lineaId, data.empresa_id);
+  }
+  const c = (await empresasConIA()).find((x) => x.ia.empresa_id === lineaEmpresa.get(lineaId));
+  if (!c) return;
+  await conCandadoEsperando(conCandadoLector, () => leerPendientes(c, 5, 1));
+  // Lo que quedó listo para salir ahora (texto, y después ubicación o respuestas rápidas) sale en seguida.
+  for (let i = 0; i < 4; i++) {
+    await conCandadoEsperando(conCandadoSalida, () => procesarSalida(c));
+    await dormir(i === 0 ? 800 : 1_500);
+  }
+}
+alLlegarMensaje((lineaId) => {
+  clearTimeout(esperando.get(lineaId));
+  esperando.set(
+    lineaId,
+    setTimeout(() => {
+      esperando.delete(lineaId);
+      responderRapido(lineaId).catch((err) => console.error('Error en la respuesta rápida de la IA:', (err as Error).message));
+    }, QUIETO_RAPIDO_MS),
+  );
+});
 const conCandadoPagos = candado('los pagos');
 const conCandadoRedes = candado('las redes sociales');
 const conCandadoMasivos = candado('los mensajes masivos');

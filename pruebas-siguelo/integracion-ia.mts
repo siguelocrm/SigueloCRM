@@ -365,6 +365,57 @@ assert.match(notaAviso.texto, /no te llegó un aviso porque tu número personal 
 await pg.query(`update lineas_whatsapp set numero = '591' where empresa_id = $1`, [empresa]);
 paso('avisos: agrega el 591, detecta si pusiste el mismo número del CRM (y lo anota) y el aviso de prueba llega');
 
+// ---------- El bot contesta primero (bienvenida): la IA igual responde la pregunta ----------
+const { marcarEnviadoPorCRM } = await import(new URL('../server/src/whatsapp/mensajes-enviados-por-crm.ts', import.meta.url).href);
+const lalo = await chat(L1, '59170000033', 'Lalo');
+await escribe(lalo.conv, '¿Cuánto cuesta la cadena?');
+avanzar(1_000);
+marcarEnviadoPorCRM('WID-BOT-1');
+await pg.query(`insert into mensajes (conversacion_id, remitente, agente_id, contenido, whatsapp_id, creado_en) values ($1, 'agente', null, '¡Bienvenido a Tienda Quillacollo! 👋', 'WID-BOT-1', $2)`, [lalo.conv, iso(reloj.ahora)]);
+avanzar(MIN);
+responder = (l) => {
+  assert.match(l.usuario, /Nosotros \(mensaje automático\): ¡Bienvenido/, 'la IA sabe que la bienvenida fue automática');
+  return { resumen: 'Pregunta precio', puede_responder: true, respuesta: 'La cadena cuesta 120 Bs 😊' };
+};
+await leerPendientes(await config());
+await salida();
+assert.equal(enviados.filter((e) => e.jid.startsWith('59170000033')).at(-1)?.texto, 'La cadena cuesta 120 Bs 😊');
+paso('si el bot contesta primero (bienvenida), la IA igual responde la pregunta del cliente');
+
+// ---------- Cuando no responde, queda anotado por qué ----------
+const L4 = await linea('Sin negocio');
+const mia = await chat(L4, '59170000034', 'Mía');
+await escribe(mia.conv, 'Hola');
+avanzar(MIN);
+const antesNada = llamadas.length;
+await leerPendientes(await config());
+assert.equal(llamadas.length, antesNada, 'sin negocio no gasta una consulta');
+const porQue = await uno(`select texto from siguelo_registro where contacto_id = $1 order by creado_en desc limit 1`, [mia.contacto.id]);
+assert.match(porQue.texto, /IA no le respondió a \+59170000034: el número "Sin negocio" no está en ningún negocio/);
+paso('cuando no responde (número sin negocio, IA apagada, tu número…), queda anotado por qué');
+
+// ---------- "¿Por qué no responde?" ----------
+const { estadoIA } = await import(R + 'ia/estado.ts');
+await pg.query(`update siguelo_ia set modo = 'borrador', espera_min_seg = 20, espera_max_seg = 60 where empresa_id = $1`, [empresa]);
+let est = await estadoIA(empresa);
+assert.equal(est.listo, false);
+assert.ok(est.general.some((r: any) => !r.ok && /Para aprobar/.test(r.titulo)));
+assert.ok(est.general.some((r: any) => r.aviso && /Espera 20 a 60 segundos/.test(r.titulo)));
+const sinNeg = est.numeros.find((n: any) => n.nombre === 'Sin negocio')!;
+assert.ok(sinNeg.revisiones.some((r: any) => !r.ok && /No está en ningún negocio/.test(r.titulo)));
+const quilla = est.numeros.find((n: any) => n.nombre === 'Quillacollo')!;
+assert.equal(quilla.negocio, 'Tienda Quillacollo');
+assert.ok(quilla.revisiones.some((r: any) => !r.ok && /casi no tiene información/.test(r.titulo)), 'la ficha de prueba es corta');
+await pg.query(`update siguelo_ia set modo = 'automatico', espera_min_seg = 0, espera_max_seg = 0 where empresa_id = $1`, [empresa]);
+est = await estadoIA(empresa);
+await pg.query(`update siguelo_negocios set info_ia = $1 where id = $2`, ['Vendemos repuestos de motos: cadenas (120 Bs), frenos, llantas y aceite. Atendemos de lunes a sábado de 8 a 19.', nQuilla]);
+assert.ok(est.general.some((r: any) => !r.ok && /Hubo un error hace poco/.test(r.titulo)), 'muestra el último error (de las pruebas de arriba)');
+await pg.query(`delete from siguelo_registro where tipo = 'ia_error'`);
+est = await estadoIA(empresa);
+assert.ok(est.numeros.find((n: any) => n.nombre === 'Quillacollo')!.revisiones.every((r: any) => r.ok));
+assert.equal(est.listo, true);
+paso('"¿Por qué no responde?" revisa el modo, el horario, la espera y cada número (conectado, negocio, información)');
+
 const uso = await uno(`select sum(consultas)::int c, sum(entrada)::int e from siguelo_ia_uso`);
 console.log(`\n${ok} pasos OK · ${uso.c} consultas a la IA (${uso.e} tokens de entrada) · mensajes:`);
 for (const e of enviados) console.log('  →', e.jid.split('@')[0], e.imagen ? `[foto ${e.imagen}]` : e.ubicacion ? `[ubicación ${e.ubicacion.name}]` : JSON.stringify(e.texto).slice(0, 110));

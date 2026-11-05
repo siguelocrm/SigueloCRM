@@ -5,6 +5,7 @@ import { listarModelos } from './openai.js';
 import { configDeEmpresa, olvidarCache } from './config.js';
 import { probarMensaje } from './lector.js';
 import { enviarAvisoPrueba } from './salida.js';
+import { estadoIA } from './estado.js';
 import { aplicarAcciones, conversar } from './asistente.js';
 import { conectarClub, olvidarClub } from '../club/club.js';
 import type { IaRow } from '../tipos.js';
@@ -86,6 +87,15 @@ iaRouter.post('/siguelo/ia/asistente/aplicar', soloAdmin, async (req, res) => {
   const r = await aplicarAcciones(req.usuarioAutenticado!.empresa_id, String(req.body?.id ?? ''));
   if (!r.ok) return res.status(400).json({ error: r.mensaje });
   res.json({ ok: true, resultado: r.resultado });
+});
+
+// "¿Por qué no responde?": todo lo que puede dejar a la IA sin responder, número por número.
+iaRouter.post('/siguelo/ia/estado', soloAdmin, async (req, res) => {
+  try {
+    res.json({ ok: true, estado: await estadoIA(req.usuarioAutenticado!.empresa_id) });
+  } catch (err) {
+    res.status(500).json({ error: `No se pudo revisar: ${(err as Error).message}` });
+  }
 });
 
 // "Mandarme un aviso de prueba": con el número y la línea que están en la pantalla (aunque no se hayan guardado).

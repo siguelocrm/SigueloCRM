@@ -12,6 +12,7 @@ import { datosAulaParaIA } from '../aula/aula.js';
 import { aprendidoDe, textoAprendido } from '../redes/redes.js';
 import { AQUI, armarMensajes, validarResultado, type DatosContexto, type LineaConversacion, type ResultadoIA } from './contexto.js';
 import { empaquetar } from './ubicacion.js';
+import { fueEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import type { CursoRow, EtapaVentaRow, IaRow, LecturaRow, NegocioRow, PorLeerRow, SalidaRow, TipoAviso } from '../tipos.js';
 
 // La IA lee cada conversación cuando el cliente termina de escribir y, con la
@@ -164,7 +165,8 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
   const etapa = x.etapas.find((e) => e.id === x.contacto?.etapa_id);
   if (etapa?.tipo === 'perdida') return `no le respondió: está en "${etapa.nombre}"`;
   // Solo si el cliente fue el último en escribir, y hace poco.
-  if (!x.clienteUltimo || Date.now() - ms(x.fila.ultimo_cliente) > NO_RESPONDER_VIEJOS_MS) return '';
+  if (!x.clienteUltimo) return 'no le respondió: ya le contestó una persona después de su último mensaje';
+  if (Date.now() - ms(x.fila.ultimo_cliente) > NO_RESPONDER_VIEJOS_MS) return 'no le respondió: su mensaje es de hace más de 2 horas';
 
   let texto = r.puede_responder ? r.respuesta : '';
   let espera = false;
@@ -325,30 +327,44 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
   const leido = { leido_hasta: fila.ultimo_cliente, fallos: 0, reintentar_en: null };
 
   const negocio = await negocioDeLinea(fila.linea_id);
-  // Sin ficha de negocio no hay con qué responder; tampoco a tu número personal.
-  if (!negocio || !negocio.ia_activa || esNumeroPersonal(fila.telefono, c.ia.avisos?.telefono || '')) {
+  const quienEs = `+${fila.telefono.split('@')[0]}`;
+  // Cuando no responde, queda anotado por qué (se ve en IA → Resumen).
+  const sinResponder = async (motivo: string) => {
     await guardar(leido);
+    await registrar(empresaId, fila.contacto_id, 'ia', `IA no le respondió a ${quienEs}: ${motivo}.`);
     return true;
+  };
+  // Sin ficha de negocio no hay con qué responder; tampoco a tu número personal.
+  if (!negocio) {
+    const { data: l } = await db.from('lineas_whatsapp').select('nombre').eq('id', fila.linea_id).maybeSingle();
+    return sinResponder(`el número "${l?.nombre ?? '?'}" no está en ningún negocio (Administrar → Negocios → elige sus números)`);
   }
+  if (!negocio.ia_activa) return sinResponder(`en el negocio "${negocio.nombre}" está apagado "La IA responde en los números de este negocio"`);
+  if (esNumeroPersonal(fila.telefono, c.ia.avisos?.telefono || '')) return sinResponder('es tu número personal de los avisos (a ese número la IA nunca le responde)');
   // Si está mandando un comprobante o sus datos de inscripción (Fase 5), de eso se encarga pagos/;
   // si un flujo del bot espera su respuesta, contesta el bot.
-  if ((await pagoEnCurso(fila.conversacion_id)) || (await flujoEsperando(fila.conversacion_id))) {
-    await guardar(leido);
-    return true;
-  }
+  if (await pagoEnCurso(fila.conversacion_id)) return sinResponder('tiene un pago o inscripción en curso (de eso se encargan los pagos)');
+  if (await flujoEsperando(fila.conversacion_id)) return sinResponder('un flujo del bot está esperando su respuesta (contesta el bot)');
 
   const [{ data: contacto }, { data: mensajes }, enviadas] = await Promise.all([
     fila.contacto_id ? db.from('contactos').select('id, nombre, etapa_id, etapa_actualizada_en').eq('id', fila.contacto_id).maybeSingle() : Promise.resolve({ data: null }),
-    db.from('mensajes').select('id, remitente, agente_id, tipo, contenido, creado_en').eq('conversacion_id', fila.conversacion_id).order('creado_en', { ascending: false }).limit(30),
+    db.from('mensajes').select('id, remitente, agente_id, tipo, contenido, creado_en, whatsapp_id').eq('conversacion_id', fila.conversacion_id).order('creado_en', { ascending: false }).limit(30),
     referenciasEnviadas(fila.contacto_id, fila.conversacion_id),
   ]);
   const lista = (mensajes || []).reverse();
   // Los automáticos (seguimiento e IA) se marcan como tales para la IA.
   const ids = lista.filter((m) => m.remitente === 'agente').map((m) => m.id);
-  const [{ data: deCola }, { data: deIa }] = ids.length
-    ? await Promise.all([db.from('siguelo_cola').select('mensaje_id').in('mensaje_id', ids), db.from('siguelo_ia_salida').select('mensaje_id').in('mensaje_id', ids)])
-    : [{ data: [] }, { data: [] }];
-  const automaticos = new Set([...(deCola || []), ...(deIa || [])].map((x) => x.mensaje_id));
+  const [{ data: deCola }, { data: deIa }, { data: deMasivo }] = ids.length
+    ? await Promise.all([
+        db.from('siguelo_cola').select('mensaje_id').in('mensaje_id', ids),
+        db.from('siguelo_ia_salida').select('mensaje_id').in('mensaje_id', ids),
+        db.from('siguelo_masivo_envios').select('mensaje_id').in('mensaje_id', ids),
+      ])
+    : [{ data: [] }, { data: [] }, { data: [] }];
+  const automaticos = new Set([...(deCola || []), ...(deIa || []), ...(deMasivo || [])].map((x) => x.mensaje_id));
+  // Lo que mandó el bot (o cualquier envío del CRM sin una persona) en estos minutos también es automático:
+  // así la bienvenida del bot no hace que la IA deje sin respuesta la pregunta del cliente.
+  for (const m of lista) if (m.remitente === 'agente' && !m.agente_id && m.whatsapp_id && fueEnviadoPorCRM(m.whatsapp_id)) automaticos.add(m.id);
   const conversacion: LineaConversacion[] = lista.map((m) => ({
     quien: m.remitente === 'cliente' ? 'cliente' : automaticos.has(m.id) ? 'automatico' : 'nosotros',
     texto: m.tipo === 'texto' ? m.contenido || '' : `[${m.tipo}] ${m.contenido || ''}`.trim(),
@@ -412,7 +428,8 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
     otros,
     cursos,
     bots,
-    clienteUltimo: lista.at(-1)?.remitente === 'cliente',
+    // El cliente fue el último en escribir, sin contar los mensajes automáticos (bot, seguimiento, IA).
+    clienteUltimo: [...lista].reverse().find((m) => m.remitente === 'cliente' || !automaticos.has(m.id))?.remitente === 'cliente',
     ultimaPersona,
   };
   const hechos = await aplicar(x, r);
@@ -422,8 +439,8 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
 }
 
 // Una vuelta: lee las conversaciones que tienen mensajes nuevos del cliente.
-export async function leerPendientes(c: Config, maximo = 5): Promise<void> {
-  const { data, error } = await db.rpc('siguelo_ia_por_leer', { p_empresa: c.ia.empresa_id, p_quieto_seg: QUIETO_SEG });
+export async function leerPendientes(c: Config, maximo = 5, quietoSeg = QUIETO_SEG): Promise<void> {
+  const { data, error } = await db.rpc('siguelo_ia_por_leer', { p_empresa: c.ia.empresa_id, p_quieto_seg: quietoSeg });
   if (error) return;
   for (const fila of (data || []).slice(0, maximo)) {
     const ok = await leer(c, fila);

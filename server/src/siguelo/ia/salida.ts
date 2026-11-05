@@ -257,6 +257,7 @@ export async function procesarSalida(c: Config): Promise<void> {
     usadas.add(it.linea_id);
     if (it.origen === 'aviso') await enviarAvisos(c, it);
     else await enviarAlCliente(c, it);
-    proximoPorLinea.set(it.linea_id, Date.now() + (3 + Math.random() * 5) * 1000);
+    // Un respiro corto entre dos mensajes del mismo número (es una conversación, no un envío masivo).
+    proximoPorLinea.set(it.linea_id, Date.now() + (1 + Math.random() * 1.5) * 1000);
   }
 }

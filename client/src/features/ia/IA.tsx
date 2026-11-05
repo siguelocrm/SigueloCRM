@@ -9,6 +9,7 @@ import ResumenIA from './ResumenIA';
 import AjustesIA from './AjustesIA';
 import ProbarIA from './ProbarIA';
 import AsistenteIA from './AsistenteIA';
+import EstadoIA from './EstadoIA';
 import { ajustesIAPorDefecto, type AjustesIA as Ajustes } from './tipos';
 
 type Pestana = 'asistente' | 'resumen' | 'ajustes' | 'probar';
@@ -67,6 +68,7 @@ export default function IA({ onAbrirChat }: { onAbrirChat?: (telefono: string) =
   return (
     <div className="flex-1 min-w-0 overflow-y-auto p-4 md:p-6 flex flex-col gap-4">
       <EncabezadoPagina titulo="IA" subtitulo="Responde a tus clientes con la ficha de cada negocio, te muestra lo que necesita que veas y te avisa por WhatsApp." />
+      {puedeEditar && <EstadoIA />}
 
       {(!ajustes.activa || !ajustes.clave_final) && (
         <Tarjeta className="px-4 py-3 flex items-center gap-3 flex-wrap">
