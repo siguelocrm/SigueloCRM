@@ -11,7 +11,7 @@ import { datosClubParaIA } from '../club/club.js';
 import { datosAulaParaIA } from '../aula/aula.js';
 import { aprendidoDe, textoAprendido } from '../redes/redes.js';
 import { AQUI, armarMensajes, validarResultado, type DatosContexto, type LineaConversacion, type ResultadoIA } from './contexto.js';
-import { empaquetar } from './ubicacion.js';
+import { desempaquetar, empaquetar, linkDeMapa } from './ubicacion.js';
 import { fueEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import type { CursoRow, EtapaVentaRow, IaRow, LecturaRow, NegocioRow, PorLeerRow, SalidaRow, TipoAviso } from '../tipos.js';
 
@@ -26,7 +26,7 @@ type Config = { ia: IaRow; clave: string; zona: string };
 const QUIETO_SEG = 20; // deja que el cliente termine de escribir (suelen mandar varios mensajes)
 const NO_RESPONDER_VIEJOS_MS = 2 * HORA; // no se contestan mensajes viejos
 const REPETIR_AVISO_MS = 6 * HORA; // el mismo tipo de aviso del mismo cliente, como mucho cada 6 h
-const ESPERA_REPETIR_MS = 30 * MIN; // el "déjame consultarlo", como mucho cada media hora
+const ESPERA_REPETIR_MS = 2 * MIN; // el "déjame consultarlo": no dos veces seguidas en 2 min (así el cliente nunca queda sin nada)
 const ms = (iso: string | null | undefined) => (iso ? new Date(iso).getTime() || 0 : 0);
 const digitos = (t: string | null | undefined) => String(t || '').replace(/\D/g, '');
 
@@ -156,6 +156,12 @@ async function encolarAviso(x: Contexto, tipo: TipoAviso, motivo: string): Promi
   return true;
 }
 
+// La ubicación como texto con el link (si no se puede mandar el pin).
+const textoDeUbicacion = (contenido: string) => {
+  const l = desempaquetar(contenido);
+  return `📍 ${[l.nombre, l.direccion].filter(Boolean).join(' — ')}\n${linkDeMapa(l.ubicacion)}`;
+};
+
 // Arma lo que se le manda al cliente: la respuesta, las respuestas rápidas, el link del grupo y el pase.
 async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> {
   const { c } = x;
@@ -170,7 +176,9 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
 
   let texto = r.puede_responder ? r.respuesta : '';
   let espera = false;
-  if (!texto && r.necesita_al_dueno && c.ia.si_no_sabe === 'espera' && c.ia.texto_espera.trim() && Date.now() - ms(x.lectura.espera_enviada) > ESPERA_REPETIR_MS) {
+  // Si la IA dice que no puede responder, es lo mismo que "no sabe": va el "déjame consultarlo" y te avisa.
+  const noSabe = r.necesita_al_dueno || r.no_pudo;
+  if (!texto && noSabe && c.ia.si_no_sabe === 'espera' && c.ia.texto_espera.trim() && Date.now() - ms(x.lectura.espera_enviada) > ESPERA_REPETIR_MS) {
     texto = c.ia.texto_espera.trim();
     espera = true;
   }
@@ -185,7 +193,7 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
   const lugar = r.ubicacion === AQUI ? x.negocio : r.ubicacion ? x.otros.find((n) => n.id === r.ubicacion) : undefined;
   const mapa = lugar?.ubicacion?.trim() ? lugar : undefined;
   if (!texto && !respuestas.length && !grupo && !curso && !bot && !mapa && !(otro && lineaOtro)) {
-    if (!r.necesita_al_dueno) return '';
+    if (!noSabe) return `no le respondió: la IA no vio nada que contestar${r.resumen ? ` (${r.resumen})` : ''}`;
     const yaEspero = c.ia.si_no_sabe === 'espera' && c.ia.texto_espera.trim() && Date.now() - ms(x.lectura.espera_enviada) <= ESPERA_REPETIR_MS;
     return `no le respondió porque no tiene esa información en la ficha${yaEspero ? ' (el "déjame consultarlo" ya se le mandó hace poco)' : c.ia.si_no_sabe === 'avisar' ? ' (en Ajustes está "No responde y te avisa")' : ''}: respóndele tú o agrega el dato en Negocios`;
   }
@@ -251,8 +259,17 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
   }
   const { error } = await db.from('siguelo_ia_salida').insert(filas);
   if (error) {
-    console.error('IA: no se pudo guardar la respuesta:', error.message);
-    return '';
+    // Antes se perdía todo en silencio. Ahora se guarda una por una lo que se pueda (la ubicación,
+    // si la base no la acepta, va como texto con el link) y el error queda anotado para que lo veas.
+    await registrar(c.ia.empresa_id, x.contacto?.id ?? null, 'ia_error', `IA: no se pudo guardar la respuesta para ${x.nombre} (${error.message}). ¿Pegaste completo database/siguelo.sql en Supabase?`);
+    let guardadas = 0;
+    for (const f of filas) {
+      const fila = f.tipo === 'ubicacion' ? { ...f, tipo: 'texto' as const, contenido: textoDeUbicacion(f.contenido ?? '') } : f;
+      const { error: e } = await db.from('siguelo_ia_salida').insert(fila);
+      if (!e) guardadas++;
+      else console.error('IA: no se pudo guardar una parte de la respuesta:', e.message);
+    }
+    if (!guardadas) return `no le respondió: no se pudo guardar la respuesta (${error.message})`;
   }
   if (espera && estado === 'pendiente') x.lectura.espera_enviada = new Date().toISOString();
   const que = [texto && `"${texto.slice(0, 80)}${texto.length > 80 ? '…' : ''}"`, ...respuestas.map((rr) => `"${rr.titulo}"`), grupo && `link de "${grupo.nombre}"`, curso && `QR de "${curso.nombre}"`, bot && `activa "${bot.nombre}" del bot`, mapa && `ubicación de ${mapa.nombre}`, otro && `pase a ${otro.nombre}`]
@@ -287,12 +304,14 @@ async function aplicar(x: Contexto, r: ResultadoIA): Promise<string[]> {
       }
     }
   }
-  if ((r.necesita_al_dueno || r.aviso) && r.motivo) {
-    x.lectura.atencion = { tipo: r.aviso || 'pregunta', motivo: r.motivo, ts: Date.now(), hecho: null };
-    hechos.push(`para que lo veas: ${r.motivo}`);
-    // Si no sabe la respuesta, siempre te avisa (aunque la IA no lo marque como aviso).
-    const tipoAviso = r.aviso || (r.necesita_al_dueno ? 'pregunta' : null);
-    if (tipoAviso && (await encolarAviso(x, tipoAviso, r.motivo))) hechos.push('aviso a tu WhatsApp');
+  // Si no sabe o no puede responder, siempre queda para que lo veas y te avisa (aunque la IA no escriba el motivo).
+  const noSabe = r.necesita_al_dueno || (r.no_pudo && x.clienteUltimo);
+  const motivo = r.motivo || (noSabe ? `No supo qué responderle${r.resumen ? `: ${r.resumen}` : ''}` : '');
+  if ((noSabe || r.aviso) && motivo) {
+    x.lectura.atencion = { tipo: r.aviso || 'pregunta', motivo, ts: Date.now(), hecho: null };
+    hechos.push(`para que lo veas: ${motivo}`);
+    const tipoAviso = r.aviso || (noSabe ? 'pregunta' : null);
+    if (tipoAviso && (await encolarAviso(x, tipoAviso, motivo))) hechos.push('aviso a tu WhatsApp');
   }
   const rta = await gestionarRespuesta(x, r);
   if (rta) hechos.push(rta);

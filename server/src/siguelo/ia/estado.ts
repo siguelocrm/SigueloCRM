@@ -45,6 +45,19 @@ export async function estadoIA(empresaId: string): Promise<EstadoIA> {
     if (ia.si_no_sabe !== 'espera') general.push({ ok: true, aviso: true, titulo: 'Si no sabe algo, el cliente no recibe nada', detalle: 'En Ajustes, "Si no sabe la respuesta" → "Manda un déjame consultarlo y te avisa".' });
   }
   if (error) general.push({ ok: false, titulo: 'Hubo un error hace poco', detalle: error.texto });
+  // ¿La base está al día? (la columna de la ubicación y que acepte mandar el pin del mapa)
+  const { error: sinColumna } = await db.from('siguelo_negocios').select('ubicacion').eq('empresa_id', empresaId).limit(1);
+  const { data: prueba, error: sinTipo } = await db
+    .from('siguelo_ia_salida')
+    .insert({ empresa_id: empresaId, linea_id: (lineas || [])[0]?.id ?? empresaId, telefono: '0', origen: 'respuesta', tipo: 'ubicacion', contenido: '', estado: 'cancelado', motivo: 'Revisión de "¿Por qué no responde?"' })
+    .select('id')
+    .maybeSingle();
+  if (prueba) await db.from('siguelo_ia_salida').delete().eq('id', prueba.id);
+  general.push(
+    sinColumna || sinTipo
+      ? { ok: false, titulo: 'A tu base de datos le falta la última versión', detalle: 'En Supabase → SQL Editor, pega COMPLETO database/siguelo.sql y pulsa Run (sin eso no puede mandar la ubicación). Si sale un error en rojo, mándame una captura.' }
+      : { ok: true, titulo: 'Base de datos al día' },
+  );
 
   const personal = ultimos8(ia?.avisos?.telefono);
   const numeros: EstadoIA['numeros'] = [];

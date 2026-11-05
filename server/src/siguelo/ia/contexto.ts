@@ -46,6 +46,8 @@ export type ResultadoIA = {
   motivo: string;
   aviso: TipoAviso | null;
   puede_responder: boolean;
+  // La IA dijo que no puede responder (le falta un dato): se trata como "necesita al dueño".
+  no_pudo: boolean;
   respuesta: string;
   respuestas_rapidas: string[];
   grupo: string | null;
@@ -224,6 +226,8 @@ Reglas:
 RESPUESTA AL CLIENTE ("puede_responder" y "respuesta"):
 - Escribe lo que el negocio le enviaría ahora por WhatsApp, contestando sus últimos mensajes y teniendo en cuenta toda la conversación.
 - Usa SOLO la ficha del negocio y lo que ya se dijo. Si falta un dato (precio, disponibilidad, un producto que no figura, un caso particular), NO lo inventes: "puede_responder": false, "respuesta": "" y "necesita_al_dueno": true.
+- Si el cliente hace una pregunta, siempre contéstala o, si no tienes el dato, marca "necesita_al_dueno": true. Nunca la dejes sin nada.
+- Si pregunta dónde queda o cómo llegar: dale la dirección de la ficha (y manda la ubicación en el mapa si está en la lista de ubicaciones). Si la ficha no tiene la dirección, "necesita_al_dueno": true.
 - Si el cliente no espera respuesta (solo dijo "ok" o "gracias" al final), "respuesta": "" o una despedida muy corta. Si no quiere más mensajes, "respuesta": "".
 - Si pregunta algo general (horarios, precios, cursos, productos) y hay varias opciones, no le mandes todo junto: primero pregúntale qué le interesa (qué curso o producto, para quién, qué días le quedan bien) y después dale solo lo que corresponde.
 - Cuando des horarios, precios u opciones, pon cada uno en su propia línea (empezando con un guion o un emoji). Nunca todo seguido en un mismo párrafo.
@@ -314,6 +318,7 @@ export function validarResultado(j: Record<string, unknown>, ids: ReturnType<typ
     motivo: recortar(j.motivo, 240),
     aviso: tipos.includes(j.aviso as TipoAviso) ? (j.aviso as TipoAviso) : null,
     puede_responder: conRespuesta && j.puede_responder !== false && !!respuesta,
+    no_pudo: conRespuesta && j.puede_responder === false,
     respuesta,
     respuestas_rapidas: conRespuesta && Array.isArray(j.respuestas_rapidas)
       ? [...new Set(j.respuestas_rapidas.map((x) => real(ids.respuestas, x)).filter((x): x is string => !!x))].slice(0, 2)

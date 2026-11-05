@@ -416,6 +416,39 @@ assert.ok(est.numeros.find((n: any) => n.nombre === 'Quillacollo')!.revisiones.e
 assert.equal(est.listo, true);
 paso('"¿Por qué no responde?" revisa el modo, el horario, la espera y cada número (conectado, negocio, información)');
 
+// ---------- La IA dice que no puede responder (ej. "¿dónde queda?" sin dirección): nunca queda en silencio ----------
+await pg.query(`update siguelo_ia set si_no_sabe = 'espera', texto_espera = 'Déjame consultarlo y te respondo en un momento 🙏', avisos = jsonb_set(avisos, '{telefono}', '"59179999999"') where empresa_id = $1`, [empresa]);
+const nora = await chat(L1, '59170000035', 'Nora');
+await escribe(nora.conv, 'Sí, ¿dónde queda?');
+avanzar(MIN);
+const avisosNora = enviados.filter((e) => e.jid.startsWith('59179999999')).length;
+responder = () => ({ resumen: 'Pregunta la ubicación', puede_responder: false, respuesta: '', necesita_al_dueno: false });
+await leerPendientes(await config());
+await salida();
+assert.equal(enviados.filter((e) => e.jid.startsWith('59170000035')).at(-1)?.texto, 'Déjame consultarlo y te respondo en un momento 🙏', 'el cliente recibe el "déjame consultarlo"');
+assert.ok(enviados.filter((e) => e.jid.startsWith('59179999999')).length > avisosNora, 'y te avisa');
+paso('si la IA dice que no puede responder (aunque no lo marque como "necesita al dueño"), manda el "déjame consultarlo" y te avisa');
+
+// ---------- Si la base no acepta la ubicación (SQL sin pegar), igual responde: texto + link, y lo anota ----------
+await pg.query(`alter table siguelo_ia_salida drop constraint siguelo_ia_salida_tipo_check`);
+await pg.query(`alter table siguelo_ia_salida add constraint siguelo_ia_salida_tipo_check check (tipo in ('texto', 'imagen', 'pdf', 'documento', 'audio')) not valid`);
+const oto = await chat(L1, '59170000036', 'Otto');
+await escribe(oto.conv, '¿Dónde queda?');
+avanzar(MIN);
+responder = (l) => ({ resumen: 'Pregunta la ubicación', puede_responder: true, respuesta: 'Estamos en la Av. Blanco Galindo km 13 📍', ubicacion: /- (u\d+): ESTE negocio/.exec(l.sistema)?.[1] });
+await leerPendientes(await config());
+await salida();
+const aOtto = enviados.filter((e) => e.jid.startsWith('59170000036'));
+assert.equal(aOtto[0]?.texto, 'Estamos en la Av. Blanco Galindo km 13 📍', 'la respuesta sale igual');
+assert.match(aOtto[1]?.texto ?? '', /📍 Tienda Quillacollo \(Quillacollo\) — Av\. Blanco Galindo km 13\nhttps:\/\/maps\.google\.com\/\?q=-17\.3935,-66\.157/, 'y la ubicación como link');
+assert.match((await uno(`select texto from siguelo_registro where tipo = 'ia_error' order by creado_en desc limit 1`)).texto, /no se pudo guardar la respuesta para Otto/);
+const { estadoIA: estadoOtra } = await import(R + 'ia/estado.ts');
+assert.ok((await estadoOtra(empresa)).general.some((r: any) => !r.ok && /le falta la última versión/.test(r.titulo)), 'el panel avisa que falta pegar el SQL');
+await pg.query(`alter table siguelo_ia_salida drop constraint siguelo_ia_salida_tipo_check`);
+await pg.query(`alter table siguelo_ia_salida add constraint siguelo_ia_salida_tipo_check check (tipo in ('texto', 'imagen', 'pdf', 'documento', 'audio', 'ubicacion'))`);
+assert.ok((await estadoOtra(empresa)).general.some((r: any) => r.ok && /Base de datos al día/.test(r.titulo)));
+paso('si la base no acepta la ubicación, igual le responde (texto y link), lo anota y el panel pide pegar el SQL');
+
 const uso = await uno(`select sum(consultas)::int c, sum(entrada)::int e from siguelo_ia_uso`);
 console.log(`\n${ok} pasos OK · ${uso.c} consultas a la IA (${uso.e} tokens de entrada) · mensajes:`);
 for (const e of enviados) console.log('  →', e.jid.split('@')[0], e.imagen ? `[foto ${e.imagen}]` : e.ubicacion ? `[ubicación ${e.ubicacion.name}]` : JSON.stringify(e.texto).slice(0, 110));
