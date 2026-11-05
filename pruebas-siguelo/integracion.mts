@@ -150,12 +150,18 @@ en(T0 + 29 * HORA + MIN);
 await motor();
 s = await segDe(nuevo.id);
 assert.equal(s.respondio, false);
-assert.equal(s.react.ciclo, 1, 'no arranca otra reactivación dentro de las 24 h');
+assert.equal(s.react.ciclo, 2, 'si te vuelve a dejar en visto, arranca otra reactivación (aunque ya hubo una hoy)');
+assert.equal(s.react.activo, true);
+p = await pendientes(nuevo.id);
+assert.deepEqual(p.map((x: any) => x.tipo).sort(), ['react', 'rec']);
+paso('lo atendiste: vuelve el Recordatorio 2 y arranca otra reactivación por si te deja en visto');
+// Para seguir con el resto del recorrido igual que antes, esa reactivación se detiene.
+await pg.query(`update siguelo_seguimientos set react = jsonb_set(react, '{activo}', 'false') where contacto_id = $1`, [nuevo.id]);
+await motor();
 p = await pendientes(nuevo.id);
 assert.equal(p.length, 1);
 assert.equal(p[0].tipo, 'rec');
 assert.equal(new Date(p[0].vence).getTime(), T0 + 96 * HORA);
-paso('lo atendiste: vuelve el Recordatorio 2, sin otra reactivación en el mismo día');
 
 // ---- Cancelas el Recordatorio 2 desde la pantalla ----
 await pg.query(`update siguelo_cola set estado = 'cancelado', a_mano = true, cerrado_en = $2 where id = $1`, [p[0].id, iso(reloj.ahora)]);
@@ -414,6 +420,22 @@ await pg.query(`update siguelo_citas set estado = 'cancelada' where contacto_id 
 await motor();
 paso('una cita agendada a última hora se salta los avisos que ya no son ciertos');
 await pg.query(`update siguelo_ajustes set maximo_diario = 30`);
+
+// ---- Primer mensaje: la IA responde en segundos (antes de que el motor lo vea) y el cliente te deja en visto ----
+const tPrimero = reloj.ahora;
+const chatGabi = await chat('59170000040', 'Gabi', tPrimero);
+await msg(chatGabi, 'cliente', tPrimero, 'Hola, ¿qué horarios tienen?');
+await msg(chatGabi, 'agente', tPrimero + 5_000, 'Tenemos lunes y miércoles a las 16:00 😊');
+en(tPrimero + MIN);
+await motor();
+const gabi = await contactoDe('59170000040');
+const sGabi = await segDe(gabi.id);
+assert.equal(sGabi.react?.activo, true, 'arranca la reactivación aunque sea el primer mensaje');
+assert.ok((await pendientes(gabi.id)).some((x: any) => x.tipo === 'react'), 'su primera reactivación ya está programada');
+assert.ok(sGabi.visto_cliente && sGabi.visto_agente, 'y queda anotado lo que ya vio el motor');
+await motor();
+assert.equal((await segDe(gabi.id)).react.ciclo, sGabi.react.ciclo, 'la vuelta siguiente no la vuelve a empezar');
+paso('primer mensaje: si la IA le responde y te deja en visto, arranca su reactivación');
 
 console.log(`\n${ok} pasos OK · mensajes "enviados":`);
 for (const e of enviados) console.log('  →', e.jid, JSON.stringify(e.texto));

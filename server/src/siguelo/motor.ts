@@ -136,7 +136,10 @@ export async function revisarEmpresa(aj: AjustesRow): Promise<void> {
     const negocioId = (await negocioDeLinea(a.linea_id))?.id ?? null;
 
     const previo = segs.get(a.contacto_id);
-    // La primera vez que se lo ve, lo que ya pasó en su chat no cuenta como novedad.
+    // La primera vez que se lo ve, lo que ya pasó en su chat no cuenta como novedad... salvo que la
+    // conversación haya empezado con el seguimiento ya activo: la IA responde en segundos, antes de
+    // que el motor (cada minuto) lo vea, y esa respuesta tiene que arrancar su reactivación.
+    const nuevo = !previo && C.ms(a.primer_mensaje) >= activadoEn;
     const seg: SeguimientoRow = previo ?? {
       contacto_id: a.contacto_id,
       empresa_id: empresaId,
@@ -144,8 +147,8 @@ export async function revisarEmpresa(aj: AjustesRow): Promise<void> {
       react: null,
       respondio: false,
       pausado: false,
-      visto_cliente: a.ultimo_cliente,
-      visto_agente: a.ultimo_manual,
+      visto_cliente: nuevo ? null : a.ultimo_cliente,
+      visto_agente: nuevo ? null : a.ultimo_manual,
       ultimo_automatico: null,
       ultimo_texto_auto: null,
       creado_en: new Date(ahora).toISOString(),
@@ -303,8 +306,8 @@ export async function revisarEmpresa(aj: AjustesRow): Promise<void> {
     if (JSON.stringify(est.rec) !== JSON.stringify(seg.rec)) cambios.rec = est.rec;
     if (JSON.stringify(est.react) !== JSON.stringify(seg.react)) cambios.react = est.react;
     if (est.respondio !== seg.respondio) cambios.respondio = est.respondio;
-    if (previo && a.ultimo_cliente !== previo.visto_cliente) cambios.visto_cliente = a.ultimo_cliente;
-    if (previo && vistoAgente !== previo.visto_agente) cambios.visto_agente = vistoAgente;
+    if (a.ultimo_cliente !== seg.visto_cliente) cambios.visto_cliente = a.ultimo_cliente;
+    if (vistoAgente !== seg.visto_agente) cambios.visto_agente = vistoAgente;
     if (JSON.stringify(revisar ?? null) !== JSON.stringify(seg.revisar ?? null)) cambios.revisar = revisar;
     if (JSON.stringify(deshacer ?? null) !== JSON.stringify(seg.deshacer ?? null)) cambios.deshacer = deshacer;
     if (!previo) {

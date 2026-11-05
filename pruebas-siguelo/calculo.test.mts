@@ -117,11 +117,20 @@ t('cliente responde → se detiene la reactivación', () => {
   C.alMensajeCliente(e, true);
   assert.equal(C.deseoReact(e, c), null);
 });
-t('máximo un ciclo de reactivación cada 24 h', () => {
+t('si respondió y después te deja en visto otra vez, arranca otra reactivación (aunque sea el mismo día)', () => {
   const e = nuevo(); const M = T0 + 2 * HORA; const c = ctx(M);
   C.alMensajeManual(e, c, M); C.alMensajeCliente(e, true);
   const notas = C.alMensajeManual(e, c, M + 5 * HORA);
-  assert.match(notas[0], /no se inicia otra/); assert.equal(e.react.activo, false);
+  assert.match(notas[0], /empieza su reactivación/); assert.equal(e.react.activo, true); assert.equal(e.react.ciclo, 2);
+});
+t('un ciclo que terminó todos sus pasos sin respuesta no se repite antes de las horas de Ajustes', () => {
+  const e = nuevo(); const M = T0 + 2 * HORA; const c = ctx(M);
+  C.alMensajeManual(e, c, M);
+  e.react.paso = 99; e.react.ultimo_envio = M + HORA; // terminó
+  const notas = C.alMensajeManual(e, c, M + 5 * HORA);
+  assert.match(notas[0], /no se inicia otra todavía/); assert.equal(e.react.ciclo, 1);
+  const despues = C.alMensajeManual(e, c, M + 30 * HORA);
+  assert.match(despues[0], /empieza su reactivación/); assert.equal(e.react.ciclo, 2);
   C.alMensajeManual(e, c, M + 25 * HORA);
   assert.equal(e.react.activo, true); assert.equal(e.react.ciclo, 2);
 });

@@ -570,6 +570,7 @@ export type SigueloDatabase = {
       siguelo_redes_cuentas: Tabla<CuentaRedRow>;
       siguelo_redes_tokens: Tabla<{ cuenta_id: string; token: string; actualizado_en: string }>;
       siguelo_redes_comentarios: Tabla<ComentarioRedRow>;
+      siguelo_ia_preguntas: Tabla<{ id: string; empresa_id: string; codigo: number; conversacion_id: string | null; contacto_id: string | null; linea_id: string; negocio_id: string | null; telefono: string; nombre: string | null; pregunta: string; estado: 'esperando' | 'respondida'; respuesta: string | null; creado_en: string; respondido_en: string | null }>;
       siguelo_aprendido: Tabla<{ id: string; empresa_id: string; negocio_id: string | null; pregunta: string; respuesta: string; creado_en: string }>;
       siguelo_embudos: Tabla<{ id: string; empresa_id: string; nombre: string; creado_en: string }>;
       siguelo_masivos: Tabla<MasivoRow>;

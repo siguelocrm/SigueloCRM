@@ -341,7 +341,9 @@ async function leerRespuestasDueno(x: Vuelta): Promise<void> {
     } else {
       // Sin código: solo si hay una sola pregunta esperando.
       const { data } = await db.from('siguelo_redes_comentarios').select('id').eq('empresa_id', c.ia.empresa_id).eq('accion', 'preguntado').limit(2);
-      if (data?.length === 1 && texto.length > 3) {
+      // Si también hay una pregunta de WhatsApp esperando, sin código no se sabe a cuál va.
+      const { data: deWhatsapp } = await db.from('siguelo_ia_preguntas').select('id').eq('empresa_id', c.ia.empresa_id).eq('estado', 'esperando').limit(1);
+      if (data?.length === 1 && !deWhatsapp?.length && texto.length > 3) {
         fila = data[0];
         respuesta = texto;
       }

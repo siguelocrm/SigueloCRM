@@ -238,8 +238,11 @@ await pg.query(`update siguelo_negocios set ia_activa = false where id = $1`, [n
 const fede = await chat(L2, '59170000006', 'Fede');
 await escribe(fede.conv, 'Hola');
 avanzar(MIN);
+const enviadosAntesDueno = enviados.length;
 await leerPendientes(await config());
-assert.equal(llamadas.length, antesLlamadas, 'ni tu número personal ni un negocio con la IA apagada');
+// Tu "Hola, soy el dueño" sin código: a lo sumo se revisa si responde una pregunta que esperaba (no la responde).
+assert.ok(llamadas.slice(antesLlamadas).every((l) => /el dueño te dio la respuesta/.test(l.sistema)), 'ni tu número personal ni un negocio con la IA apagada');
+assert.equal(enviados.length, enviadosAntesDueno, 'un saludo tuyo no se le manda a ningún cliente');
 paso('no lee tu WhatsApp personal ni los negocios donde apagaste la IA');
 
 // ---------- 9. Si OpenAI falla, reintenta y después lo deja ----------
@@ -449,6 +452,68 @@ await pg.query(`alter table siguelo_ia_salida drop constraint siguelo_ia_salida_
 await pg.query(`alter table siguelo_ia_salida add constraint siguelo_ia_salida_tipo_check check (tipo in ('texto', 'imagen', 'pdf', 'documento', 'audio', 'ubicacion'))`);
 assert.ok((await estadoOtra(empresa)).general.some((r: any) => r.ok && /Base de datos al día/.test(r.titulo)));
 paso('si la base no acepta la ubicación, igual le responde (texto y link), lo anota y el panel pide pegar el SQL');
+
+// ---------- Te pregunta por WhatsApp (R12), le respondes, se lo dice al cliente y lo aprende para los demás ----------
+await pg.query(`update siguelo_ia set modo = 'automatico', si_no_sabe = 'espera', avisos = $2::jsonb where empresa_id = $1`, [empresa, JSON.stringify({ activo: true, telefono: '59179999999', linea_id: null, tipos: { pregunta: true, compro: true }, max_dia: 30, juntar_min: 5 })]);
+const pia = await chat(L1, '59170000037', 'Pía');
+await escribe(pia.conv, '¿Tienen estacionamiento?');
+avanzar(MIN);
+responder = () => ({ resumen: 'Pregunta por estacionamiento', puede_responder: false, respuesta: '', necesita_al_dueno: true, motivo: 'Pregunta si hay estacionamiento' });
+await leerPendientes(await config());
+await salida();
+const avisoR = enviados.filter((e) => e.jid.startsWith('59179999999')).at(-1)!.texto;
+const codigo = /R(\d+) tu respuesta/.exec(avisoR)?.[1];
+assert.ok(codigo, `el aviso trae el código para responder: ${avisoR}`);
+assert.match(avisoR, /Pía.*Pregunta si hay estacionamiento/s);
+assert.equal(enviados.filter((e) => e.jid.startsWith('59170000037')).at(-1)?.texto, 'Déjame consultarlo y te respondo en un momento 🙏');
+// Le respondes desde tu WhatsApp personal, al mismo número del CRM.
+const dueno = yo;
+await escribe(dueno.conv, `R${codigo} Sí, tenemos estacionamiento gratis atrás del local`);
+avanzar(MIN);
+responder = (l) => {
+  assert.match(l.sistema, /el dueño te dio la respuesta/);
+  assert.match(l.usuario, /Lo que preguntó el cliente: ¿Tienen estacionamiento\?\nRespuesta del dueño: Sí, tenemos estacionamiento gratis atrás del local/);
+  return { respuesta: '¡Sí! Tenemos estacionamiento gratis atrás del local 🚗' };
+};
+await leerPendientes(await config());
+await salida();
+assert.equal(enviados.filter((e) => e.jid.startsWith('59170000037')).at(-1)?.texto, '¡Sí! Tenemos estacionamiento gratis atrás del local 🚗', 'el cliente recibe tu respuesta');
+assert.match(enviados.filter((e) => e.jid.startsWith('59179999999')).at(-1)!.texto, new RegExp(`✅ R${codigo}: le respondí a \\*Pía\\*.*Lo aprendí`));
+const aprendida = await uno(`select pregunta, respuesta, negocio_id from siguelo_aprendido where respuesta like '%estacionamiento gratis%'`);
+assert.equal(aprendida.negocio_id, nQuilla);
+assert.equal(aprendida.pregunta, '¿Tienen estacionamiento?');
+// Otro cliente pregunta lo mismo: la IA ya lo sabe.
+const quique = await chat(L1, '59170000038', 'Quique');
+await escribe(quique.conv, 'Hola, ¿hay parqueo?');
+avanzar(MIN);
+responder = (l) => {
+  assert.match(l.sistema, /RESPUESTAS QUE YA DIO EL DUEÑO[\s\S]*estacionamiento gratis atrás del local/, 'lo aprendido va a la IA para los demás clientes');
+  return { resumen: 'Pregunta por parqueo', puede_responder: true, respuesta: 'Sí, hay estacionamiento gratis atrás del local 🚗' };
+};
+await leerPendientes(await config());
+await salida();
+assert.equal(enviados.filter((e) => e.jid.startsWith('59170000038')).at(-1)?.texto, 'Sí, hay estacionamiento gratis atrás del local 🚗');
+// Sin código y con varias preguntas esperando: te pide el código.
+await escribe(dueno.conv, 'Sí, abrimos los domingos');
+avanzar(MIN);
+await leerPendientes(await config());
+await salida();
+assert.match(enviados.filter((e) => e.jid.startsWith('59179999999')).at(-1)!.texto, /preguntas esperando: respóndeme con el código/);
+await pg.query(`update siguelo_ia_preguntas set estado = 'respondida'`);
+// Sin código: si hay una sola pregunta esperando, se usa igual.
+const rosa = await chat(L1, '59170000039', 'Rosa');
+await escribe(rosa.conv, '¿Aceptan tarjeta?');
+avanzar(MIN);
+responder = () => ({ resumen: 'Pregunta por tarjeta', puede_responder: false, respuesta: '', necesita_al_dueno: true, motivo: 'Pregunta si aceptan tarjeta' });
+await leerPendientes(await config());
+await salida();
+await escribe(dueno.conv, 'Sí, aceptamos tarjeta y QR');
+avanzar(MIN);
+responder = () => ({ es_respuesta: true, respuesta: 'Sí, aceptamos tarjeta y QR 😊' });
+await leerPendientes(await config());
+await salida();
+assert.equal(enviados.filter((e) => e.jid.startsWith('59170000039')).at(-1)?.texto, 'Sí, aceptamos tarjeta y QR 😊');
+paso('te pregunta por WhatsApp con un código; tu respuesta le llega al cliente y la aprende para responderle a los demás');
 
 const uso = await uno(`select sum(consultas)::int c, sum(entrada)::int e from siguelo_ia_uso`);
 console.log(`\n${ok} pasos OK · ${uso.c} consultas a la IA (${uso.e} tokens de entrada) · mensajes:`);

@@ -12,6 +12,7 @@ import { datosAulaParaIA } from '../aula/aula.js';
 import { aprendidoDe, textoAprendido } from '../redes/redes.js';
 import { AQUI, armarMensajes, validarResultado, type DatosContexto, type LineaConversacion, type ResultadoIA } from './contexto.js';
 import { desempaquetar, empaquetar, linkDeMapa } from './ubicacion.js';
+import { crearPregunta, leerDueno } from './dueno.js';
 import { fueEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import type { CursoRow, EtapaVentaRow, IaRow, LecturaRow, NegocioRow, PorLeerRow, SalidaRow, TipoAviso } from '../tipos.js';
 
@@ -135,14 +136,29 @@ type Contexto = {
   bots: Awaited<ReturnType<typeof botsDisponibles>>;
   clienteUltimo: boolean;
   ultimaPersona: number;
+  // Lo último que escribió el cliente (para la pregunta que te llega por WhatsApp).
+  preguntaCliente: string;
 };
 
 async function encolarAviso(x: Contexto, tipo: TipoAviso, motivo: string): Promise<boolean> {
   const av = x.c.ia.avisos;
   if (!av?.activo || digitos(av.telefono).length < 7 || !av.tipos?.[tipo]) return false;
-  if (Date.now() - (x.lectura.avisado[tipo] || 0) < REPETIR_AVISO_MS) return false;
+  // Una pregunta que solo tú sabes: te llega al momento, con un código para que respondas (R12).
+  const esPregunta = tipo === 'pregunta';
+  if (Date.now() - (x.lectura.avisado[tipo] || 0) < (esPregunta ? 3 * MIN : REPETIR_AVISO_MS)) return false;
   x.lectura.avisado = { ...x.lectura.avisado, [tipo]: Date.now() };
   const tel = digitos(x.fila.telefono.split('@')[0]);
+  const codigo = esPregunta
+    ? await crearPregunta(x.c, {
+        conversacion_id: x.fila.conversacion_id,
+        contacto_id: x.contacto?.id ?? null,
+        linea_id: x.fila.linea_id,
+        negocio_id: x.negocio.id,
+        telefono: x.fila.telefono,
+        nombre: x.nombre,
+        pregunta: x.preguntaCliente || motivo,
+      })
+    : null;
   await db.from('siguelo_ia_salida').insert({
     empresa_id: x.c.ia.empresa_id,
     contacto_id: x.contacto?.id ?? null,
@@ -150,8 +166,8 @@ async function encolarAviso(x: Contexto, tipo: TipoAviso, motivo: string): Promi
     telefono: digitos(av.telefono),
     origen: 'aviso',
     referencia: tipo,
-    contenido: `• *${x.nombre}*${tel ? ` (+${tel})` : ''} — ${x.negocio.nombre}: ${motivo}`,
-    vence: new Date(Date.now() + Math.max(0, av.juntar_min || 0) * MIN).toISOString(),
+    contenido: `• *${x.nombre}*${tel ? ` (+${tel})` : ''} — ${x.negocio.nombre}: ${motivo}${codigo ? `\n   ↪️ Respóndeme *R${codigo} tu respuesta* y se lo digo (y lo aprendo).` : ''}`,
+    vence: new Date(Date.now() + (esPregunta ? 0 : Math.max(0, av.juntar_min || 0) * MIN)).toISOString(),
   });
   return true;
 }
@@ -355,12 +371,17 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
     return true;
   };
   // Sin ficha de negocio no hay con qué responder; tampoco a tu número personal.
+  // Tu número personal: no se le responde, pero lo que escribes puede ser la respuesta a una pregunta (R12).
+  if (esNumeroPersonal(fila.telefono, c.ia.avisos?.telefono || '')) {
+    await leerDueno(c, fila.conversacion_id, fila.linea_id, lectura.leido_hasta).catch((err) => console.error('IA: no se pudo leer tu respuesta:', (err as Error).message));
+    await guardar(leido);
+    return true;
+  }
   if (!negocio) {
     const { data: l } = await db.from('lineas_whatsapp').select('nombre').eq('id', fila.linea_id).maybeSingle();
     return sinResponder(`el número "${l?.nombre ?? '?'}" no está en ningún negocio (Administrar → Negocios → elige sus números)`);
   }
   if (!negocio.ia_activa) return sinResponder(`en el negocio "${negocio.nombre}" está apagado "La IA responde en los números de este negocio"`);
-  if (esNumeroPersonal(fila.telefono, c.ia.avisos?.telefono || '')) return sinResponder('es tu número personal de los avisos (a ese número la IA nunca le responde)');
   // Si está mandando un comprobante o sus datos de inscripción (Fase 5), de eso se encarga pagos/;
   // si un flujo del bot espera su respuesta, contesta el bot.
   if (await pagoEnCurso(fila.conversacion_id)) return sinResponder('tiene un pago o inscripción en curso (de eso se encargan los pagos)');
@@ -450,6 +471,15 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
     bots,
     // El cliente fue el último en escribir, sin contar los mensajes automáticos (bot, seguimiento, IA).
     clienteUltimo: [...lista].reverse().find((m) => m.remitente === 'cliente' || !automaticos.has(m.id))?.remitente === 'cliente',
+    preguntaCliente: (() => {
+      // Sus últimos mensajes seguidos (después de nuestra última respuesta).
+      const ultimos: string[] = [];
+      for (const m of [...lista].reverse()) {
+        if (m.remitente !== 'cliente') break;
+        if (m.tipo === 'texto' && m.contenido?.trim()) ultimos.unshift(m.contenido.trim());
+      }
+      return ultimos.join(' / ').slice(0, 500);
+    })(),
     ultimaPersona,
   };
   const hechos = await aplicar(x, r);

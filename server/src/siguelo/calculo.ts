@@ -168,7 +168,8 @@ export function alMensajeManual(est: EstadoContacto, ctx: Contexto, ts: number):
   const sec = ctx.cfg.reactivacion;
   if (!sec?.activa || !sec.pasos.length) return registro;
   const st = est.react;
-  if (st && st.activo && st.etapa_id === ctx.etapaId) {
+  const mismaEtapa = !!st && st.etapa_id === ctx.etapaId;
+  if (st && mismaEtapa && st.activo && st.paso < sec.pasos.length) {
     // Ciclo en marcha: se cuenta desde este último mensaje tuyo, sin repetir pasos ya enviados.
     if (st.paso === 0) {
       st.origen = ts;
@@ -179,13 +180,17 @@ export function alMensajeManual(est: EstadoContacto, ctx: Contexto, ts: number):
     }
     return registro;
   }
+  // Cada vez que le escribes (tú, la IA o el bot) y te deja en visto, empieza una reactivación: en el
+  // primer mensaje o después de conversar un rato (si respondió, el ciclo anterior ya se detuvo).
+  // Solo si el ciclo anterior terminó TODOS sus pasos sin que respondiera, se espera las horas de Ajustes.
   const horas = num(ctx.ajustes.ciclos_reactivacion_cada_horas, 24);
-  if (!st || st.etapa_id !== ctx.etapaId || ts - (st.inicio || 0) >= horas * HORA) {
-    est.react = { etapa_id: ctx.etapaId, activo: true, ciclo: (st?.ciclo || 0) + 1, inicio: ts, origen: ts, paso: 0, ultimo_envio: null };
-    registro.push('Le escribiste: empieza su reactivación por si no responde.');
-  } else {
-    registro.push(`Le escribiste, pero no se inicia otra reactivación (ya hubo una en las últimas ${horas} h).`);
+  const terminoSinRespuesta = !!st && mismaEtapa && st.activo && st.paso >= sec.pasos.length;
+  if (terminoSinRespuesta && ts - (st!.ultimo_envio ?? st!.inicio ?? 0) < horas * HORA) {
+    registro.push(`Le escribiste, pero su reactivación terminó hace menos de ${horas} h sin que respondiera: no se inicia otra todavía.`);
+    return registro;
   }
+  est.react = { etapa_id: ctx.etapaId, activo: true, ciclo: (st?.ciclo || 0) + 1, inicio: ts, origen: ts, paso: 0, ultimo_envio: null };
+  registro.push('Le escribiste: empieza su reactivación por si te deja en visto.');
   return registro;
 }
 

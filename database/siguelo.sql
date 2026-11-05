@@ -1500,3 +1500,30 @@ alter table siguelo_negocios add column if not exists ubicacion text;
 alter table siguelo_ia_salida drop constraint if exists siguelo_ia_salida_tipo_check;
 alter table siguelo_ia_salida add constraint siguelo_ia_salida_tipo_check
   check (tipo in ('texto', 'imagen', 'pdf', 'documento', 'audio', 'ubicacion'));
+
+-- ---------- 38. Lo que la IA de WhatsApp te pregunta (y tu respuesta) ----------
+-- Cuando un cliente pregunta algo que la IA no sabe, te avisa con un código (R12). Si le
+-- respondes "R12 tu respuesta" desde tu WhatsApp personal, la IA se lo responde al cliente y
+-- lo guarda en "Lo que aprendió" (siguelo_aprendido) para responderle a los demás.
+create table if not exists siguelo_ia_preguntas (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id uuid not null references empresas (id) on delete cascade,
+  codigo integer not null,
+  conversacion_id uuid references conversaciones (id) on delete cascade,
+  contacto_id uuid references contactos (id) on delete set null,
+  linea_id uuid not null,
+  negocio_id uuid references siguelo_negocios (id) on delete set null,
+  telefono text not null,
+  nombre text,
+  pregunta text not null,
+  estado text not null default 'esperando' check (estado in ('esperando', 'respondida')),
+  respuesta text,
+  creado_en timestamptz not null default now(),
+  respondido_en timestamptz
+);
+create unique index if not exists siguelo_ia_preguntas_codigo_idx on siguelo_ia_preguntas (empresa_id, codigo);
+create index if not exists siguelo_ia_preguntas_esperando_idx on siguelo_ia_preguntas (empresa_id, estado, creado_en);
+alter table siguelo_ia_preguntas enable row level security;
+drop policy if exists "siguelo_ia_preguntas_select" on siguelo_ia_preguntas;
+create policy "siguelo_ia_preguntas_select" on siguelo_ia_preguntas for select
+  using (empresa_id = (select empresa_id from usuario_actual()));
