@@ -91,7 +91,9 @@ class Consulta {
     } else this.ret = cols;
     return this;
   }
-  insert(filas) { this.op = 'insert'; this.filas = Array.isArray(filas) ? filas : [filas]; return this; }
+  // Como supabase-js: en un insert de varias filas, lo que falta en una fila queda NULL (no el valor por
+  // defecto de la columna), salvo que se pida { defaultToNull: false }.
+  insert(filas, opts = {}) { this.op = 'insert'; this.filas = Array.isArray(filas) ? filas : [filas]; this.alNull = Array.isArray(filas) && filas.length > 1 && opts.defaultToNull !== false; return this; }
   upsert(filas, opts = {}) { this.op = 'upsert'; this.filas = Array.isArray(filas) ? filas : [filas]; this.opts = opts; return this; }
   update(obj) { this.op = 'update'; this.obj = obj; return this; }
   delete() { this.op = 'delete'; return this; }
@@ -166,7 +168,7 @@ class Consulta {
           const vs = [];
           for (const c of cols) {
             const v = await valor(this.t, c, f[c]);
-            if (v.sql === 'null') vs.push(f[c] === undefined ? 'default' : 'null');
+            if (v.sql === 'null') vs.push(f[c] === undefined && !this.alNull ? 'default' : 'null');
             else { params.push(v.v); vs.push(`$${params.length}${v.sql}`); }
           }
           valores.push(`(${vs.join(', ')})`);

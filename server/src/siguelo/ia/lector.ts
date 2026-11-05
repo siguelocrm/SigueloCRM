@@ -227,7 +227,7 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
     base_cliente: x.fila.ultimo_cliente,
   };
   const filas: Partial<SalidaRow>[] = [];
-  if (texto) filas.push({ ...base, origen: 'respuesta', contenido: texto, orden: 0, referencia: espera ? 'espera' : null });
+  if (texto) filas.push({ ...base, origen: 'respuesta', tipo: 'texto', contenido: texto, orden: 0, referencia: espera ? 'espera' : null });
   for (const rr of respuestas) {
     const tipo = (['texto', 'imagen', 'pdf', 'documento', 'audio'].includes(rr.tipo) ? rr.tipo : 'texto') as SalidaRow['tipo'];
     filas.push({ ...base, origen: 'respuesta_rapida', referencia: rr.id, tipo, contenido: rr.contenido, media_url: rr.media_url, orden: filas.length });
@@ -257,7 +257,8 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
       });
     }
   }
-  const { error } = await db.from('siguelo_ia_salida').insert(filas);
+  // Todas juntas; lo que no se indica toma el valor por defecto de la columna (no NULL).
+  const { error } = await db.from('siguelo_ia_salida').insert(filas.map((f) => ({ tipo: 'texto' as const, ...f })), { defaultToNull: false });
   if (error) {
     // Antes se perdía todo en silencio. Ahora se guarda una por una lo que se pueda (la ubicación,
     // si la base no la acepta, va como texto con el link) y el error queda anotado para que lo veas.

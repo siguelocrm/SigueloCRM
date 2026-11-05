@@ -116,6 +116,7 @@ assert.equal(aAna.length, 2);
 assert.equal(aAna[0].texto, 'Hola Ana, estamos en la Av. Blanco Galindo km 13 😊');
 assert.equal(aAna[1].imagen, 'https://x/ubic.jpg', 'después la foto de la ubicación');
 assert.equal((await uno(`select count(*)::int n from mensajes where conversacion_id = $1 and remitente = 'agente'`, [ana.conv])).n, 2, 'quedan en el chat');
+assert.equal((await uno(`select count(*)::int n from siguelo_registro where tipo = 'ia_error' and texto like '%no se pudo guardar%'`)).n, 0, 'texto + respuesta rápida se guardan juntos sin error (Supabase deja en NULL lo que falta)');
 paso('responde sola y manda la foto de la respuesta rápida, en orden');
 
 // ---------- 2. Una respuesta rápida se manda una sola vez a cada cliente ----------
