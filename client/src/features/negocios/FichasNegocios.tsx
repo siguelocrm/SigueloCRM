@@ -12,6 +12,7 @@ type Borrador = {
   sucursal: string;
   direccion: string;
   ubicacion: string;
+  avisos_telefono: string;
   horario: string;
   zonas: string;
   info_ia: string;
@@ -27,6 +28,7 @@ const aBorrador = (n: Negocio | null, lineas: string[]): Borrador => ({
   sucursal: n?.sucursal ?? '',
   direccion: n?.direccion ?? '',
   ubicacion: n?.ubicacion ?? '',
+  avisos_telefono: n?.avisos_telefono ?? '',
   horario: n?.horario ?? '',
   zonas: n?.zonas ?? '',
   info_ia: n?.info_ia ?? '',
@@ -103,6 +105,10 @@ export default function FichasNegocios({ datos, empresaId, puedeEditar }: Props)
       direccion: borrador.direccion.trim() || null,
       // Sin la última versión del SQL la columna no existe: solo se manda si se usa.
       ...(borrador.ubicacion.trim() || (n && 'ubicacion' in n) ? { ubicacion: borrador.ubicacion.trim() || null } : {}),
+      // Con 8 dígitos (celular de Bolivia) se guarda con 591.
+      ...(borrador.avisos_telefono.trim() || (n && 'avisos_telefono' in n)
+        ? { avisos_telefono: borrador.avisos_telefono.replace(/\D/g, '').replace(/^(?=[67]\d{7}$)/, '591') || null }
+        : {}),
       horario: borrador.horario.trim() || null,
       zonas: borrador.zonas.trim() || null,
       info_ia: borrador.info_ia,
@@ -173,6 +179,12 @@ export default function FichasNegocios({ datos, empresaId, puedeEditar }: Props)
         </div>
         <Campo etiqueta="Ubicación en Google Maps" ayuda="En Google Maps busca tu local → Compartir → Copiar vínculo, y pégalo aquí. Cuando el cliente pida la ubicación, la IA le manda el pin del mapa (también la de otras sucursales).">
           <input value={borrador.ubicacion} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, ubicacion: e.target.value })} placeholder="Ej. https://maps.app.goo.gl/AbCd123" className={`${claseCampo} font-normal`} style={estiloCampo} />
+        </Campo>
+        <Campo
+          etiqueta="Número para los avisos de este negocio (opcional)"
+          ayuda="Ahí llegan los avisos de la IA, de los pagos y de las redes de este negocio (por ejemplo, el celular del encargado de la sucursal), con su código R para responder. Vacío = tu número de IA → Ajustes → Avisos. Puedes poner el mismo número en varios negocios."
+        >
+          <input value={borrador.avisos_telefono} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, avisos_telefono: e.target.value })} inputMode="tel" placeholder="Ej. 70000000" className={`${claseCampo} font-normal`} style={estiloCampo} />
         </Campo>
         <Campo etiqueta="Zonas que atiende" ayuda="Barrios o ciudades cercanos. La IA los usa para sugerir la sucursal más cercana.">
           <input value={borrador.zonas} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, zonas: e.target.value })} placeholder="Ej. Quillacollo, Tiquipaya, Colcapirhua" className={`${claseCampo} font-normal`} style={estiloCampo} />

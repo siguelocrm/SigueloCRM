@@ -123,10 +123,9 @@ class Consulta {
         const ors = [];
         for (const p of x.or.split(',')) {
           const [c, op, ...resto] = p.split('.');
-          if (op !== 'eq') throw new Error('or: solo eq');
+          if (op !== 'eq' && op !== 'like') throw new Error('or: solo eq y like');
           params.push(resto.join('.'));
-          const t = await tipoColumna(this.t, c);
-          ors.push(`${c}::text = $${params.length}${t === 'uuid' ? '' : ''}`);
+          ors.push(`${c}::text ${op === 'like' ? 'like' : '='} $${params.length}`);
         }
         partes.push(`(${ors.join(' or ')})`);
         continue;

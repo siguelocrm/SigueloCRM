@@ -14,13 +14,15 @@ import { claseCampo, estiloArea, estiloCampo } from '../seguimiento/estilos';
 type Linea = { id: string; nombre: string; numero: string | null; estado: string };
 type Etapa = { id: string; nombre: string; tipo: string };
 type EtiquetaWa = { id: string; nombre: string };
-type Origen = 'chats' | 'todos' | 'lista';
+type Origen = 'chats' | 'todos' | 'lista' | 'grupos';
+type GrupoWa = { id: string; nombre: string; personas: number; soloAdmins: boolean };
 
 const VARIABLES = ['{nombre}', '{negocio}', '{sucursal}', '{direccion}', '{horario}'];
 const ORIGENES: { valor: Origen; titulo: string; ayuda: string }[] = [
   { valor: 'chats', titulo: 'Los que tienen chat con este número', ayuda: 'Lo más seguro: ya te conocen y tienen tu número.' },
   { valor: 'todos', titulo: 'Todos mis contactos', ayuda: 'Incluye los importados y los de otros números.' },
-  { valor: 'lista', titulo: 'Pegar una lista de números', ayuda: 'Uno por línea, con o sin nombre.' },
+  { valor: 'lista', titulo: 'Pegar una lista de números', ayuda: 'Uno por línea, con o sin nombre. Esta lista queda fija.' },
+  { valor: 'grupos', titulo: 'Solo grupos de WhatsApp', ayuda: 'Se publica en los grupos que elijas, no a cada contacto.' },
 ];
 
 function Campo({ etiqueta, ayuda, children }: { etiqueta: string; ayuda?: string; children: ReactNode }) {
@@ -85,6 +87,12 @@ export default function NuevoMasivo({ onCerrar, onCreado }: { onCerrar: () => vo
   const [elegidasEtapas, setElegidasEtapas] = useState<string[]>([]);
   const [elegidasEtiquetas, setElegidasEtiquetas] = useState<string[]>([]);
   const [sinPerdidos, setSinPerdidos] = useState(true);
+  const [conInteres, setConInteres] = useState(false);
+  const [intereses, setIntereses] = useState('');
+  const [grupos, setGrupos] = useState<GrupoWa[] | null>(null);
+  const [cargandoGrupos, setCargandoGrupos] = useState(false);
+  const [elegidosGrupos, setElegidosGrupos] = useState<string[]>([]);
+  const [adaptar, setAdaptar] = useState(false);
   const [lista, setLista] = useState('');
   const [textos, setTextos] = useState<string[]>(['']);
   const [media, setMedia] = useState<{ tipo: 'imagen' | 'pdf'; url: string; nombre: string } | null>(null);
@@ -97,7 +105,7 @@ export default function NuevoMasivo({ onCerrar, onCreado }: { onCerrar: () => vo
   const [pausaMax, setPausaMax] = useState(120);
   const [maximo, setMaximo] = useState(150);
   const [telPrueba, setTelPrueba] = useState('');
-  const [conteo, setConteo] = useState<{ total: number; ejemplos: string[]; maximo: number } | null>(null);
+  const [conteo, setConteo] = useState<{ total: number; ejemplos: string[]; maximo: number; intereses?: { texto: string; n: number }[] } | null>(null);
   const [contando, setContando] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [probando, setProbando] = useState(false);
@@ -115,6 +123,8 @@ export default function NuevoMasivo({ onCerrar, onCreado }: { onCerrar: () => vo
 
   useEffect(() => {
     setElegidasEtiquetas([]);
+    setGrupos(null);
+    setElegidosGrupos([]);
     if (!lineaId) return setEtiquetas([]);
     supabase.from('etiquetas_whatsapp').select('id, nombre').eq('linea_id', lineaId).eq('eliminada', false).order('nombre').returns<EtiquetaWa[]>().then(({ data }) => setEtiquetas(data || []));
   }, [lineaId]);
@@ -126,9 +136,22 @@ export default function NuevoMasivo({ onCerrar, onCreado }: { onCerrar: () => vo
       etiquetas: elegidasEtiquetas,
       sin_perdidos: sinPerdidos,
       lista: origen === 'lista' ? lista.split('\n').map((l) => l.trim()).filter(Boolean) : [],
+      con_interes: conInteres,
+      intereses: conInteres ? intereses.split(',').map((x) => x.trim()).filter(Boolean) : [],
+      grupos: (grupos || []).filter((g) => elegidosGrupos.includes(g.id)).map((g) => ({ id: g.id, nombre: g.nombre })),
     }),
-    [origen, elegidasEtapas, elegidasEtiquetas, sinPerdidos, lista],
+    [origen, elegidasEtapas, elegidasEtiquetas, sinPerdidos, lista, conInteres, intereses, grupos, elegidosGrupos],
   );
+
+  const cargarGrupos = async () => {
+    setCargandoGrupos(true);
+    const r = await llamarBackend('/siguelo/masivos/grupos', { linea_id: lineaId }).catch(() => ({ ok: false, data: null, error: 'No se pudo conectar con el servidor.' }));
+    setCargandoGrupos(false);
+    if (!r.ok) return toast(r.error || 'No se pudieron leer los grupos.', 'error');
+    setGrupos(r.data.grupos);
+  };
+  // La lista se arma al empezar, salvo una lista pegada (que queda fija).
+  const alEmpezar = origen !== 'lista';
 
   // Cuenta a cuántos les llega (medio segundo después del último cambio).
   useEffect(() => {
@@ -180,6 +203,7 @@ export default function NuevoMasivo({ onCerrar, onCreado }: { onCerrar: () => vo
     pausa_min_seg: pausaMin,
     pausa_max_seg: Math.max(pausaMin, pausaMax),
     maximo_diario: maximo,
+    adaptar,
   });
 
   const probar = async () => {
@@ -195,13 +219,18 @@ export default function NuevoMasivo({ onCerrar, onCreado }: { onCerrar: () => vo
     if (!lineaId) return toast('Elige desde qué número se envía.', 'error');
     if (!textosLimpios.length && !media) return toast('Escribe el mensaje.', 'error');
     if (cuando === 'programar' && !fecha) return toast('Elige la fecha y hora de inicio.', 'error');
-    if (!conteo?.total) return toast('Con esos filtros no le llega a nadie.', 'error');
-    if (!window.confirm(`¿Enviar "${nombre.trim()}" a ${conteo.total} ${conteo.total === 1 ? 'persona' : 'personas'}? Puedes pausarlo o cancelarlo cuando quieras.`)) return;
+    const programado = cuando === 'programar';
+    if (origen === 'grupos' && !elegidosGrupos.length) return toast('Elige al menos un grupo de WhatsApp.', 'error');
+    if (!conteo?.total && !(programado && alEmpezar)) return toast('Con esos filtros no le llega a nadie.', 'error');
+    const pregunta = programado && alEmpezar
+      ? `¿Programar "${nombre.trim()}"? Al empezar se arma la lista con todos los que correspondan en ese momento (hoy serían ${conteo?.total ?? 0}).`
+      : `¿Enviar "${nombre.trim()}" a ${conteo!.total} ${conteo!.total === 1 ? 'destinatario' : 'destinatarios'}? Puedes pausarlo o cancelarlo cuando quieras.`;
+    if (!window.confirm(pregunta)) return;
     setGuardando(true);
     const r = await llamarBackend('/siguelo/masivos', cuerpo());
     setGuardando(false);
     if (!r.ok) return toast(r.error || 'No se pudo guardar.', 'error');
-    toast(`Listo: se enviará a ${r.data.total} personas, de a poco.`, 'ok');
+    toast(r.data.alEmpezar ? 'Listo: la lista se arma al empezar, con todos los que correspondan.' : `Listo: se enviará a ${r.data.total}, de a poco.`, 'ok');
     onCreado();
   };
 
@@ -249,7 +278,7 @@ export default function NuevoMasivo({ onCerrar, onCreado }: { onCerrar: () => vo
       </Seccion>
 
       <Seccion numero={2} titulo="A quiénes">
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {ORIGENES.map((o) => (
             <button
               key={o.valor}
@@ -269,7 +298,37 @@ export default function NuevoMasivo({ onCerrar, onCreado }: { onCerrar: () => vo
             <textarea value={lista} onChange={(e) => setLista(e.target.value)} rows={6} placeholder={'70000001, Ana Pérez\n70000002, Beto\n59170000003'} className={`${claseCampo} font-normal resize-y`} style={estiloArea} />
           </Campo>
         )}
-        {etapas.length > 0 && (
+        {origen !== 'grupos' && (
+          <div className="flex flex-col gap-1.5 rounded-lg p-2.5" style={{ border: `1px solid ${BORDE}` }}>
+            <label className="flex items-start gap-2 text-[12.5px] cursor-pointer" style={{ color: TEXTO_SECUNDARIO }}>
+              <input type="checkbox" className="mt-0.5" checked={conInteres} onChange={(e) => setConInteres(e.target.checked)} />
+              <span><b style={{ color: TEXTO_PRIMARIO }}>Solo los que mostraron interés</b> (lo que la IA anotó al leer su chat).</span>
+            </label>
+            {conInteres && (
+              <>
+                <input value={intereses} onChange={(e) => setIntereses(e.target.value)} placeholder="Palabras, separadas por coma (ej. ajedrez, dibujo). Vacío = cualquier interés." className={`${claseCampo} font-normal`} style={estiloCampo} />
+                {!!conteo?.intereses?.length && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {conteo.intereses.map((x) => {
+                      const elegidas = intereses.split(',').map((y) => y.trim().toLowerCase()).filter(Boolean);
+                      const activa = elegidas.includes(x.texto.toLowerCase());
+                      return (
+                        <Opcion
+                          key={x.texto}
+                          activa={activa}
+                          onClick={() => setIntereses((activa ? elegidas.filter((y) => y !== x.texto.toLowerCase()) : [...elegidas, x.texto.toLowerCase()]).join(', '))}
+                        >
+                          {x.texto} ({x.n})
+                        </Opcion>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+        {etapas.length > 0 && origen !== 'grupos' && (
           <div className="flex flex-col gap-1.5">
             <span className="text-[12.5px] font-semibold" style={{ color: TEXTO_SECUNDARIO }}>Solo estas etapas <span className="font-normal" style={{ color: TEXTO_TERCIARIO }}>(ninguna marcada = todas)</span></span>
             <div className="flex flex-wrap gap-1.5">
@@ -277,7 +336,7 @@ export default function NuevoMasivo({ onCerrar, onCreado }: { onCerrar: () => vo
             </div>
           </div>
         )}
-        {etiquetas.length > 0 && (
+        {etiquetas.length > 0 && origen !== 'grupos' && (
           <div className="flex flex-col gap-1.5">
             <span className="text-[12.5px] font-semibold" style={{ color: TEXTO_SECUNDARIO }}>Solo con estas etiquetas de WhatsApp <span className="font-normal" style={{ color: TEXTO_TERCIARIO }}>(ninguna = sin filtrar)</span></span>
             <div className="flex flex-wrap gap-1.5">
@@ -289,6 +348,29 @@ export default function NuevoMasivo({ onCerrar, onCreado }: { onCerrar: () => vo
           <input type="checkbox" className="mt-0.5" checked={sinPerdidos} onChange={(e) => setSinPerdidos(e.target.checked)} />
           <span>No enviar a los que están en <b>Venta perdida</b> (ahí quedan los que pidieron no recibir más mensajes).</span>
         </label>
+        {lineaId && (
+          <div className="flex flex-col gap-1.5 rounded-lg p-2.5" style={{ border: `1px solid ${BORDE}` }}>
+            <span className="text-[12.5px] font-semibold" style={{ color: TEXTO_SECUNDARIO }}>
+              {origen === 'grupos' ? 'Grupos de WhatsApp donde se publica' : 'Publicarlo también en grupos de WhatsApp'} <span className="font-normal" style={{ color: TEXTO_TERCIARIO }}>(los de este número)</span>
+            </span>
+            {grupos === null ? (
+              <Boton tamano="sm" className="self-start" disabled={cargandoGrupos} onClick={cargarGrupos}>{cargandoGrupos ? 'Buscando grupos…' : 'Elegir grupos'}</Boton>
+            ) : grupos.length ? (
+              <div className="flex flex-wrap gap-1.5">
+                {grupos.map((g) => (
+                  <Opcion key={g.id} activa={elegidosGrupos.includes(g.id)} onClick={() => alternar(elegidosGrupos, setElegidosGrupos, g.id)}>
+                    {g.nombre} ({g.personas}){g.soloAdmins ? ' · solo admins' : ''}
+                  </Opcion>
+                ))}
+              </div>
+            ) : (
+              <span className="text-[12px]" style={{ color: TEXTO_TERCIARIO }}>Este número no está en ningún grupo.</span>
+            )}
+            {grupos?.some((g) => g.soloAdmins && elegidosGrupos.includes(g.id)) && (
+              <span className="text-[11.5px]" style={{ color: 'var(--warn)' }}>En los grupos "solo admins" se publica solo si este número es administrador.</span>
+            )}
+          </div>
+        )}
         <div className="rounded-lg px-3 py-2 text-[13px]" style={{ backgroundColor: 'var(--surface-2)', color: TEXTO_PRIMARIO }}>
           {!lineaId ? (
             <span style={{ color: TEXTO_TERCIARIO }}>Elige el número para ver a cuántos les llega.</span>
@@ -296,9 +378,14 @@ export default function NuevoMasivo({ onCerrar, onCreado }: { onCerrar: () => vo
             <span style={{ color: TEXTO_TERCIARIO }}>Contando…</span>
           ) : conteo ? (
             <>
-              Le llega a <b>{conteo.total}</b> {conteo.total === 1 ? 'persona' : 'personas'}
+              {alEmpezar && cuando === 'programar' ? 'Hoy le llegaría a ' : 'Le llega a '}<b>{conteo.total}</b> {conteo.total === 1 ? 'destinatario' : 'destinatarios'}
               {conteo.ejemplos.length > 0 && <span style={{ color: TEXTO_TERCIARIO }}>: {conteo.ejemplos.join(', ')}{conteo.total > conteo.ejemplos.length ? '…' : ''}</span>}
               {conteo.total > conteo.maximo && <div className="text-[12px] mt-1" style={{ color: 'var(--bad)' }}>El máximo por envío es {conteo.maximo}: usa más filtros o divide la lista.</div>}
+              {alEmpezar && (
+                <div className="text-[12px] mt-1" style={{ color: TEXTO_TERCIARIO }}>
+                  La lista se arma al empezar: le llega a todos los que cumplan estos filtros ese día y a esa hora (también a los que te escriban de aquí a entonces).
+                </div>
+              )}
             </>
           ) : null}
         </div>
@@ -334,6 +421,16 @@ export default function NuevoMasivo({ onCerrar, onCreado }: { onCerrar: () => vo
         ))}
         {textos.length < 5 && (
           <Boton tamano="sm" icono={Plus} className="self-start" onClick={() => setTextos((p) => [...p, ''])}>Otra versión</Boton>
+        )}
+        {origen !== 'grupos' && (
+          <label className="flex items-start gap-2 text-[12.5px] rounded-lg p-2.5 cursor-pointer" style={{ color: TEXTO_SECUNDARIO, border: `1px solid ${BORDE}` }}>
+            <input type="checkbox" className="mt-0.5" checked={adaptar} onChange={(e) => setAdaptar(e.target.checked)} />
+            <span>
+              <b style={{ color: TEXTO_PRIMARIO }}>Que la IA adapte el mensaje a cada cliente si corresponde.</b> Queda lo más fiel posible a tu mensaje (mismos
+              datos, precios, fechas y links), pero con lo que el cliente ya contó: el curso que le interesa, la edad de su hijo… Si no hay nada que
+              agregar, sale igual. Usa una consulta a la IA por cada persona. En los grupos sale tu mensaje tal cual.
+            </span>
+          </label>
         )}
         <input ref={inputImagen} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) subir(f, 'imagen'); e.target.value = ''; }} />
         <input ref={inputPdf} type="file" accept="application/pdf" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) subir(f, 'pdf'); e.target.value = ''; }} />
@@ -389,8 +486,8 @@ export default function NuevoMasivo({ onCerrar, onCreado }: { onCerrar: () => vo
       </Seccion>
 
       <div className="flex gap-2 pb-6">
-        <Boton variante="primario" icono={Send} disabled={guardando || contando || !conteo?.total} onClick={guardar}>
-          {guardando ? 'Guardando…' : conteo?.total ? `Programar envío a ${conteo.total}` : 'Programar envío'}
+        <Boton variante="primario" icono={Send} disabled={guardando || contando || (!conteo?.total && !(alEmpezar && cuando === 'programar'))} onClick={guardar}>
+          {guardando ? 'Guardando…' : alEmpezar && cuando === 'programar' ? 'Programar envío' : conteo?.total ? `Enviar a ${conteo.total}` : 'Programar envío'}
         </Boton>
         <Boton variante="fantasma" onClick={onCerrar}>Cancelar</Boton>
       </div>

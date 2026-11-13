@@ -133,3 +133,29 @@ export async function etapasDelEmbudo(empresaId: string, embudoId: string | null
   const embudoDe = new Map((deEmbudo || []).map((e) => [e.etapa_id, e.embudo_id] as const));
   return (etapas || []).filter((e) => (embudoDe.get(e.id) ?? null) === (embudoId ?? null));
 }
+
+// ---------- Avisos por negocio ----------
+
+// Tu número personal como lo necesita WhatsApp: solo dígitos, con 591 si son 8 dígitos de Bolivia.
+export function numeroAviso(crudo: string | null | undefined): string {
+  const t = String(crudo || '').replace(/\D/g, '');
+  return /^[67]\d{7}$/.test(t) ? `591${t}` : t;
+}
+
+// A qué número va un aviso: el del negocio (si tiene uno propio) o el general de IA → Ajustes → Avisos.
+export function telefonoAvisosDe(general: string | null | undefined, negocio: Pick<NegocioRow, 'avisos_telefono'> | null | undefined): string {
+  const propio = numeroAviso(negocio?.avisos_telefono);
+  return propio.length >= 7 ? propio : numeroAviso(general);
+}
+
+// Todos los números que reciben avisos (el general y los de cada negocio): a esos la IA nunca les
+// responde como a un cliente, y lo que escriben puede ser la respuesta a una pregunta (R12).
+export async function numerosDeAvisos(empresaId: string, general: string | null | undefined): Promise<string[]> {
+  const d = await actuales();
+  const todos = [numeroAviso(general), ...d.negocios.filter((n) => n.empresa_id === empresaId).map((n) => numeroAviso(n.avisos_telefono))];
+  return [...new Set(todos.filter((t) => t.length >= 7))];
+}
+
+export async function negociosDeEmpresa(empresaId: string): Promise<NegocioRow[]> {
+  return (await actuales()).negocios.filter((n) => n.empresa_id === empresaId);
+}

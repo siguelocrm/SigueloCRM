@@ -1,6 +1,6 @@
 import { db } from '../db.js';
 import { HORA, enFranja } from '../horario.js';
-import { negocioDeLinea, olvidarNegocios } from '../negocios.js';
+import { negocioDeLinea, olvidarNegocios, telefonoAvisosDe } from '../negocios.js';
 import { obtenerSesion } from '../../whatsapp/sesiones.js';
 
 // "¿Por qué no responde?": revisa todo lo que puede dejar a la IA sin responder,
@@ -59,7 +59,7 @@ export async function estadoIA(empresaId: string): Promise<EstadoIA> {
       : { ok: true, titulo: 'Base de datos al día' },
   );
 
-  const personal = ultimos8(ia?.avisos?.telefono);
+
   const numeros: EstadoIA['numeros'] = [];
   for (const l of lineas || []) {
     const r: Revision[] = [];
@@ -73,7 +73,10 @@ export async function estadoIA(empresaId: string): Promise<EstadoIA> {
       if (largo < 60) r.push({ ok: false, titulo: 'El negocio casi no tiene información para la IA', detalle: `En Administrar → Negocios → "${negocio.nombre}", escribe qué vendes, precios, horarios, dirección y preguntas frecuentes. Sin eso no sabe qué responder.` });
       if (!negocio.ubicacion?.trim()) r.push({ ok: true, aviso: true, titulo: 'Sin ubicación en Google Maps', detalle: 'Si te piden la ubicación, no puede mandar el pin del mapa.' });
     }
-    if (personal && ultimos8(l.numero) === personal) r.push({ ok: true, aviso: true, titulo: 'Es el mismo número de tus avisos', detalle: 'Los avisos no te van a sonar: pon otro número personal en IA → Ajustes → Avisos.' });
+    // A qué número van los avisos de este negocio (el suyo o el general).
+    const avisosA = telefonoAvisosDe(ia?.avisos?.telefono, negocio);
+    if (avisosA.length >= 7) r.push({ ok: true, titulo: `Sus avisos llegan a +${avisosA}${negocio?.avisos_telefono?.trim() ? ' (número de avisos de este negocio)' : ''}` });
+    if (avisosA && ultimos8(l.numero) === avisosA.slice(-8)) r.push({ ok: true, aviso: true, titulo: 'Es el mismo número de sus avisos', detalle: 'Los avisos no te van a sonar: pon otro número (en IA → Ajustes → Avisos, o en la ficha del negocio).' });
     numeros.push({ id: l.id, nombre: l.nombre, numero: l.numero, negocio: negocio?.nombre ?? null, revisiones: r });
   }
   const listo = general.every((g) => g.ok) && numeros.some((n) => n.revisiones.every((x) => x.ok));

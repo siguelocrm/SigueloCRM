@@ -24,6 +24,8 @@ export interface Negocio {
   club_sucursal_id?: string | null;
   // Link de Google Maps: la IA manda el pin de la ubicación.
   ubicacion?: string | null;
+  // Número al que le llegan los avisos de este negocio (vacío = el de IA → Ajustes → Avisos).
+  avisos_telefono?: string | null;
 }
 
 export interface GrupoNegocio {

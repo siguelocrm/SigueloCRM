@@ -3,6 +3,7 @@ import { db } from '../db.js';
 import { HORA, MIN } from '../horario.js';
 import { registrar } from '../registro.js';
 import { llamar } from './config.js';
+import { negociosDeEmpresa, numeroAviso, telefonoAvisosDe } from '../negocios.js';
 import type { IaRow } from '../tipos.js';
 
 // Lo que la IA no sabe te lo pregunta por WhatsApp con un código ("R12"). Cuando
@@ -18,11 +19,16 @@ const recortar = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}
 // Crea la pregunta y devuelve su código (null si falta pegar el SQL).
 export async function crearPregunta(
   c: Config,
-  datos: { conversacion_id: string; contacto_id: string | null; linea_id: string; negocio_id: string | null; telefono: string; nombre: string; pregunta: string },
+  // aprender: false en avisos que no son una pregunta (un reclamo, un pago, pide hablar con una persona):
+  // tu respuesta le llega al cliente pero no queda en "Lo que aprendió".
+  datos: { conversacion_id: string; contacto_id: string | null; linea_id: string; negocio_id: string | null; telefono: string; nombre: string; pregunta: string; aprender?: boolean },
 ): Promise<number | null> {
   const { data: codigo, error } = await db.rpc('siguelo_redes_codigo', {});
   if (error || !codigo) return null;
-  const { error: e } = await db.from('siguelo_ia_preguntas').insert({ empresa_id: c.ia.empresa_id, codigo, ...datos, pregunta: recortar(datos.pregunta.trim() || '(sin texto)', 500) });
+  const { aprender, ...resto } = datos;
+  const { error: e } = await db
+    .from('siguelo_ia_preguntas')
+    .insert({ empresa_id: c.ia.empresa_id, codigo, ...resto, ...(aprender === false ? { aprender: false } : {}), pregunta: recortar(datos.pregunta.trim() || '(sin texto)', 500) });
   return e ? null : codigo;
 }
 
@@ -33,7 +39,7 @@ async function redactar(c: Config, negocio: string, pregunta: string, respuesta:
   const r = await llamar(c, [
     {
       role: 'system',
-      content: `Eres el asistente de WhatsApp de "${negocio}". Un cliente preguntó algo que no sabías; el dueño te dio la respuesta. Escribe el mensaje para el cliente con esa información, sin inventar nada más, como si lo hubieras consultado. Tono ${e?.tono || 'amable'}, ${e?.trato === 'usted' ? 'trata de usted' : 'tutea'}, ${e?.emojis === 'no' ? 'sin emojis' : 'pocos emojis'}, corto. Responde SOLO con JSON: {${verificar ? '"es_respuesta": true o false (false si el mensaje del dueño NO responde lo que preguntó el cliente: un saludo, un "ok", otra cosa), ' : ''}"respuesta": "texto para el cliente"}`,
+      content: `Eres el asistente de WhatsApp de "${negocio}". Un cliente necesitaba algo que solo el dueño podía responder (una pregunta, un pedido, un reclamo o un pago); el dueño te dijo qué responderle. Escribe el mensaje para el cliente con eso, sin inventar nada más, como si lo hubieras consultado. Tono ${e?.tono || 'amable'}, ${e?.trato === 'usted' ? 'trata de usted' : 'tutea'}, ${e?.emojis === 'no' ? 'sin emojis' : 'pocos emojis'}, corto. Responde SOLO con JSON: {${verificar ? '"es_respuesta": true o false (false si el mensaje del dueño NO responde lo que preguntó el cliente: un saludo, un "ok", otra cosa), ' : ''}"respuesta": "texto para el cliente"}`,
     },
     { role: 'user', content: `Lo que preguntó el cliente: ${pregunta}\nRespuesta del dueño: ${respuesta}` },
   ]);
@@ -42,18 +48,19 @@ async function redactar(c: Config, negocio: string, pregunta: string, respuesta:
   return texto || respuesta;
 }
 
-async function confirmar(c: Config, lineaId: string, texto: string): Promise<void> {
-  const tel = digitos(c.ia.avisos?.telefono);
+// Al número que te escribió (el general o el de avisos de un negocio).
+async function confirmar(c: Config, lineaId: string, texto: string, telDueno: string): Promise<void> {
+  const tel = numeroAviso(telDueno);
   if (tel.length < 7) return;
   await db.from('siguelo_ia_salida').insert({ empresa_id: c.ia.empresa_id, linea_id: lineaId, telefono: tel, origen: 'aviso', referencia: 'respuesta', contenido: `• ${texto}`, vence: new Date().toISOString() });
 }
 
 // Un mensaje tuyo (desde tu número personal): si responde a una pregunta, se usa.
-async function usarRespuesta(c: Config, lineaDueno: string, texto: string): Promise<void> {
+async function usarRespuesta(c: Config, lineaDueno: string, texto: string, telDueno: string): Promise<void> {
   const limpio = texto.trim();
   if (!limpio) return;
   const cod = /^\s*R\s?(\d{1,6})\b[\s:.,-]*([\s\S]+)$/i.exec(limpio);
-  let p: { id: string; codigo: number; conversacion_id: string | null; contacto_id: string | null; linea_id: string; negocio_id: string | null; telefono: string; nombre: string | null; pregunta: string } | null = null;
+  let p: { id: string; codigo: number; conversacion_id: string | null; contacto_id: string | null; linea_id: string; negocio_id: string | null; telefono: string; nombre: string | null; pregunta: string; aprender?: boolean } | null = null;
   let respuesta = '';
   if (cod) {
     const { data } = await db.from('siguelo_ia_preguntas').select('*').eq('empresa_id', c.ia.empresa_id).eq('codigo', Number(cod[1])).eq('estado', 'esperando').maybeSingle();
@@ -62,14 +69,20 @@ async function usarRespuesta(c: Config, lineaDueno: string, texto: string): Prom
   } else {
     // Sin código: solo si hay una sola pregunta esperando (de WhatsApp y de Redes).
     const [{ data: wa }, { data: redes }] = await Promise.all([
-      db.from('siguelo_ia_preguntas').select('*').eq('empresa_id', c.ia.empresa_id).eq('estado', 'esperando').gte('creado_en', new Date(Date.now() - 24 * HORA).toISOString()).limit(2),
+      db.from('siguelo_ia_preguntas').select('*').eq('empresa_id', c.ia.empresa_id).eq('estado', 'esperando').gte('creado_en', new Date(Date.now() - 24 * HORA).toISOString()).order('creado_en', { ascending: false }).limit(20),
       db.from('siguelo_redes_comentarios').select('id').eq('empresa_id', c.ia.empresa_id).eq('accion', 'preguntado').limit(1),
     ]);
-    if (wa?.length === 1 && !redes?.length && limpio.length > 2) {
-      p = wa[0];
+    // Solo las preguntas de los negocios cuyos avisos llegan a este número.
+    const negocios = await negociosDeEmpresa(c.ia.empresa_id);
+    const deEsteNumero = (wa || []).filter((q) => {
+      const n = negocios.find((x) => x.id === q.negocio_id);
+      return telefonoAvisosDe(c.ia.avisos?.telefono, n).slice(-8) === numeroAviso(telDueno).slice(-8);
+    });
+    if (deEsteNumero.length === 1 && !redes?.length && limpio.length > 2) {
+      p = deEsteNumero[0];
       respuesta = limpio;
-    } else if ((wa?.length ?? 0) > 1) {
-      await confirmar(c, lineaDueno, `Tengo ${wa!.length} o más preguntas esperando: respóndeme con el código, por ejemplo *R${wa![0].codigo} tu respuesta*.`);
+    } else if (deEsteNumero.length > 1) {
+      await confirmar(c, lineaDueno, `Tengo ${deEsteNumero.length} preguntas esperando: respóndeme con el código, por ejemplo *R${deEsteNumero[0].codigo} tu respuesta*.`, telDueno);
     }
   }
   if (!p || !respuesta) return;
@@ -99,15 +112,16 @@ async function usarRespuesta(c: Config, lineaDueno: string, texto: string): Prom
     if (lec?.atencion && !lec.atencion.hecho) await db.from('siguelo_ia_lecturas').update({ atencion: { ...lec.atencion, hecho: Date.now() } }).eq('conversacion_id', p.conversacion_id);
   }
   await db.from('siguelo_ia_preguntas').update({ estado: 'respondida', respuesta, respondido_en: new Date().toISOString() }).eq('id', p.id);
-  // Aprende: la próxima vez le responde sola a cualquier cliente de ese negocio.
-  const { error: errAprende } = await db.from('siguelo_aprendido').insert({ empresa_id: c.ia.empresa_id, negocio_id: p.negocio_id, pregunta: p.pregunta, respuesta });
+  // Aprende (solo de las preguntas): la próxima vez le responde sola a cualquier cliente de ese negocio.
+  const { error: errAprende } =
+    p.aprender === false ? { error: true } : await db.from('siguelo_aprendido').insert({ empresa_id: c.ia.empresa_id, negocio_id: p.negocio_id, pregunta: p.pregunta, respuesta });
   const quien = p.nombre || `+${p.telefono.split('@')[0]}`;
-  await confirmar(c, lineaDueno, `✅ R${p.codigo}: le respondí a *${quien}*: "${recortar(mensaje, 160)}".${errAprende ? '' : ' Lo aprendí para responderle a los demás.'}`);
+  await confirmar(c, lineaDueno, `✅ R${p.codigo}: le respondí a *${quien}*: "${recortar(mensaje, 160)}".${errAprende ? '' : ' Lo aprendí para responderle a los demás.'}`, telDueno);
   await registrar(c.ia.empresa_id, p.contacto_id, 'ia', `IA le respondió a ${quien} con lo que dijiste (R${p.codigo}): "${recortar(mensaje, 100)}"${errAprende ? '' : ' · lo aprendió'}.`);
 }
 
 // Los mensajes nuevos de tu número personal en esta conversación.
-export async function leerDueno(c: Config, conversacionId: string, lineaId: string, desde: string | null): Promise<void> {
+export async function leerDueno(c: Config, conversacionId: string, lineaId: string, desde: string | null, telDueno: string): Promise<void> {
   const { data: mensajes } = await db
     .from('mensajes')
     .select('contenido, tipo, creado_en')
@@ -116,5 +130,5 @@ export async function leerDueno(c: Config, conversacionId: string, lineaId: stri
     .gt('creado_en', desde ?? new Date(Date.now() - 30 * MIN).toISOString())
     .order('creado_en')
     .limit(10);
-  for (const m of mensajes || []) if (m.tipo === 'texto') await usarRespuesta(c, lineaId, String(m.contenido || ''));
+  for (const m of mensajes || []) if (m.tipo === 'texto') await usarRespuesta(c, lineaId, String(m.contenido || ''), telDueno);
 }

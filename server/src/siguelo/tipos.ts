@@ -169,6 +169,8 @@ export type NegocioRow = {
   club_sucursal_id?: string | null;
   // Link de Google Maps (o "latitud, longitud"): la IA manda el pin de la ubicación.
   ubicacion?: string | null;
+  // Número al que le llegan los avisos de este negocio (vacío = el general de la IA).
+  avisos_telefono?: string | null;
   creado_en: string;
   actualizado_en: string;
 };
@@ -445,12 +447,17 @@ type Tabla<Row extends Record<string, unknown>> = {
 // Mensajes masivos (secciones 7b y 35 de database/siguelo.sql).
 export type FiltroMasivo = {
   // chats: los que tienen chat con este número · todos: todos los contactos · lista: números pegados
-  origen: 'chats' | 'todos' | 'lista';
+  origen: 'chats' | 'todos' | 'lista' | 'grupos';
   etapas?: string[];
   etiquetas?: string[];
   sin_perdidos?: boolean;
   // Solo con origen "lista": "59170000000" o "59170000000, Juan".
   lista?: string[];
+  // Solo los que mostraron interés (lo que anotó la IA de su chat); con palabras, los que coinciden.
+  con_interes?: boolean;
+  intereses?: string[];
+  // Grupos de WhatsApp del número donde también se publica (origen "grupos": solo ahí).
+  grupos?: { id: string; nombre: string }[];
 };
 export type EstadoMasivo = 'programado' | 'enviando' | 'pausado' | 'terminado' | 'cancelado';
 export type MasivoRow = {
@@ -479,6 +486,8 @@ export type MasivoRow = {
   creado_en: string;
   actualizado_en: string;
   terminado_en: string | null;
+  armado_en?: string | null;
+  adaptar?: boolean;
 };
 export type MasivoEnvioRow = {
   id: string;
@@ -572,7 +581,7 @@ export type SigueloDatabase = {
       siguelo_redes_cuentas: Tabla<CuentaRedRow>;
       siguelo_redes_tokens: Tabla<{ cuenta_id: string; token: string; actualizado_en: string }>;
       siguelo_redes_comentarios: Tabla<ComentarioRedRow>;
-      siguelo_ia_preguntas: Tabla<{ id: string; empresa_id: string; codigo: number; conversacion_id: string | null; contacto_id: string | null; linea_id: string; negocio_id: string | null; telefono: string; nombre: string | null; pregunta: string; estado: 'esperando' | 'respondida'; respuesta: string | null; creado_en: string; respondido_en: string | null }>;
+      siguelo_ia_preguntas: Tabla<{ id: string; empresa_id: string; codigo: number; conversacion_id: string | null; contacto_id: string | null; linea_id: string; negocio_id: string | null; telefono: string; nombre: string | null; pregunta: string; estado: 'esperando' | 'respondida'; respuesta: string | null; creado_en: string; respondido_en: string | null; aprender?: boolean }>;
       siguelo_aprendido: Tabla<{ id: string; empresa_id: string; negocio_id: string | null; pregunta: string; respuesta: string; creado_en: string }>;
       siguelo_embudos: Tabla<{ id: string; empresa_id: string; nombre: string; creado_en: string }>;
       siguelo_masivos: Tabla<MasivoRow>;

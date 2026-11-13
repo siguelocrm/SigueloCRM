@@ -4,6 +4,7 @@ import { registrar } from '../registro.js';
 import { llamar } from '../ia/config.js';
 import { describirEstilo } from '../ia/contexto.js';
 import { datosClubParaIA } from '../club/club.js';
+import { negociosDeEmpresa, numerosDeAvisos, telefonoAvisosDe } from '../negocios.js';
 import { datosAulaParaIA } from '../aula/aula.js';
 import { borrar, comentarios, ocultar, responder, type AppMeta, type ComentarioMeta } from './meta.js';
 import type { ComentarioRedRow, CuentaRedRow, IaRow, NegocioRow } from '../tipos.js';
@@ -121,7 +122,9 @@ ${(recientes || []).length ? `\nTus últimas respuestas (no las repitas):\n${(re
 
 async function avisar(c: Config, cuenta: CuentaRedRow, texto: string): Promise<boolean> {
   const av = c.ia.avisos;
-  if (!av?.activo || digitos(av.telefono).length < 7 || av.tipos?.redes === false) return false;
+  // Al número de avisos del negocio de la cuenta (o al general).
+  const tel = telefonoAvisosDe(av?.telefono, (await negociosDeEmpresa(c.ia.empresa_id)).find((n) => n.id === cuenta.negocio_id));
+  if (!av?.activo || tel.length < 7 || av.tipos?.redes === false) return false;
   let linea = av.linea_id;
   if (!linea && cuenta.negocio_id) {
     const { data } = await db.from('siguelo_lineas').select('linea_id').eq('negocio_id', cuenta.negocio_id).limit(1).maybeSingle();
@@ -135,7 +138,7 @@ async function avisar(c: Config, cuenta: CuentaRedRow, texto: string): Promise<b
   const { error } = await db.from('siguelo_ia_salida').insert({
     empresa_id: c.ia.empresa_id,
     linea_id: linea,
-    telefono: digitos(av.telefono),
+    telefono: tel,
     origen: 'aviso',
     referencia: 'redes',
     contenido: `• ${texto}`,
@@ -307,8 +310,9 @@ export async function responderComoDueno(c: Config, app: AppMeta, comentarioId: 
 // Lee lo que le escribiste al CRM desde tu WhatsApp personal: "R12 tu respuesta".
 async function leerRespuestasDueno(x: Vuelta): Promise<void> {
   const { c } = x;
-  const tel = digitos(c.ia.avisos?.telefono);
-  if (tel.length < 7) return;
+  // Tus números: el general y los de avisos de cada negocio.
+  const tels = (await numerosDeAvisos(c.ia.empresa_id, c.ia.avisos?.telefono)).map((t) => t.slice(-8));
+  if (!tels.length) return;
   const { data: info } = await db.from('siguelo_meta_info').select('leido_dueno').eq('empresa_id', c.ia.empresa_id).maybeSingle();
   const desde = info?.leido_dueno ?? null;
   if (!desde) {
@@ -317,8 +321,8 @@ async function leerRespuestasDueno(x: Vuelta): Promise<void> {
   }
   const { data: lineas } = await db.from('lineas_whatsapp').select('id').eq('empresa_id', c.ia.empresa_id);
   if (!lineas?.length) return;
-  const { data: chats } = await db.from('conversaciones').select('id, contacto_telefono').in('linea_id', lineas.map((l) => l.id)).like('contacto_telefono', `%${tel.slice(-8)}%`);
-  const mios = (chats || []).filter((ch) => digitos(ch.contacto_telefono.split('@')[0]).endsWith(tel.slice(-8)));
+  const { data: chats } = await db.from('conversaciones').select('id, contacto_telefono').in('linea_id', lineas.map((l) => l.id)).or(tels.map((t) => `contacto_telefono.like.%${t}%`).join(','));
+  const mios = (chats || []).filter((ch) => tels.some((t) => digitos(ch.contacto_telefono.split('@')[0]).endsWith(t)));
   if (!mios.length) return;
   const { data: mensajes } = await db
     .from('mensajes')

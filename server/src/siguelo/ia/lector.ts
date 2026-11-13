@@ -3,7 +3,7 @@ import { db } from '../db.js';
 import { HORA, MIN, ajustar, fechaDe, instante } from '../horario.js';
 import { registrar } from '../registro.js';
 import { cambiarEtapa } from '../motor.js';
-import { etapasDelEmbudo, negocioDeLinea, otrosNegocios, lineaDeNegocio, reglasDelNumero } from '../negocios.js';
+import { etapasDelEmbudo, negocioDeLinea, otrosNegocios, lineaDeNegocio, reglasDelNumero, telefonoAvisosDe, numerosDeAvisos } from '../negocios.js';
 import { llamar } from './config.js';
 import { cursosConQR, pagoEnCurso } from '../pagos/inscripcion.js';
 import { formatoMonto } from '../pagos/comprobante.js';
@@ -142,32 +142,37 @@ type Contexto = {
 
 async function encolarAviso(x: Contexto, tipo: TipoAviso, motivo: string): Promise<boolean> {
   const av = x.c.ia.avisos;
-  if (!av?.activo || digitos(av.telefono).length < 7 || !av.tipos?.[tipo]) return false;
+  // El número de avisos de este negocio (o el general).
+  const telAviso = telefonoAvisosDe(av?.telefono, x.negocio);
+  if (!av?.activo || telAviso.length < 7 || !av.tipos?.[tipo]) return false;
   // Una pregunta que solo tú sabes: te llega al momento, con un código para que respondas (R12).
   const esPregunta = tipo === 'pregunta';
   if (Date.now() - (x.lectura.avisado[tipo] || 0) < (esPregunta ? 3 * MIN : REPETIR_AVISO_MS)) return false;
   x.lectura.avisado = { ...x.lectura.avisado, [tipo]: Date.now() };
   const tel = digitos(x.fila.telefono.split('@')[0]);
-  const codigo = esPregunta
-    ? await crearPregunta(x.c, {
-        conversacion_id: x.fila.conversacion_id,
-        contacto_id: x.contacto?.id ?? null,
-        linea_id: x.fila.linea_id,
-        negocio_id: x.negocio.id,
-        telefono: x.fila.telefono,
-        nombre: x.nombre,
-        pregunta: x.preguntaCliente || motivo,
-      })
-    : null;
+  // Todo aviso sobre un cliente trae su código para responderle desde tu WhatsApp. Solo se aprende
+  // de las preguntas (lo que no sabía); de un reclamo o un "quiere hablar con una persona", no.
+  const aprender = tipo === 'pregunta' || tipo === 'fuera';
+  const codigo = await crearPregunta(x.c, {
+    conversacion_id: x.fila.conversacion_id,
+    contacto_id: x.contacto?.id ?? null,
+    linea_id: x.fila.linea_id,
+    negocio_id: x.negocio.id,
+    telefono: x.fila.telefono,
+    nombre: x.nombre,
+    pregunta: x.preguntaCliente || motivo,
+    aprender,
+  });
   await db.from('siguelo_ia_salida').insert({
     empresa_id: x.c.ia.empresa_id,
     contacto_id: x.contacto?.id ?? null,
     linea_id: av.linea_id || x.fila.linea_id,
-    telefono: digitos(av.telefono),
+    telefono: telAviso,
     origen: 'aviso',
     referencia: tipo,
-    contenido: `• *${x.nombre}*${tel ? ` (+${tel})` : ''} — ${x.negocio.nombre}: ${motivo}${codigo ? `\n   ↪️ Respóndeme *R${codigo} tu respuesta* y se lo digo (y lo aprendo).` : ''}`,
-    vence: new Date(Date.now() + (esPregunta ? 0 : Math.max(0, av.juntar_min || 0) * MIN)).toISOString(),
+    contenido: `• *${x.nombre}*${tel ? ` (+${tel})` : ''} — ${x.negocio.nombre}: ${motivo}${codigo ? `\n   ↪️ ${aprender ? `Respóndeme *R${codigo} tu respuesta* y se lo digo (y lo aprendo).` : `Para contestarle desde aquí: *R${codigo} tu mensaje*.`}` : ''}`,
+    // Lo urgente (una pregunta, pide una persona, está molesto) llega al momento; lo demás se junta.
+    vence: new Date(Date.now() + (esPregunta || tipo === 'humano' || tipo === 'molesto' ? 0 : Math.max(0, av.juntar_min || 0) * MIN)).toISOString(),
   });
   return true;
 }
@@ -372,8 +377,9 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
   };
   // Sin ficha de negocio no hay con qué responder; tampoco a tu número personal.
   // Tu número personal: no se le responde, pero lo que escribes puede ser la respuesta a una pregunta (R12).
-  if (esNumeroPersonal(fila.telefono, c.ia.avisos?.telefono || '')) {
-    await leerDueno(c, fila.conversacion_id, fila.linea_id, lectura.leido_hasta).catch((err) => console.error('IA: no se pudo leer tu respuesta:', (err as Error).message));
+  const numerosTuyos = await numerosDeAvisos(empresaId, c.ia.avisos?.telefono);
+  if (numerosTuyos.some((n) => esNumeroPersonal(fila.telefono, n))) {
+    await leerDueno(c, fila.conversacion_id, fila.linea_id, lectura.leido_hasta, digitos(fila.telefono.split('@')[0])).catch((err) => console.error('IA: no se pudo leer tu respuesta:', (err as Error).message));
     await guardar(leido);
     return true;
   }

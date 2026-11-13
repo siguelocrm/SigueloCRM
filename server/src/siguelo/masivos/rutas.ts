@@ -7,7 +7,7 @@ import { accesoDe, veLinea } from '../usuarios/accesos.js';
 import { obtenerSesion } from '../../whatsapp/sesiones.js';
 import { marcarEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import type { FiltroMasivo, MasivoRow } from '../tipos.js';
-import { MAX_DESTINATARIOS, armarDestinatarios, contenidoMasivo, limpiarTelefono } from './masivos.js';
+import { MAX_DESTINATARIOS, armarDestinatarios, contenidoMasivo, interesesComunes, limpiarTelefono } from './masivos.js';
 
 // Mensajes masivos: contar a quiénes les llega, crear, pausar, reanudar,
 // cancelar y mandarte una prueba. Solo dueños y gerentes, y solo desde
@@ -25,12 +25,21 @@ const entero = (v: unknown, min: number, max: number, defecto: number) => {
 function leerFiltro(f: unknown): FiltroMasivo {
   const o = (f && typeof f === 'object' ? f : {}) as Record<string, unknown>;
   const lista = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && !!x.trim()).slice(0, MAX_DESTINATARIOS * 2) : []);
+  const grupos = Array.isArray(o.grupos)
+    ? o.grupos
+        .filter((g): g is { id: string; nombre?: string } => !!g && typeof g === 'object' && typeof (g as { id?: unknown }).id === 'string' && /^[\d-]+@g\.us$/.test((g as { id: string }).id))
+        .slice(0, 50)
+        .map((g) => ({ id: g.id, nombre: String(g.nombre ?? '').slice(0, 100) }))
+    : [];
   return {
-    origen: o.origen === 'todos' || o.origen === 'lista' ? o.origen : 'chats',
+    origen: o.origen === 'todos' || o.origen === 'lista' || o.origen === 'grupos' ? o.origen : 'chats',
     etapas: lista(o.etapas),
     etiquetas: lista(o.etiquetas),
     sin_perdidos: o.sin_perdidos !== false,
     lista: o.origen === 'lista' ? lista(o.lista) : [],
+    con_interes: o.con_interes === true,
+    intereses: lista(o.intereses).slice(0, 20).map((x) => x.slice(0, 60)),
+    grupos,
   };
 }
 
@@ -61,8 +70,8 @@ masivosRouter.post('/siguelo/masivos/contar', soloAdmin, async (req, res) => {
   const empresaId = await numeroPermitido(req, res, req.body?.linea_id);
   if (!empresaId) return;
   try {
-    const lista = await armarDestinatarios(empresaId, req.body.linea_id, leerFiltro(req.body?.filtro));
-    res.json({ ok: true, total: lista.length, maximo: MAX_DESTINATARIOS, ejemplos: lista.slice(0, 8).map((d) => d.nombre || `+${d.telefono}`) });
+    const [lista, intereses] = await Promise.all([armarDestinatarios(empresaId, req.body.linea_id, leerFiltro(req.body?.filtro)), interesesComunes(empresaId).catch(() => [])]);
+    res.json({ ok: true, total: lista.length, maximo: MAX_DESTINATARIOS, ejemplos: lista.slice(0, 8).map((d) => d.nombre || `+${d.telefono}`), intereses });
   } catch (err) {
     res.status(500).json({ error: `No se pudo contar: ${(err as Error).message}. ¿Pegaste la última versión de database/siguelo.sql?` });
   }
@@ -92,33 +101,44 @@ masivosRouter.post('/siguelo/masivos', soloAdmin, async (req, res) => {
   } catch (err) {
     return res.status(500).json({ error: `No se pudo armar la lista: ${(err as Error).message}. ¿Pegaste la última versión de database/siguelo.sql?` });
   }
-  if (!destinatarios.length) return res.status(400).json({ error: 'Con esos filtros no le llega a nadie.' });
+  // Una lista pegada queda fija; con filtros, la lista se arma al empezar (con todos los que
+  // correspondan en ese momento), así un masivo programado para el viernes incluye a los de esta semana.
+  const alEmpezar = filtro.origen !== 'lista';
+  const enElFuturo = inicia.getTime() > Date.now() + 60_000;
+  if (!destinatarios.length && !(alEmpezar && enElFuturo)) return res.status(400).json({ error: 'Con esos filtros no le llega a nadie.' });
   if (destinatarios.length > MAX_DESTINATARIOS) return res.status(400).json({ error: `Son ${destinatarios.length} personas: el máximo por envío es ${MAX_DESTINATARIOS}. Divide la lista en varios envíos.` });
 
   const { data: aj } = await db.from('siguelo_ajustes').select('zona_horaria').eq('empresa_id', empresaId).maybeSingle();
-  const { data: masivo, error } = await db
+  const fila = {
+    empresa_id: empresaId,
+    nombre,
+    linea_id: lineaId,
+    textos,
+    ...media,
+    filtro: filtro.origen === 'lista' ? { ...filtro, lista: [] } : filtro,
+    estado: 'programado' as const,
+    inicia_en: inicia.toISOString(),
+    zona_horaria: aj?.zona_horaria || 'America/La_Paz',
+    hora_inicio: desde,
+    hora_fin: hasta,
+    pausa_min_seg: pausaMin,
+    pausa_max_seg: pausaMax,
+    maximo_diario: entero(b.maximo_diario, 1, 1000, 150),
+    // Con filtros es lo que daría hoy: al empezar se cuenta de nuevo.
+    total: destinatarios.length,
+    creado_por: req.usuarioAutenticado!.id,
+  };
+  let insertado = await db
     .from('siguelo_masivos')
-    .insert({
-      empresa_id: empresaId,
-      nombre,
-      linea_id: lineaId,
-      textos,
-      ...media,
-      filtro: filtro.origen === 'lista' ? { ...filtro, lista: [] } : filtro,
-      estado: 'programado',
-      inicia_en: inicia.toISOString(),
-      zona_horaria: aj?.zona_horaria || 'America/La_Paz',
-      hora_inicio: desde,
-      hora_fin: hasta,
-      pausa_min_seg: pausaMin,
-      pausa_max_seg: pausaMax,
-      maximo_diario: entero(b.maximo_diario, 1, 1000, 150),
-      total: destinatarios.length,
-      creado_por: req.usuarioAutenticado!.id,
-    })
+    .insert({ ...fila, armado_en: alEmpezar ? null : new Date().toISOString(), adaptar: b.adaptar === true })
     .select('id')
     .single();
+  // Sin la sección 40 de siguelo.sql (armado_en, adaptar): se guarda como antes, con la lista de hoy.
+  const sinSeccion40 = !!insertado.error && /armado_en|adaptar/.test(insertado.error.message);
+  if (sinSeccion40) insertado = await db.from('siguelo_masivos').insert(fila).select('id').single();
+  const { data: masivo, error } = insertado;
   if (error || !masivo) return res.status(500).json({ error: `No se pudo guardar: ${error?.message}. ¿Pegaste la última versión de database/siguelo.sql?` });
+  if (alEmpezar && !sinSeccion40) return res.json({ ok: true, id: masivo.id, total: destinatarios.length, alEmpezar: true });
   // El orden se mezcla al azar: así no les llega a todos en el orden de la lista.
   const mezclados = [...destinatarios].sort(() => Math.random() - 0.5);
   for (let i = 0; i < mezclados.length; i += 500) {
@@ -159,6 +179,22 @@ masivosRouter.post('/siguelo/masivos/:id/accion', soloAdmin, async (req, res) =>
 });
 
 // Te manda el mensaje a ti (o a quien pongas) para que veas cómo llega. No queda en ningún chat.
+// Los grupos de WhatsApp donde está ese número (para publicar el masivo también ahí).
+masivosRouter.post('/siguelo/masivos/grupos', soloAdmin, async (req, res) => {
+  if (!(await numeroPermitido(req, res, req.body?.linea_id))) return;
+  const sesion = obtenerSesion(req.body.linea_id);
+  if (!sesion || sesion.estado !== 'activo') return res.status(503).json({ error: 'Ese número no está conectado (revisa Conexiones).' });
+  try {
+    const todos = await (sesion.sock as unknown as { groupFetchAllParticipating: () => Promise<Record<string, { id: string; subject?: string; participants?: unknown[]; announce?: boolean }>> }).groupFetchAllParticipating();
+    const grupos = Object.values(todos || {})
+      .map((g) => ({ id: g.id, nombre: g.subject?.trim() || 'Grupo sin nombre', personas: g.participants?.length ?? 0, soloAdmins: !!g.announce }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre));
+    res.json({ ok: true, grupos });
+  } catch (err) {
+    res.status(500).json({ error: `No se pudieron leer los grupos: ${(err as Error).message}` });
+  }
+});
+
 masivosRouter.post('/siguelo/masivos/prueba', soloAdmin, async (req, res) => {
   const b = (req.body ?? {}) as Record<string, unknown>;
   if (!(await numeroPermitido(req, res, b.linea_id))) return;

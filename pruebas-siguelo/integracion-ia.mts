@@ -241,7 +241,7 @@ avanzar(MIN);
 const enviadosAntesDueno = enviados.length;
 await leerPendientes(await config());
 // Tu "Hola, soy el dueño" sin código: a lo sumo se revisa si responde una pregunta que esperaba (no la responde).
-assert.ok(llamadas.slice(antesLlamadas).every((l) => /el dueño te dio la respuesta/.test(l.sistema)), 'ni tu número personal ni un negocio con la IA apagada');
+assert.ok(llamadas.slice(antesLlamadas).every((l) => /el dueño te dijo qué responderle/.test(l.sistema)), 'ni tu número personal ni un negocio con la IA apagada');
 assert.equal(enviados.length, enviadosAntesDueno, 'un saludo tuyo no se le manda a ningún cliente');
 paso('no lee tu WhatsApp personal ni los negocios donde apagaste la IA');
 
@@ -471,7 +471,7 @@ const dueno = yo;
 await escribe(dueno.conv, `R${codigo} Sí, tenemos estacionamiento gratis atrás del local`);
 avanzar(MIN);
 responder = (l) => {
-  assert.match(l.sistema, /el dueño te dio la respuesta/);
+  assert.match(l.sistema, /el dueño te dijo qué responderle/);
   assert.match(l.usuario, /Lo que preguntó el cliente: ¿Tienen estacionamiento\?\nRespuesta del dueño: Sí, tenemos estacionamiento gratis atrás del local/);
   return { respuesta: '¡Sí! Tenemos estacionamiento gratis atrás del local 🚗' };
 };
@@ -514,6 +514,35 @@ await leerPendientes(await config());
 await salida();
 assert.equal(enviados.filter((e) => e.jid.startsWith('59170000039')).at(-1)?.texto, 'Sí, aceptamos tarjeta y QR 😊');
 paso('te pregunta por WhatsApp con un código; tu respuesta le llega al cliente y la aprende para responderle a los demás');
+
+// ---------- Cada negocio con su número de avisos; todo aviso trae código (y solo las preguntas se aprenden) ----------
+await pg.query(`update siguelo_negocios set avisos_telefono = '59178888888' where id = $1`, [nQuilla]);
+await pg.query(`update siguelo_ia set avisos = jsonb_set(avisos, '{tipos}', '{"pregunta": true, "humano": true, "molesto": true, "compro": true}'::jsonb) where empresa_id = $1`, [empresa]);
+const sole = await chat(L1, '59170000042', 'Sole');
+await escribe(sole.conv, 'Quiero hablar con una persona, por favor');
+avanzar(MIN);
+responder = () => ({ resumen: 'Pide hablar con una persona', puede_responder: true, respuesta: 'Claro, en un momento te atiende alguien del equipo 🙌', aviso: 'humano', motivo: 'Pide hablar con una persona' });
+await leerPendientes(await config());
+await salida();
+const alEncargado = enviados.filter((e) => e.jid.startsWith('59178888888')).at(-1)?.texto ?? '';
+assert.match(alEncargado, /Sole.*Pide hablar con una persona/s, 'el aviso de Quillacollo llega al número de avisos de Quillacollo');
+const codHumano = /Para contestarle desde aquí: \*R(\d+) tu mensaje\*/.exec(alEncargado)?.[1];
+assert.ok(codHumano, `un aviso que no es pregunta también trae su código: ${alEncargado}`);
+// El encargado responde desde su número: le llega a Sole y no queda en "Lo que aprendió".
+const encargado = await chat(L1, '59178888888', 'Encargado');
+await escribe(encargado.conv, `R${codHumano} Hola Sole, soy Marta de Quillacollo, ¿en qué te ayudo?`);
+avanzar(MIN);
+const llamadasAntesEnc = llamadas.length;
+responder = () => ({ respuesta: 'Hola Sole, soy Marta de Quillacollo, ¿en qué te ayudo? 😊' });
+const aprendidasAntes = (await uno(`select count(*)::int n from siguelo_aprendido`)).n;
+await leerPendientes(await config());
+await salida();
+assert.equal(enviados.filter((e) => e.jid.startsWith('59170000042')).at(-1)?.texto, 'Hola Sole, soy Marta de Quillacollo, ¿en qué te ayudo? 😊');
+assert.ok(llamadas.slice(llamadasAntesEnc).every((l) => !/Lees la conversación con un cliente/.test(l.sistema)), 'al encargado no le responde como a un cliente');
+assert.equal((await uno(`select count(*)::int n from siguelo_aprendido`)).n, aprendidasAntes, 'un "quiere hablar con una persona" no se aprende');
+assert.match(enviados.filter((e) => e.jid.startsWith('59178888888')).at(-1)!.texto, new RegExp(`✅ R${codHumano}: le respondí a \\*Sole\\*`), 'la confirmación va al número que respondió');
+await pg.query(`update siguelo_negocios set avisos_telefono = null where id = $1`, [nQuilla]);
+paso('cada negocio puede tener su número de avisos; todo aviso trae código y solo las preguntas se aprenden');
 
 const uso = await uno(`select sum(consultas)::int c, sum(entrada)::int e from siguelo_ia_uso`);
 console.log(`\n${ok} pasos OK · ${uso.c} consultas a la IA (${uso.e} tokens de entrada) · mensajes:`);

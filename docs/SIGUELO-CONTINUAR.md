@@ -232,7 +232,15 @@ npm test
   su horario, pausa al azar, tope por día por número sumando todos sus masivos, revisa `onWhatsApp` antes de enviar, crea
   el contacto y el chat si no existen, y se pausa solo con 3 errores seguidos. `motivo` = `fuera` / `tope` /
   `desconectado` (la pantalla lo explica) o el texto de la pausa. Rutas en `masivos/rutas.ts` (dueños y gerentes, con
-  acceso al número): `/siguelo/masivos/contar`, `/siguelo/masivos`, `/:id/accion` y `/prueba`. No usa la IA.
+  acceso al número): `/siguelo/masivos/contar`, `/siguelo/masivos`, `/:id/accion`, `/prueba` y `/grupos`.
+  Sección 40: con filtros (no una lista pegada) la lista se arma AL EMPEZAR (`armado_en` null → `armar()` en
+  `procesarMasivos`, con todos los que correspondan en ese momento). Filtro `con_interes` / `intereses` (lo que anotó la IA
+  en `siguelo_ia_lecturas.interes`), `grupos` (jid `@g.us`: se publica tal cual, sin contacto ni chat; origen `grupos` =
+  solo grupos). `adaptar`: `masivos/adaptar.ts` reescribe cada mensaje fiel al original con lo que el cliente contó.
+- **Avisos por negocio y códigos** (secciones 38 y 40): `siguelo_negocios.avisos_telefono` (vacío = el general);
+  `negocios.ts` → `telefonoAvisosDe` y `numerosDeAvisos` (todos tus números: la IA no les responde y leen "R12"). Todo
+  aviso de la IA sobre un cliente y los de pagos que piden intervención (⚠️ ❌ ⏳) traen código; `aprender` solo en
+  preguntas ("pregunta"/"fuera"). La confirmación va al número que respondió.
 
 - **Aula virtual** (`aula/`, sección 36): otro proyecto de Supabase (Aula Infinity Chess). `aula.ts` entra con una cuenta de
   profesor o director (correo `usuario@aula.infinitychess.local`), lee `planes` y `grupos` (REST), busca al alumno con

@@ -3,7 +3,7 @@ import { db } from '../db.js';
 import { HORA, MIN, fechaDe, instante } from '../horario.js';
 import { registrar } from '../registro.js';
 import { cambiarEtapa } from '../motor.js';
-import { etapasDelEmbudo, negocioDeLinea } from '../negocios.js';
+import { etapasDelEmbudo, negocioDeLinea, telefonoAvisosDe } from '../negocios.js';
 import { aplicarNombre, normalizarTexto } from '../textos.js';
 import { llamar } from '../ia/config.js';
 import type { MensajeChat, ParteChat } from '../ia/openai.js';
@@ -11,6 +11,7 @@ import { PROMPT_COMPROBANTE, controlar, elegirCurso, formatoMonto, transaccionNo
 import { configClub, gruposClub, lleno, rpcVendedor, subirFoto, tarifasClub, textoHorario, vendedorYo } from '../club/club.js';
 import { armarReserva, faltanClub, mezclarDatosClub } from './reserva.js';
 import { configAula, gruposAula, inscribirEnAula, planesAula, textoPlan, type PlanAula } from '../aula/aula.js';
+import { crearPregunta } from '../ia/dueno.js';
 import type { CursoRow, DatosClub, EstadoPago, IaRow, PagoPorLeerRow, PagoRow, TextosCurso } from '../tipos.js';
 
 // Inscripción con pago (Fase 5). Cada foto o PDF que manda un cliente a un
@@ -177,16 +178,35 @@ async function mandar(x: Vuelta, pago: PagoRow, mensajes: { tipo: string; texto:
 // Aviso a tu WhatsApp personal (los de la IA), si están activos y no apagaste los de pagos.
 async function avisar(x: Vuelta, pago: PagoRow, texto: string): Promise<void> {
   const av = x.c.ia.avisos;
-  if (!av?.activo || digitos(av.telefono).length < 7 || av.tipos?.pago === false || !pago.linea_id) return;
+  const tel = telefonoAvisosDe(av?.telefono, pago.linea_id ? await negocioDeLinea(pago.linea_id) : null);
+  if (!av?.activo || tel.length < 7 || av.tipos?.pago === false || !pago.linea_id) return;
+  // Lo que pide tu intervención (para revisar, rechazado, no mandó sus datos) trae un código para
+  // contestarle al cliente desde tu WhatsApp ("R12 tu mensaje"); no se aprende (es de un solo cliente).
+  const urgente = /^(⚠️|❌|⏳)/.test(texto);
+  const negocio = await negocioDeLinea(pago.linea_id);
+  const contacto = urgente ? await contactoDe(pago.contacto_id) : null;
+  const codigo =
+    urgente && pago.conversacion_id
+      ? await crearPregunta(x.c, {
+          conversacion_id: pago.conversacion_id,
+          contacto_id: pago.contacto_id,
+          linea_id: pago.linea_id,
+          negocio_id: negocio?.id ?? null,
+          telefono: pago.telefono,
+          nombre: contacto?.nombre || `+${digitos(pago.telefono.split('@')[0])}`,
+          pregunta: texto.replace(/\*/g, '').slice(0, 300),
+          aprender: false,
+        })
+      : null;
   await db.from('siguelo_ia_salida').insert({
     empresa_id: x.c.ia.empresa_id,
     contacto_id: pago.contacto_id,
     linea_id: av.linea_id || pago.linea_id,
-    telefono: digitos(av.telefono),
+    telefono: tel,
     origen: 'aviso',
     referencia: 'pago',
-    contenido: `• ${texto}`,
-    vence: new Date(Date.now() + Math.max(0, av.juntar_min || 0) * MIN).toISOString(),
+    contenido: `• ${texto}${codigo ? `\n   ↪️ Para contestarle desde aquí: *R${codigo} tu mensaje*.` : ''}`,
+    vence: new Date(Date.now() + (urgente ? 0 : Math.max(0, av.juntar_min || 0) * MIN)).toISOString(),
   });
 }
 

@@ -1539,3 +1539,21 @@ create policy "siguelo_ia_preguntas_select" on siguelo_ia_preguntas for select
 -- Los de esta etapa ya concretaron (se inscribieron, van a asistir...): no reciben
 -- recordatorios ni reactivaciones, ni los de la primera etapa.
 alter table siguelo_etapas add column if not exists sin_seguimiento boolean not null default false;
+
+-- ---------- 40. Masivos que se arman al lanzar, adaptados por la IA, y avisos por negocio ----------
+-- armado_en: cuándo se armó la lista de destinatarios (null = se arma al empezar, con todos los
+-- que correspondan en ese momento). adaptar: la IA adapta el mensaje a cada cliente con lo que
+-- ya contó (fiel al original).
+alter table siguelo_masivos
+  add column if not exists armado_en timestamptz,
+  add column if not exists adaptar boolean not null default false;
+-- Los masivos que ya tenían su lista quedan como armados.
+update siguelo_masivos set armado_en = creado_en where armado_en is null and total > 0;
+
+-- El número al que le llegan los avisos de este negocio (vacío = el de IA → Ajustes → Avisos).
+-- Un mismo número puede ser el de varios negocios.
+alter table siguelo_negocios add column if not exists avisos_telefono text;
+
+-- Todo aviso sobre un cliente trae su código (R12) para que le respondas desde tu WhatsApp.
+-- aprender: solo las preguntas (lo que no sabía) quedan en "Lo que aprendió"; un reclamo o un pago no.
+alter table siguelo_ia_preguntas add column if not exists aprender boolean not null default true;

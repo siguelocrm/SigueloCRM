@@ -63,8 +63,8 @@ paso('a quiénes les llega: chats del número, todos, etapas, etiquetas, lista p
 olvidarNegocios();
 const crear = async (nombre: string, destinatarios: { telefono: string; nombre: string | null; contacto_id: string | null }[], extra: Record<string, unknown> = {}) => {
   const m = (await uno(
-    `insert into siguelo_masivos (empresa_id, nombre, linea_id, textos, total, pausa_min_seg, pausa_max_seg, maximo_diario, hora_inicio, hora_fin)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, '08:00', '20:00') returning id`,
+    `insert into siguelo_masivos (empresa_id, nombre, linea_id, textos, total, pausa_min_seg, pausa_max_seg, maximo_diario, hora_inicio, hora_fin, armado_en)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, '08:00', '20:00', now()) returning id`,
     [empresa, nombre, L1, extra.textos ?? ['Hola {nombre}, ¡empiezan las vacaciones útiles en {sucursal}! 🏆', '{nombre}, abrimos inscripciones en {sucursal} 🙌'], destinatarios.length, 40, 60, extra.maximo ?? 150],
   )).id;
   let i = 0;
@@ -144,6 +144,84 @@ const fin = await filas(`select estado, count(*)::int n from siguelo_masivo_envi
 assert.deepEqual(fin.map((f: any) => `${f.estado}:${f.n}`), ['enviado:1', 'error:4']);
 assert.equal(enviados[0].texto.startsWith('Hola, ') || enviados[0].texto.startsWith('Abrimos'), true, 'sin nombre, el saludo queda bien');
 paso('salta los números sin WhatsApp y se pausa solo después de 3 errores seguidos');
+
+// ---------- 5. Programado: la lista se arma al empezar (incluye a los que escribieron después) ----------
+enviados.length = 0;
+_reiniciarRitmo();
+await pg.query(`update siguelo_masivos set estado = 'terminado'`);
+const nuevoMasivo = async (nombre: string, filtro: unknown, textos: string[], extra: { inicia?: number; adaptar?: boolean } = {}) =>
+  (await uno(
+    `insert into siguelo_masivos (empresa_id, nombre, linea_id, textos, total, pausa_min_seg, pausa_max_seg, maximo_diario, hora_inicio, hora_fin, filtro, inicia_en, armado_en, adaptar)
+     values ($1, $2, $3, $4, 0, 40, 60, 500, '00:00', '23:59', $5::jsonb, $6, null, $7) returning id`,
+    [empresa, nombre, L1, textos, JSON.stringify(filtro), new Date(extra.inicia ?? reloj.ahora).toISOString(), !!extra.adaptar],
+  )).id;
+const tProg = reloj.ahora + 2 * HORA;
+const mProg = await nuevoMasivo('Programado', { origen: 'chats' }, ['Hola {nombre}, abrimos inscripciones 🙌'], { inicia: tProg });
+await vueltas(2, 61_000);
+assert.equal((await masivo(mProg)).armado_en, null, 'todavía no empieza: no tiene lista');
+await contacto('59170000050', 'Nueva', primera, L1); // escribe después de programarlo
+reloj.ahora = tProg + 1000;
+await procesarMasivos();
+const rProg = await masivo(mProg);
+assert.ok(rProg.armado_en, 'al empezar arma la lista');
+const listaProg = (await pg.query<any>(`select telefono from siguelo_masivo_envios where masivo_id = $1`, [mProg])).rows.map((r: any) => r.telefono);
+assert.ok(listaProg.includes('59170000050'), 'incluye a quien escribió después de programarlo');
+assert.equal(rProg.total, listaProg.length);
+await procesarMasivos();
+assert.equal((await pg.query<any>(`select count(*)::int n from siguelo_masivo_envios where masivo_id = $1`, [mProg])).rows[0].n, listaProg.length, 'no se arma dos veces');
+await pg.query(`update siguelo_masivos set estado = 'cancelado' where id = $1`, [mProg]);
+paso('programado: la lista se arma al empezar, con todos los que correspondan en ese momento (también los nuevos)');
+
+// ---------- 6. Solo los que mostraron interés (lo que anotó la IA) ----------
+const lectura = (tel: string, contactoId: string, interes: string) =>
+  pg.query(
+    `insert into siguelo_ia_lecturas (conversacion_id, empresa_id, contacto_id, linea_id, interes)
+     select c.id, $1, $2, $3, $4 from conversaciones c where c.contacto_telefono = $5 and c.linea_id = $3 limit 1`,
+    [empresa, contactoId, L1, interes, tel],
+  );
+await lectura('59170000001', ana, 'Curso de ajedrez para su hijo de 9 años');
+await lectura('59170000002', beto, 'Dibujo y pintura');
+assert.deepEqual(tels(await armarDestinatarios(empresa, L1, { origen: 'chats', intereses: ['Ajedrez'] })), ['59170000001'], 'por palabra (sin importar mayúsculas)');
+assert.deepEqual(tels(await armarDestinatarios(empresa, L1, { origen: 'chats', con_interes: true })), ['59170000001', '59170000002'], 'cualquier interés');
+const { interesesComunes } = await import(R + 'masivos/masivos.ts');
+assert.ok((await interesesComunes(empresa)).some((x: any) => /ajedrez/i.test(x.texto)), 'muestra los intereses para elegir');
+paso('solo a los que mostraron interés, según lo que anotó la IA (por palabra o cualquiera)');
+
+// ---------- 7. Grupos de WhatsApp ----------
+enviados.length = 0;
+_reiniciarRitmo();
+const GRUPO = '120363000000000001@g.us';
+assert.deepEqual((await armarDestinatarios(empresa, L1, { origen: 'grupos', grupos: [{ id: GRUPO, nombre: 'Padres Quillacollo' }] })).map((d: any) => d.telefono), [GRUPO]);
+const mGrupo = await nuevoMasivo('Aviso a grupos', { origen: 'grupos', grupos: [{ id: GRUPO, nombre: 'Padres Quillacollo' }] }, ['Hola {nombre}, mañana no hay clases 🙏']);
+await vueltas(3, 61_000);
+assert.equal(enviados.find((e) => e.jid === GRUPO)?.texto, 'Hola, mañana no hay clases 🙏', 'se publica en el grupo, sin {nombre}');
+assert.equal((await uno(`select count(*)::int n from contactos where telefono = $1`, [GRUPO])).n, 0, 'un grupo no queda como contacto');
+assert.equal((await masivo(mGrupo)).estado, 'terminado');
+paso('se publica en grupos de WhatsApp (sin crear contactos ni chats)');
+
+// ---------- 8. "Que la IA adapte el mensaje": fiel al original, con lo que el cliente ya contó ----------
+enviados.length = 0;
+_reiniciarRitmo();
+await pg.query(`insert into siguelo_ia (empresa_id, activa, modo) values ($1, true, 'automatico')`, [empresa]);
+await pg.query(`insert into siguelo_ia_clave (empresa_id, clave) values ($1, 'sk-prueba')`, [empresa]);
+const pedidosIA: string[] = [];
+const fetchReal = globalThis.fetch;
+globalThis.fetch = (async (url: string, init: any) => {
+  if (!String(url).startsWith('https://api.openai.com/')) return fetchReal(url, init);
+  const usuario: string = JSON.parse(init.body).messages[1].content;
+  pedidosIA.push(usuario);
+  const mensaje = /ajedrez/.test(usuario) ? 'Hola Ana, abrimos inscripciones 🙌 ¡Tu hijo de 9 años puede seguir con ajedrez!' : '';
+  return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ mensaje }) } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }), { status: 200 });
+}) as typeof fetch;
+const mAdapt = await nuevoMasivo('Adaptado', { origen: 'chats', intereses: [] }, ['Hola {nombre}, abrimos inscripciones 🙌'], { adaptar: true });
+await vueltas(30, 61_000);
+const aAna = enviados.find((e) => e.jid.startsWith('59170000001'))?.texto;
+assert.equal(aAna, 'Hola Ana, abrimos inscripciones 🙌 ¡Tu hijo de 9 años puede seguir con ajedrez!', 'adaptado con lo que contó');
+assert.ok(pedidosIA.some((p) => /MENSAJE ORIGINAL:\n"""\nHola Ana, abrimos inscripciones 🙌\n"""/.test(p) && /Le interesa: Curso de ajedrez/.test(p)), 'la IA recibe el original y lo que sabemos');
+assert.equal(enviados.find((e) => e.jid.startsWith('59170000050'))?.texto, 'Hola Nueva, abrimos inscripciones 🙌', 'si no hay nada que agregar, sale el original');
+await pg.query(`update siguelo_masivos set estado = 'cancelado' where id = $1`, [mAdapt]);
+globalThis.fetch = fetchReal;
+paso('"que la IA adapte el mensaje": fiel al original, con los datos del cliente; si no hay nada, sale igual');
 
 console.log(`\n${ok} pasos OK · mensajes "enviados":`);
 for (const e of enviados) console.log(`  → ${e.jid} ${JSON.stringify(e.texto)}`);

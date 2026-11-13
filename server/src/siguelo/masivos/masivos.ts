@@ -1,11 +1,12 @@
 import type { AnyMessageContent } from '@whiskeysockets/baileys';
 import { db } from '../db.js';
 import { MIN, enFranja, inicioDelDia, type Franja } from '../horario.js';
-import { elegirVariante } from '../textos.js';
+import { elegirVariante, normalizarTexto } from '../textos.js';
 import { variablesDeLinea } from '../negocios.js';
 import { obtenerSesion } from '../../whatsapp/sesiones.js';
 import { marcarEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import type { FiltroMasivo, MasivoEnvioRow, MasivoRow } from '../tipos.js';
+import { adaptarParaCliente } from './adaptar.js';
 
 // Mensajes masivos (SígueloCRM): un mensaje a muchos contactos desde un número,
 // sin apuro y con los mismos cuidados que el seguimiento para que WhatsApp no
@@ -61,7 +62,9 @@ async function contactosPorTelefono(empresaId: string, telefonos: string[]): Pro
 export async function armarDestinatarios(empresaId: string, lineaId: string, filtro: FiltroMasivo): Promise<Destinatario[]> {
   // 1. De dónde salen los números.
   let base: { telefono: string; nombre: string | null }[] = [];
-  if (filtro.origen === 'lista') {
+  if (filtro.origen === 'grupos') {
+    // Solo grupos de WhatsApp (van al final).
+  } else if (filtro.origen === 'lista') {
     base = (filtro.lista || []).map(leerLinea).filter((x): x is { telefono: string; nombre: string | null } => !!x);
   } else if (filtro.origen === 'chats') {
     const chats = await todas((d, h) => db.from('conversaciones').select('contacto_telefono, contacto_nombre').eq('linea_id', lineaId).order('creado_en').range(d, h));
@@ -90,15 +93,50 @@ export async function armarDestinatarios(empresaId: string, lineaId: string, fil
     const { data } = await db.from('etapas_venta').select('id').eq('empresa_id', empresaId).eq('tipo', 'perdida');
     perdidas = new Set((data || []).map((e) => e.id));
   }
+  // Solo los que mostraron interés: lo que anotó la IA al leer su chat (con palabras, los que coinciden).
+  let conInteres: Set<string> | null = null;
+  if (filtro.con_interes || filtro.intereses?.length) {
+    const palabras = (filtro.intereses || []).map(normalizarTexto).filter(Boolean);
+    const filas = await todas((d, h) => db.from('siguelo_ia_lecturas').select('contacto_id, interes').eq('empresa_id', empresaId).range(d, h));
+    conInteres = new Set(
+      filas
+        .filter((f) => f.contacto_id && f.interes?.trim() && (!palabras.length || palabras.some((p) => normalizarTexto(f.interes).includes(p))))
+        .map((f) => f.contacto_id!),
+    );
+  }
   const salida: Destinatario[] = [];
   for (const u of unicos.values()) {
     const c = contactos.get(u.telefono);
     if (etapas.size && (!c?.etapa_id || !etapas.has(c.etapa_id))) continue;
     if (conEtiqueta && (!c || !conEtiqueta.has(c.id))) continue;
+    if (conInteres && (!c || !conInteres.has(c.id))) continue;
     if (c?.etapa_id && perdidas.has(c.etapa_id)) continue;
     salida.push({ telefono: u.telefono, nombre: (filtro.origen === 'lista' && u.nombre) || c?.nombre || u.nombre || null, contacto_id: c?.id ?? null });
   }
+  // Grupos de WhatsApp elegidos (se les publica el mensaje tal cual).
+  for (const g of filtro.grupos || []) {
+    if (/^[\d-]+@g\.us$/.test(g.id) && !salida.some((s) => s.telefono === g.id)) salida.push({ telefono: g.id, nombre: `Grupo: ${g.nombre}`, contacto_id: null });
+  }
   return salida;
+}
+
+export const esGrupo = (telefono: string) => telefono.endsWith('@g.us');
+
+// Los intereses que más anotó la IA (para elegir a quiénes les llega).
+export async function interesesComunes(empresaId: string): Promise<{ texto: string; n: number }[]> {
+  const filas = await todas((d, h) => db.from('siguelo_ia_lecturas').select('interes').eq('empresa_id', empresaId).range(d, h));
+  const cuenta = new Map<string, { texto: string; n: number }>();
+  for (const f of filas) {
+    for (const parte of String(f.interes || '').split(/[,;/]| y /)) {
+      const texto = parte.trim();
+      const k = normalizarTexto(texto);
+      if (k.length < 3) continue;
+      const actual = cuenta.get(k) ?? { texto, n: 0 };
+      actual.n++;
+      cuenta.set(k, actual);
+    }
+  }
+  return [...cuenta.values()].sort((a, b) => b.n - a.n).slice(0, 15);
 }
 
 // ---------- El envío ----------
@@ -215,7 +253,9 @@ async function enviarUno(m: MasivoRow, ahora: number): Promise<void> {
   if (!reclamado?.length) return;
   if (m.estado !== 'enviando' || m.motivo) await actualizarMasivo(m, { estado: 'enviando', motivo: null });
 
-  if (!(await tieneWhatsapp(sesion.sock, siguiente.telefono))) {
+  // Un grupo de WhatsApp: se publica tal cual (sin {nombre}, sin adaptar, sin crear contacto ni chat).
+  const grupo = esGrupo(siguiente.telefono);
+  if (!grupo && !(await tieneWhatsapp(sesion.sock, siguiente.telefono))) {
     await cerrarEnvio(siguiente, { estado: 'error', motivo: 'Ese número no tiene WhatsApp' });
     await actualizarMasivo(m, { errores: m.errores + 1 });
     est.proximo = Date.now() + 3_000 + Math.random() * 4_000;
@@ -223,7 +263,7 @@ async function enviarUno(m: MasivoRow, ahora: number): Promise<void> {
   }
 
   const variables = await variablesDeLinea(m.linea_id);
-  const elegido = elegirVariante(m.textos, siguiente.nombre, null, variables);
+  const elegido = elegirVariante(m.textos, grupo ? null : siguiente.nombre, null, variables);
   if (!elegido.texto && !m.media_url) {
     const motivo = elegido.faltan.length ? `Falta completar ${elegido.faltan.join(', ')} en la ficha del negocio` : 'El mensaje no tiene texto';
     await cerrarEnvio(siguiente, { estado: 'error', motivo });
@@ -232,9 +272,12 @@ async function enviarUno(m: MasivoRow, ahora: number): Promise<void> {
   }
 
   try {
-    const contactoId = await asegurarContacto(m.empresa_id, siguiente);
-    const chatId = await chatDe(m.linea_id, siguiente.telefono, siguiente.nombre);
-    const resultado = await sesion.sock.sendMessage(`${siguiente.telefono}@s.whatsapp.net`, contenidoMasivo(m, elegido.texto));
+    const contactoId = grupo ? null : await asegurarContacto(m.empresa_id, siguiente);
+    const chatId = grupo ? null : await chatDe(m.linea_id, siguiente.telefono, siguiente.nombre);
+    // "Que la IA adapte el mensaje": fiel al original, con lo que este cliente ya contó (si falla, va el original).
+    if (m.adaptar && !grupo && elegido.texto) elegido.texto = await adaptarParaCliente(m.empresa_id, contactoId, chatId, siguiente.nombre, elegido.texto).catch(() => elegido.texto);
+    const jid = grupo ? siguiente.telefono : `${siguiente.telefono}@s.whatsapp.net`;
+    const resultado = await sesion.sock.sendMessage(jid, contenidoMasivo(m, elegido.texto));
     const whatsappId = resultado?.key?.id || null;
     if (whatsappId) marcarEnviadoPorCRM(whatsappId);
     const { data: mensaje } = chatId
@@ -283,10 +326,43 @@ export async function procesarMasivos(): Promise<void> {
   if (error || !data?.length) return;
   const usadas = new Set<string>();
   for (const m of data) {
+    // Programado sin lista todavía: se arma ahora, con todos los que correspondan en este momento.
+    if (m.armado_en === null && !(await armar(m))) continue;
     if (usadas.has(m.linea_id)) continue;
     usadas.add(m.linea_id);
     await enviarUno(m, ahora);
   }
+}
+
+// Arma la lista de destinatarios de un masivo al empezar. Devuelve false si no queda nada que enviar.
+export async function armar(m: MasivoRow): Promise<boolean> {
+  // Lo marca primero: si otra vuelta ya lo estaba armando, no se arma dos veces.
+  const ahoraIso = new Date().toISOString();
+  const { data: tomado } = await db.from('siguelo_masivos').update({ armado_en: ahoraIso }).eq('id', m.id).is('armado_en', null).select('id');
+  if (!tomado?.length) return false;
+  m.armado_en = ahoraIso;
+  let destinatarios: Destinatario[];
+  try {
+    destinatarios = await armarDestinatarios(m.empresa_id, m.linea_id, m.filtro);
+  } catch (err) {
+    await actualizarMasivo(m, { armado_en: null, motivo: `No se pudo armar la lista: ${(err as Error).message}` });
+    return false;
+  }
+  destinatarios = destinatarios.slice(0, MAX_DESTINATARIOS);
+  if (!destinatarios.length) {
+    await actualizarMasivo(m, { estado: 'terminado', total: 0, motivo: 'Al empezar no había nadie que cumpliera los filtros.', terminado_en: ahoraIso });
+    return false;
+  }
+  const mezclados = [...destinatarios].sort(() => Math.random() - 0.5);
+  for (let i = 0; i < mezclados.length; i += 500) {
+    await db.from('siguelo_masivo_envios').insert(
+      mezclados.slice(i, i + 500).map((d, k) => ({ masivo_id: m.id, empresa_id: m.empresa_id, contacto_id: d.contacto_id, telefono: d.telefono, nombre: d.nombre, orden: i + k })),
+      { defaultToNull: false },
+    );
+  }
+  await actualizarMasivo(m, { total: mezclados.length, estado: 'enviando', motivo: null });
+  console.log(`📣 Masivo "${m.nombre}": lista armada al empezar (${mezclados.length}).`);
+  return true;
 }
 
 // Al arrancar: lo que quedó "enviando" por un reinicio a mitad de camino vuelve a la fila.

@@ -29,6 +29,9 @@ type Masivo = {
   motivo: string | null;
   creado_en: string;
   terminado_en: string | null;
+  // null = la lista se arma al empezar (con todos los que correspondan en ese momento).
+  armado_en?: string | null;
+  adaptar?: boolean;
 };
 type Envio = { id: string; telefono: string; nombre: string | null; estado: string; motivo: string | null; enviado_en: string | null };
 
@@ -51,7 +54,12 @@ const hora = (iso: string) => new Intl.DateTimeFormat('es', { day: '2-digit', mo
 
 // Por qué está esperando (el servidor deja un código en "motivo").
 function explicar(m: Masivo): string | null {
-  if (m.estado === 'programado' && new Date(m.inicia_en).getTime() > Date.now()) return `Empieza el ${hora(m.inicia_en)}.`;
+  if (m.estado === 'programado' && new Date(m.inicia_en).getTime() > Date.now()) {
+    return m.armado_en === null
+      ? `Empieza el ${hora(m.inicia_en)}. La lista se arma en ese momento, con todos los que correspondan (hoy serían ${m.total}).${m.adaptar ? ' La IA adapta el mensaje a cada uno.' : ''}`
+      : `Empieza el ${hora(m.inicia_en)}.${m.adaptar ? ' La IA adapta el mensaje a cada uno.' : ''}`;
+  }
+  if (m.estado === 'programado' && m.armado_en === null) return 'Armando la lista…';
   if (m.motivo === 'fuera') return `Esperando el horario (${m.hora_inicio} a ${m.hora_fin}).`;
   if (m.motivo === 'tope') return `Llegó al máximo de hoy (${m.maximo_diario} desde este número): sigue mañana.`;
   if (m.motivo === 'desconectado') return 'El número está desconectado: sigue cuando lo conectes en Conexiones.';
@@ -176,7 +184,7 @@ export default function Masivos() {
           const est = ESTADO[m.estado];
           const hechos = m.enviados + m.errores;
           const pct = m.total ? Math.round((hechos / m.total) * 100) : 0;
-          const nota = ['programado', 'enviando', 'pausado'].includes(m.estado) ? explicar(m) : null;
+          const nota = ['programado', 'enviando', 'pausado'].includes(m.estado) ? explicar(m) : m.estado === 'terminado' && m.motivo ? m.motivo : null;
           return (
             <Tarjeta key={m.id} className="p-4 flex flex-col gap-2.5">
               <div className="flex flex-wrap items-start justify-between gap-2">
