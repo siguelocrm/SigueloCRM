@@ -8,6 +8,7 @@ import { negociosDeEmpresa, numerosDeAvisos, telefonoAvisosDe } from '../negocio
 import { datosAulaParaIA } from '../aula/aula.js';
 import { borrar, comentarios, ocultar, responder, type AppMeta, type ComentarioMeta } from './meta.js';
 import type { ComentarioRedRow, CuentaRedRow, IaRow, NegocioRow } from '../tipos.js';
+import { recortarTexto } from '../textos.js';
 
 // Comentarios de Facebook e Instagram (las cuentas conectadas en "Redes
 // sociales"). Cada 3 minutos se leen los comentarios nuevos de cada cuenta y la
@@ -24,10 +25,7 @@ const ESPERA_RESPALDO_MS = 6 * HORA; // si no respondes, se publica la respuesta
 const ms = (iso: string | null | undefined) => (iso ? new Date(iso).getTime() || 0 : 0);
 const digitos = (t: string | null | undefined) => String(t || '').replace(/\D/g, '');
 const azar = (min: number, max: number) => min + Math.random() * (max - min);
-const recortar = (s: unknown, n: number) => {
-  const t = String(s ?? '').trim();
-  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
-};
+const recortar = recortarTexto;
 
 export const TIPOS_COMENTARIO = ['pregunta', 'interes', 'positivo', 'negativo', 'spam', 'otro'] as const;
 type Decision = { tipo: (typeof TIPOS_COMENTARIO)[number]; accion: 'responder' | 'ocultar' | 'ignorar' | 'preguntar'; respuesta: string; respaldo: string; motivo: string };

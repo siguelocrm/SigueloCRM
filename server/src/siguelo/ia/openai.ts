@@ -1,3 +1,4 @@
+import { limpiarTextos } from '../textos.js';
 // Llamadas a OpenAI (la IA de la Fase 3). Igual que fondo/fondo.js de la
 // extensión: Chat Completions pidiendo la respuesta en JSON, y si el modelo
 // no acepta un parámetro, se reintenta sin él.
@@ -23,7 +24,8 @@ async function pedir(ruta: string, clave: string, cuerpo?: unknown): Promise<Res
     const r = await fetch(API + ruta, {
       method: cuerpo ? 'POST' : 'GET',
       headers: { Authorization: `Bearer ${clave}`, ...(cuerpo ? { 'Content-Type': 'application/json' } : {}) },
-      body: cuerpo ? JSON.stringify(cuerpo) : undefined,
+      // Sin medios emojis: OpenAI rechaza todo el pedido si hay uno ("failed to parse JSON value").
+      body: cuerpo ? JSON.stringify(limpiarTextos(cuerpo)) : undefined,
       signal: control.signal,
     });
     let datos = null;

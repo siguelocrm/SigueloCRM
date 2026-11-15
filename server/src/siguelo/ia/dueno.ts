@@ -5,6 +5,7 @@ import { registrar } from '../registro.js';
 import { llamar } from './config.js';
 import { negociosDeEmpresa, numeroAviso, telefonoAvisosDe } from '../negocios.js';
 import type { IaRow } from '../tipos.js';
+import { recortarTexto } from '../textos.js';
 
 // Lo que la IA no sabe te lo pregunta por WhatsApp con un código ("R12"). Cuando
 // le respondes "R12 tu respuesta" (o solo tu respuesta, si hay una sola pregunta
@@ -14,7 +15,7 @@ import type { IaRow } from '../tipos.js';
 
 type Config = { ia: IaRow; clave: string; zona: string };
 const digitos = (t: string | null | undefined) => String(t || '').replace(/\D/g, '');
-const recortar = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
+const recortar = (t: string, n: number) => recortarTexto(t, n);
 
 // Crea la pregunta y devuelve su código (null si falta pegar el SQL).
 export async function crearPregunta(

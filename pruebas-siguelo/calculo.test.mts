@@ -24,6 +24,19 @@ t('Madrid con cambio de hora (25 oct 2026)', () => assert.equal(H.instante('2026
 t('{nombre} con nombre', () => assert.equal(T.aplicarNombre('Hola {nombre}, ¿cómo estás?', 'Ana María'), 'Hola Ana, ¿cómo estás?'));
 t('{nombre} sin nombre', () => assert.equal(T.aplicarNombre('Hola {nombre}, ¿cómo estás?', null), 'Hola, ¿cómo estás?'));
 t('{nombre} al inicio sin nombre', () => assert.equal(T.aplicarNombre('{nombre}, ¡hola! Paso por aquí', '+591 712 34567'), '¡Hola! Paso por aquí'));
+t('recortar no parte un emoji', () => {
+  const r = T.recortarTexto('Hola 😊 quiero info', 7);
+  assert.equal(r, 'Hola …');
+  assert.doesNotMatch(JSON.stringify(r), /\\ud[89ab]/);
+  assert.equal(T.cortar('ab😊', 3), 'ab');
+  assert.equal(T.cortar('ab😊', 4), 'ab😊');
+});
+t('medio emoji suelto se limpia (OpenAI lo rechaza)', () => {
+  const roto = 'Hola 😊'.slice(0, 6);
+  const limpio = T.limpiarTextos({ messages: [{ content: roto }, { content: 'ok 👍' }] });
+  assert.equal(limpio.messages[0].content, 'Hola ');
+  assert.equal(limpio.messages[1].content, 'ok 👍');
+});
 t('variante no repite la última', () => {
   for (let i = 0; i < 50; i++) assert.equal(T.elegirVariante(['Uno {nombre}', 'Dos'], 'Ana', 'Uno Ana\n\nSi no quieres, responde stop').texto, 'Dos');
 });
@@ -201,4 +214,22 @@ t('club: lo que falta y juntar lo nuevo con lo de antes', () => {
   assert.deepEqual(RS.faltanClub(d), []);
   assert.deepEqual(RS.faltanClub(RS.mezclarDatosClub(d, { estudiantes: [{}, { nombre: 'Ana' }] as any })), ['Fecha de nacimiento de Ana', 'Curso y horario de Ana']);
 });
+
+// ---------- OpenAI: nunca se manda un medio emoji ----------
+{
+  const O = await import(R + 'ia/openai.ts');
+  const real = globalThis.fetch;
+  let cuerpo = '';
+  globalThis.fetch = (async (_u: string, init: any) => {
+    cuerpo = init.body;
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }), { status: 200 });
+  }) as typeof fetch;
+  const r = await O.chatJSON('k', 'gpt-4o-mini', [{ role: 'user', content: 'Hola 😊 quiero'.slice(0, 6) }]);
+  globalThis.fetch = real;
+  t('chatJSON limpia el medio emoji antes de enviarlo', () => {
+    assert.equal(r.ok, true);
+    assert.doesNotMatch(cuerpo, /\\ud[89ab]/i);
+    assert.equal(JSON.parse(cuerpo).messages[0].content, 'Hola ');
+  });
+}
 console.log(`\n${ok} pruebas OK`);

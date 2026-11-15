@@ -83,3 +83,31 @@ export function agregarPie(texto: string, pie: Pie | null | undefined, nombre: s
   if (!variantes.length) return texto;
   return `${texto}\n\n${variantes[Math.floor(Math.random() * variantes.length)].texto}`;
 }
+
+// ---------- Emojis enteros ----------
+// Un emoji ocupa dos "letras" en JavaScript; si un recorte lo parte por la mitad queda un medio
+// emoji que OpenAI y Supabase rechazan ("failed to parse JSON value") y la IA se traba.
+
+// Quita los medios emojis sueltos.
+export const sinMedioEmoji = (t: string): string => t.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, '');
+
+// Corta a n letras sin partir un emoji.
+export function cortar(t: string, n: number): string {
+  if (t.length <= n) return t;
+  const s = t.slice(0, n);
+  return /[\ud800-\udbff]$/.test(s) ? s.slice(0, -1) : s;
+}
+
+// Corta y agrega "…" (sin partir un emoji).
+export const recortarTexto = (s: unknown, n: number): string => {
+  const t = String(s ?? '').trim();
+  return t.length > n ? `${cortar(t, n - 1)}…` : t;
+};
+
+// Limpia todos los textos de un pedido (para OpenAI): ningún medio emoji llega nunca.
+export function limpiarTextos<T>(x: T): T {
+  if (typeof x === 'string') return sinMedioEmoji(x) as T;
+  if (Array.isArray(x)) return x.map(limpiarTextos) as T;
+  if (x && typeof x === 'object') return Object.fromEntries(Object.entries(x).map(([k, v]) => [k, limpiarTextos(v)])) as T;
+  return x;
+}

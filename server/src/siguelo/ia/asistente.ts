@@ -4,6 +4,7 @@ import { olvidarNegocios } from '../negocios.js';
 import { llamar, olvidarCache } from './config.js';
 import { REGLA_ESTILO, describirEstilo } from './contexto.js';
 import type { Adaptar, AjustesRow, EtapaConfigRow, IaRow, MensajeAsistenteRow, NegocioRow, PalabrasEtapa, Secuencia } from '../tipos.js';
+import { recortarTexto } from '../textos.js';
 
 // El asistente: le escribes en la pantalla IA, te explica cómo funciona todo y
 // cómo está configurado, y te propone cambios ("pon las reactivaciones a 1, 3,
@@ -26,10 +27,7 @@ const HISTORIA = 12; // mensajes anteriores que ve el asistente
 const MAX_ACCIONES = 10;
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-const recortar = (s: unknown, n: number) => {
-  const t = String(s ?? '').trim();
-  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
-};
+const recortar = recortarTexto;
 const horasATexto = (h: number) => (h >= 24 && h % 24 === 0 ? `${h / 24} ${h === 24 ? 'día' : 'días'}` : `${h} h`);
 const listaY = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} y ${xs[xs.length - 1]}`);
 const comoModo = (cual: 'recordatorios' | 'reactivacion', modo: string) =>

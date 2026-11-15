@@ -27,6 +27,8 @@ globalThis.fetch = (async (url: string, init: any) => {
     fallar--;
     return new Response(JSON.stringify({ error: { message: 'quota exceeded' } }), { status: 429 });
   }
+  // Ningún medio emoji (OpenAI responde 400 "failed to parse JSON value").
+  if (/\\ud[89ab][0-9a-f]{2}(?!\\ud[c-f])|(?<!\\ud[89ab][0-9a-f]{2})\\ud[c-f][0-9a-f]{2}/i.test(init.body)) throw new Error('medio emoji enviado a OpenAI');
   const cuerpo = JSON.parse(init.body);
   const l = { sistema: cuerpo.messages[0].content, usuario: cuerpo.messages[1].content };
   llamadas.push(l);

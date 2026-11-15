@@ -4,6 +4,7 @@
 
 import type { MensajeChat } from './openai.js';
 import type { GrupoNegocio, IaRow, NegocioRow, TipoAviso } from '../tipos.js';
+import { recortarTexto, cortar } from '../textos.js';
 
 export type LineaConversacion = { quien: 'cliente' | 'nosotros' | 'automatico'; texto: string; cuando: string };
 export type EtapaCorta = { id: string; nombre: string; tipo: 'normal' | 'ganada' | 'perdida' };
@@ -84,10 +85,7 @@ export const describirEstilo = (e: IaRow['estilo']): string => {
   return `tono ${v('tono', e.tono)}; ${v('trato', e.trato)}; ${v('emojis', e.emojis)}; largo ${v('largo', e.largo)}; formato: ${v('saltos', e.saltos)}`;
 };
 
-const recortar = (s: unknown, n: number) => {
-  const t = String(s ?? '').trim();
-  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
-};
+const recortar = recortarTexto;
 
 // Ids cortos para la IA (e1, r1, n1, g1): gasta menos y no se equivoca copiando ids largos.
 type Mapa = Map<string, string>;
@@ -306,7 +304,7 @@ export function validarResultado(j: Record<string, unknown>, ids: ReturnType<typ
   const real = (m: Mapa, x: unknown) => (typeof x === 'string' ? m.get(x.trim()) ?? null : null);
   const paseCrudo = j.pase && typeof j.pase === 'object' ? (j.pase as Record<string, unknown>) : null;
   const negocioPase = paseCrudo ? real(ids.negocios, paseCrudo.negocio_id) : null;
-  const respuesta = conRespuesta ? String(j.respuesta ?? '').trim().slice(0, 2000) : '';
+  const respuesta = conRespuesta ? cortar(String(j.respuesta ?? '').trim(), 2000) : '';
   const ubicacion = conRespuesta ? real(ids.ubicaciones, j.ubicacion) : null;
   return {
     resumen: recortar(j.resumen, 200),

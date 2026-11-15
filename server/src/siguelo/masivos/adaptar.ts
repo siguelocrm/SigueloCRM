@@ -1,11 +1,12 @@
 import { db } from '../db.js';
 import { configDeEmpresa, llamar } from '../ia/config.js';
+import { recortarTexto } from '../textos.js';
 
 // "Que la IA adapte el mensaje si corresponde": cada mensaje del masivo queda lo más fiel posible al
 // original, pero con lo que este cliente ya contó (el curso que le interesa, la edad del niño...).
 // Si no hay nada útil, o la IA falla, sale el mensaje original.
 
-const recortar = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
+const recortar = (t: string, n: number) => recortarTexto(t, n);
 
 export async function adaptarParaCliente(empresaId: string, contactoId: string | null, conversacionId: string | null, nombre: string | null, original: string): Promise<string> {
   const c = await configDeEmpresa(empresaId);

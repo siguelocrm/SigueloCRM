@@ -15,6 +15,7 @@ import { desempaquetar, empaquetar, linkDeMapa } from './ubicacion.js';
 import { crearPregunta, leerDueno } from './dueno.js';
 import { fueEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import type { CursoRow, EtapaVentaRow, IaRow, LecturaRow, NegocioRow, PorLeerRow, SalidaRow, TipoAviso } from '../tipos.js';
+import { cortar } from '../textos.js';
 
 // La IA lee cada conversación cuando el cliente termina de escribir y, con la
 // ficha del negocio de ese número: mueve de etapa, anota lo que necesita que
@@ -484,7 +485,7 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
         if (m.remitente !== 'cliente') break;
         if (m.tipo === 'texto' && m.contenido?.trim()) ultimos.unshift(m.contenido.trim());
       }
-      return ultimos.join(' / ').slice(0, 500);
+      return cortar(ultimos.join(' / '), 500);
     })(),
     ultimaPersona,
   };
