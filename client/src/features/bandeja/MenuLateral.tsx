@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ChevronRight, LogOut, Moon, PanelLeftClose, PanelLeftOpen, SlidersHorizontal, Sun } from 'lucide-react';
+import { ChevronRight, LogOut, Moon, PanelLeftClose, PanelLeftOpen, Plus, Repeat, SlidersHorizontal, Sun } from 'lucide-react';
+import type { CuentaGuardada } from '../../lib/cuentas';
 import LogoEmpresa from '../../components/LogoEmpresa';
 import type { Empresa, Usuario } from '../../lib/tipos';
 import type { Seccion } from './constantes';
@@ -15,6 +16,11 @@ interface MenuLateralProps {
   empresa: Empresa | null;
   usuario: Usuario;
   onCerrarSesion: () => void;
+  /** Tus otras cuentas (club, agencia) para cambiar sin contraseña. */
+  otrasCuentas?: CuentaGuardada[];
+  onCambiarCuenta?: (id: string) => void;
+  /** Solo en tus cuentas de agencia: entrar a otra cuenta tuya. */
+  onAgregarCuenta?: () => void;
   /** Globo rojo por sección (ej. chats esperando respuesta en Bandeja). */
   insignias: Record<string, number>;
   temaClaro: boolean;
@@ -26,7 +32,7 @@ const GRUPO_ADMIN = 'Administrar';
 // Menú lateral: Trabajo y Automatizar a la vista; lo administrativo se recoge
 // en un único ítem "Administración" desplegable. Tema, plegar y cerrar sesión
 // viven en el menú del usuario (pie).
-export default function MenuLateral({ grupos, seccion, onIr, plegado, plegadoForzado, onPlegar, empresa, usuario, onCerrarSesion, insignias, temaClaro, onTema }: MenuLateralProps) {
+export default function MenuLateral({ grupos, seccion, onIr, plegado, plegadoForzado, onPlegar, empresa, usuario, onCerrarSesion, otrasCuentas = [], onCambiarCuenta, onAgregarCuenta, insignias, temaClaro, onTema }: MenuLateralProps) {
   const iniciales = usuario.nombre.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
   const itemsAdmin = grupos.find(([g]) => g === GRUPO_ADMIN)?.[1] ?? [];
   const gruposVisibles = grupos.filter(([g]) => g !== GRUPO_ADMIN);
@@ -139,6 +145,16 @@ export default function MenuLateral({ grupos, seccion, onIr, plegado, plegadoFor
               {!plegadoForzado && (
                 <button role="menuitem" onClick={() => { onPlegar(); setMenuUsuario(false); }} className="flex items-center gap-2.5 w-full rounded-[10px] px-2.5 py-2 text-[13.5px] text-left" style={{ color: 'var(--fg-2)' }}>
                   {plegado ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}{plegado ? 'Expandir menú' : 'Plegar menú'}
+                </button>
+              )}
+              {otrasCuentas.map((c) => (
+                <button key={c.id} role="menuitem" onClick={() => { setMenuUsuario(false); onCambiarCuenta?.(c.id); }} className="flex items-center gap-2.5 w-full rounded-[10px] px-2.5 py-2 text-[13.5px] text-left" style={{ color: 'var(--fg)' }} title={`Cambiar a ${c.empresa || c.correo}`}>
+                  <Repeat size={17} className="shrink-0" /><span className="truncate">Cambiar a <b>{c.empresa || c.correo}</b></span>
+                </button>
+              ))}
+              {onAgregarCuenta && (
+                <button role="menuitem" onClick={() => { setMenuUsuario(false); onAgregarCuenta(); }} className="flex items-center gap-2.5 w-full rounded-[10px] px-2.5 py-2 text-[13.5px] text-left" style={{ color: 'var(--fg-2)' }}>
+                  <Plus size={17} />Entrar a otra cuenta tuya
                 </button>
               )}
               <button role="menuitem" onClick={() => { setMenuUsuario(false); onCerrarSesion(); }} className="flex items-center gap-2.5 w-full rounded-[10px] px-2.5 py-2 text-[13.5px] text-left" style={{ color: 'var(--fg-2)' }}>

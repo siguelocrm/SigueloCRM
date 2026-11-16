@@ -1,4 +1,5 @@
 import { db } from '../db.js';
+import { estaBloqueada } from '../agencia/bloqueo.js';
 
 // Quién está debajo de quién y qué números ve cada uno (database/siguelo.sql,
 // secciones 29 a 31). Es lo mismo que revisan los permisos de la base de
@@ -35,9 +36,11 @@ export async function accesoDe(usuarioId: string): Promise<Acceso | null> {
   const a = acc.error ? null : acc.data;
   // Un acceso vencido cuenta como desactivado (al dueño principal no le vence).
   const vencido = !!a?.vence_en && !a.principal && new Date(a.vence_en).getTime() <= Date.now();
+  // La cuenta entera en pausa o vencida: nadie de ella (ni el dueño).
+  const cuentaBloqueada = await estaBloqueada(u.empresa_id);
   return {
     ...u,
-    activo: u.activo && !vencido,
+    activo: u.activo && !vencido && !cuentaBloqueada,
     vence_en: a?.vence_en ?? null,
     conFila: !!a,
     principal: !!a?.principal,

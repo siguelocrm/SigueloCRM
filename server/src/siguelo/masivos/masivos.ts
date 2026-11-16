@@ -7,6 +7,7 @@ import { obtenerSesion } from '../../whatsapp/sesiones.js';
 import { marcarEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import type { FiltroMasivo, MasivoEnvioRow, MasivoRow } from '../tipos.js';
 import { adaptarParaCliente } from './adaptar.js';
+import { cuentasBloqueadas } from '../agencia/bloqueo.js';
 
 // Mensajes masivos (SígueloCRM): un mensaje a muchos contactos desde un número,
 // sin apuro y con los mismos cuidados que el seguimiento para que WhatsApp no
@@ -325,7 +326,9 @@ export async function procesarMasivos(): Promise<void> {
     .limit(100);
   if (error || !data?.length) return;
   const usadas = new Set<string>();
+  const bloqueadas = await cuentasBloqueadas();
   for (const m of data) {
+    if (bloqueadas.has(m.empresa_id)) continue; // cuenta en pausa o vencida: el envío espera
     // Programado sin lista todavía: se arma ahora, con todos los que correspondan en este momento.
     if (m.armado_en === null && !(await armar(m))) continue;
     if (usadas.has(m.linea_id)) continue;

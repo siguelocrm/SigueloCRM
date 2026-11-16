@@ -1557,3 +1557,168 @@ alter table siguelo_negocios add column if not exists avisos_telefono text;
 -- Todo aviso sobre un cliente trae su código (R12) para que le respondas desde tu WhatsApp.
 -- aprender: solo las preguntas (lo que no sabía) quedan en "Lo que aprendió"; un reclamo o un pago no.
 alter table siguelo_ia_preguntas add column if not exists aprender boolean not null default true;
+
+-- ---------- 41. Varias cuentas: tu agencia, sus planes, ventas y las cuentas de tus clientes ----------
+-- Antes el CRM tenía una sola empresa. Ahora puede tener varias cuentas totalmente separadas
+-- (cada una con sus números, contactos, IA y usuarios). Tus sucursales no cambian en nada.
+drop index if exists empresas_una_sola;
+
+-- Las cuentas que pueden crear otras cuentas y registrar ventas (las tuyas: el club y la agencia).
+-- La primera empresa (la de siempre) lo es desde ya.
+create table if not exists siguelo_agencias (
+  empresa_id uuid primary key references empresas (id) on delete cascade,
+  creado_en timestamptz not null default now()
+);
+insert into siguelo_agencias (empresa_id)
+select id from empresas order by creado_en limit 1
+on conflict (empresa_id) do nothing;
+
+-- Planes de tu agencia: qué incluye, cuánto cuesta y si trae acceso al CRM de WhatsApp.
+create table if not exists siguelo_planes (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id uuid not null references empresas (id) on delete cascade,
+  nombre text not null,
+  precio numeric not null default 0 check (precio >= 0),
+  moneda text not null default 'Bs',
+  duracion_dias integer not null default 30 check (duracion_dias between 1 and 3660),
+  incluye text[] not null default '{}',
+  con_crm boolean not null default false,
+  activo boolean not null default true,
+  creado_en timestamptz not null default now(),
+  actualizado_en timestamptz not null default now()
+);
+create index if not exists siguelo_planes_empresa_idx on siguelo_planes (empresa_id);
+
+-- Las cuentas que creaste (de tus clientes o tuyas). Vencida o en pausa: nadie de esa cuenta
+-- puede entrar y su IA, seguimiento y masivos se detienen. No se borra nada.
+create table if not exists siguelo_cuentas (
+  empresa_id uuid primary key references empresas (id) on delete cascade,
+  agencia_id uuid not null references empresas (id) on delete cascade,
+  nombre text not null,
+  contacto text,
+  telefono text,
+  usuario text,
+  usuario_id uuid,
+  plan_id uuid references siguelo_planes (id) on delete set null,
+  vence_en timestamptz,
+  pausada boolean not null default false,
+  propia boolean not null default false,
+  notas text,
+  creado_en timestamptz not null default now(),
+  actualizado_en timestamptz not null default now()
+);
+create index if not exists siguelo_cuentas_agencia_idx on siguelo_cuentas (agencia_id);
+
+-- Ventas de tu agencia (con plan o sin él). Si el plan trae CRM, la venta crea o renueva la cuenta.
+create table if not exists siguelo_ventas (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id uuid not null references empresas (id) on delete cascade,
+  plan_id uuid references siguelo_planes (id) on delete set null,
+  plan_nombre text,
+  cliente text not null,
+  telefono text,
+  monto numeric not null default 0 check (monto >= 0),
+  moneda text not null default 'Bs',
+  fecha timestamptz not null default now(),
+  desde timestamptz,
+  hasta timestamptz,
+  cuenta_id uuid references empresas (id) on delete set null,
+  contacto_id uuid references contactos (id) on delete set null,
+  notas text,
+  creado_por uuid references usuarios (id) on delete set null,
+  creado_en timestamptz not null default now()
+);
+create index if not exists siguelo_ventas_empresa_idx on siguelo_ventas (empresa_id, fecha desc);
+
+-- Se leen desde la página solo dentro de la propia cuenta; se escriben solo por el servidor
+-- (que revisa que seas el dueño principal de una cuenta de agencia).
+alter table siguelo_agencias enable row level security;
+drop policy if exists "siguelo_agencias_select" on siguelo_agencias;
+create policy "siguelo_agencias_select" on siguelo_agencias for select
+  using (empresa_id = (select empresa_id from usuario_actual()));
+alter table siguelo_planes enable row level security;
+drop policy if exists "siguelo_planes_select" on siguelo_planes;
+create policy "siguelo_planes_select" on siguelo_planes for select
+  using (empresa_id = (select empresa_id from usuario_actual()));
+alter table siguelo_cuentas enable row level security;
+drop policy if exists "siguelo_cuentas_select" on siguelo_cuentas;
+create policy "siguelo_cuentas_select" on siguelo_cuentas for select
+  using (agencia_id = (select empresa_id from usuario_actual()));
+alter table siguelo_ventas enable row level security;
+drop policy if exists "siguelo_ventas_select" on siguelo_ventas;
+create policy "siguelo_ventas_select" on siguelo_ventas for select
+  using (empresa_id = (select empresa_id from usuario_actual()));
+
+-- ¿La cuenta está en pausa o vencida?
+create or replace function siguelo_cuenta_bloqueada(p_empresa uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from siguelo_cuentas c
+    where c.empresa_id = p_empresa and (c.pausada or (c.vence_en is not null and c.vence_en <= now()))
+  );
+$$;
+
+-- Para la pantalla de entrada: '' si todo bien, 'pausada' o 'vencida' (solo de la propia cuenta).
+create or replace function siguelo_mi_cuenta() returns text
+language sql stable security definer set search_path = public as $$
+  select coalesce((
+    select case when c.pausada then 'pausada' when c.vence_en is not null and c.vence_en <= now() then 'vencida' else '' end
+    from usuarios u join siguelo_cuentas c on c.empresa_id = u.empresa_id
+    where u.id = auth.uid()
+  ), '');
+$$;
+revoke execute on function siguelo_mi_cuenta() from public, anon;
+grant execute on function siguelo_mi_cuenta() to authenticated;
+
+-- Las funciones de permisos (sección 30) ahora también miran si la cuenta está en pausa o vencida:
+-- así nadie de esa cuenta ve nada, ni el dueño.
+create or replace function usuario_actual()
+returns usuarios
+language sql
+stable
+security definer
+set search_path = public
+as $function$
+  select u.* from usuarios u
+  left join siguelo_accesos a on a.usuario_id = u.id
+  where u.id = auth.uid() and u.activo and (a.vence_en is null or a.vence_en > now() or a.principal)
+    and not siguelo_cuenta_bloqueada(u.empresa_id);
+$function$;
+
+create or replace function siguelo_nivel(p_usuario uuid) returns integer
+language sql stable security definer set search_path = public as $$
+  select case
+    when siguelo_cuenta_bloqueada(u.empresa_id) then 0
+    when a.principal then 4
+    when not u.activo or (a.vence_en is not null and a.vence_en <= now()) then 0
+    else siguelo_nivel_rol(u.rol)
+  end
+  from usuarios u left join siguelo_accesos a on a.usuario_id = u.id
+  where u.id = p_usuario;
+$$;
+
+-- Ver un número: además, que sea de la misma cuenta.
+create or replace function siguelo_ve_linea(p_linea uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((
+    select case
+      when a.usuario_id is null then u.rol <> 'vendedor' or p_linea = u.linea_id
+      when a.principal or a.todas_lineas then true
+      else p_linea = any (a.lineas)
+    end
+    from usuarios u left join siguelo_accesos a on a.usuario_id = u.id
+    where u.id = auth.uid() and u.activo and (a.vence_en is null or a.vence_en > now() or a.principal)
+      and not siguelo_cuenta_bloqueada(u.empresa_id)
+      and exists (select 1 from lineas_whatsapp l where l.id = p_linea and l.empresa_id = u.empresa_id)
+  ), false);
+$$;
+
+create or replace function siguelo_ve_todo() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((
+    select case when a.usuario_id is null then u.rol <> 'vendedor' else a.principal or a.todas_lineas end
+    from usuarios u left join siguelo_accesos a on a.usuario_id = u.id
+    where u.id = auth.uid() and u.activo and (a.vence_en is null or a.vence_en > now() or a.principal)
+      and not siguelo_cuenta_bloqueada(u.empresa_id)
+  ), false);
+$$;

@@ -194,6 +194,16 @@ npm test
   texto (últimas 48 h, hasta 4) se pasan a texto (`gpt-4o-mini-transcribe`, si no `whisper-1`) y quedan en
   `mensajes.contenido`; la IA los ve como "[nota de voz] …" y la bandeja muestra la transcripción. También tus audios
   de respuesta a una pregunta (R12). Si no se puede, queda `ia_error` y la IA pide que lo escriba.
+- **Varias cuentas y Agencia** (`agencia/`, sección 41): ya no hay "una sola empresa". Cada cuenta es una empresa aparte
+  (números, contactos, IA, usuarios) y los permisos de la base (`usuario_actual`, `siguelo_ve_linea`) ya filtraban por
+  empresa; `siguelo_ve_linea` además exige que el número sea de la misma cuenta, y en el servidor `conNumero` también.
+  `siguelo_agencias` = cuentas que pueden crear cuentas (la primera empresa y las marcadas "propia"); solo su dueño principal
+  ve Agencia (`/siguelo/agencia`): planes (`siguelo_planes`, `con_crm`), ventas (`siguelo_ventas`; con teléfono, el cliente
+  queda en esa cuenta como ganado + oportunidad + nota) y cuentas (`siguelo_cuentas`: crear con usuario sin @ →
+  `usuario@siguelocrm.app.mapse.club`, vencer, pausar, nueva contraseña). Vencida o en pausa (`siguelo_cuenta_bloqueada`):
+  nadie de esa cuenta ve nada (también `requiereRol` y `accesoDe`), y su IA, seguimiento y masivos se detienen
+  (`agencia/bloqueo.ts`). Cambiar de cuenta: `client/src/lib/cuentas.ts` guarda en el navegador la sesión de las cuentas de
+  agencia (nunca las de clientes) y `setSession` + recargar. La página de entrada no muestra marca si hay varias cuentas.
 - **Pagos** (`pagos/`): cada 10 s, `inscripcion.ts` toma las fotos/PDF nuevas de clientes en números con cursos
   (`siguelo_pagos_por_leer`), las manda a la IA con visión, y `comprobante.ts` decide sin IA (monto, destinatario, fecha,
   transacción repetida, señales de edición). Confirmado → documento en la ficha, oportunidad ganada, etapa ganada, pide los
@@ -278,10 +288,8 @@ npm test
 - Pagos: no hay "esperar a que el dinero llegue al banco" (el otro proyecto lo tiene); los comprobantes en PDF dependen de
   que el modelo de OpenAI elegido acepte archivos.
 - El Asistente todavía no crea cursos, etapas ni campos (dice en qué pantalla se hace).
-- **Vender el CRM a clientes (planes, cobros):** el CRM del curso tiene una sola empresa, y la configuración (IA y su clave,
-  seguimiento, negocios, cursos) es de toda la empresa. Para vender a otros negocios hay que decidir: un CRM aparte por
-  cliente (como lo diseñó el curso), o pasarlo a varias empresas (cambio grande). Por ahora, los "Dueños de negocio" son
-  para tu propio equipo o socios, no para clientes ajenos.
+- Archivos (bucket `media`): son públicos por su enlace (rutas con ids difíciles de adivinar) y cualquier usuario con
+  sesión puede subir ahí, como en el CRM del curso. Si algún día hace falta, separar por cuenta (carpeta por empresa).
 - **Mensajes privados de Facebook e Instagram (fase B):** responder DMs a clientes pide **acceso avanzado** a
   `pages_messaging` / `instagram_manage_messages`, con **revisión de la app** y **verificación del negocio** en Meta, y
   se responde dentro de las 24 h del último mensaje del cliente. Con eso, se agregaría como otro "canal" del lector de IA.

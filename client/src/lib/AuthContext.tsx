@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './supabaseClient';
 import type { Empresa, Usuario } from './tipos';
+import { actualizarTokens, correoDeUsuario, cuentasGuardadas, guardarCuenta, olvidarCuenta, type CuentaGuardada } from './cuentas';
 
 interface AuthContextValue {
   sesion: Session | null;
@@ -14,6 +15,14 @@ interface AuthContextValue {
   actualizarContrasena: (nuevaContrasena: string) => Promise<{ error: { message: string } | null }>;
   recargarEmpresa: () => Promise<void>;
   recargarUsuario: () => Promise<void>;
+  // SígueloCRM: '' si la cuenta está bien; 'pausada' o 'vencida' (Agencia → Cuentas).
+  estadoCuenta: string;
+  // ¿Esta cuenta es una de tus agencias (y tú su dueño principal)? Ve la sección Agencia.
+  esAgencia: boolean;
+  // Tus otras cuentas guardadas en este navegador (para cambiar sin contraseña).
+  otrasCuentas: CuentaGuardada[];
+  cambiarDeCuenta: (id: string) => Promise<{ error: string | null }>;
+  agregarCuenta: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -63,6 +72,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [empresa, setEmpresa] = useState<Empresa | null>(null);
   const [cargando, setCargando] = useState(true);
   const [modoRecuperacion, setModoRecuperacion] = useState(false);
+  const [estadoCuenta, setEstadoCuenta] = useState('');
+  const [esAgencia, setEsAgencia] = useState(false);
+  const [otrasCuentas, setOtrasCuentas] = useState<CuentaGuardada[]>([]);
 
   const cargarEmpresa = async (empresaId: string) => {
     const { data } = await supabase.from('empresas').select('*').eq('id', empresaId).single();
@@ -70,12 +82,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setEmpresa(fila);
     aplicarColoresDeMarca(fila);
     if (fila?.nombre) document.title = fila.nombre;
+    return fila;
+  };
+
+  // La cuenta (pausada/vencida) y si es una de tus agencias. Sin la sección 41 pegada: nada cambia.
+  const cargarCuenta = async (sesionActual: Session, fila: Usuario) => {
+    const { data: estado } = await supabase.rpc('siguelo_mi_cuenta');
+    setEstadoCuenta(typeof estado === 'string' ? estado : '');
+    const [{ data: agencia }, { data: acceso }] = await Promise.all([
+      supabase.from('siguelo_agencias').select('empresa_id').eq('empresa_id', fila.empresa_id).maybeSingle(),
+      supabase.from('siguelo_accesos').select('principal').eq('usuario_id', fila.id).maybeSingle(),
+    ]);
+    const deAgencia = !!agencia;
+    setEsAgencia(deAgencia && !!acceso?.principal);
+    // Tus cuentas (las de agencia) se recuerdan en este navegador para cambiar de una a otra.
+    if (deAgencia) guardarCuenta(sesionActual, (await supabase.from('empresas').select('nombre').eq('id', fila.empresa_id).maybeSingle()).data?.nombre || '');
+    setOtrasCuentas(cuentasGuardadas().filter((c) => c.id !== sesionActual.user.id));
   };
 
   const cargarPerfil = async (sesionActual: Session | null) => {
     if (!sesionActual) {
       setUsuario(null);
       setEmpresa(null);
+      setEstadoCuenta('');
+      setEsAgencia(false);
+      setOtrasCuentas(cuentasGuardadas());
       aplicarColoresDeMarca(null);
       return;
     }
@@ -93,6 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const fila = data as Usuario;
       setUsuario(fila);
       await cargarEmpresa(fila.empresa_id);
+      await cargarCuenta(sesionActual, fila).catch(() => undefined);
     }
   };
 
@@ -104,6 +136,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange(async (evento, session) => {
+      // Supabase renueva el token cada hora: la cuenta guardada se queda con el nuevo.
+      if (evento === 'TOKEN_REFRESHED' && session) {
+        actualizarTokens(session);
+        setSesion(session);
+        return;
+      }
       setSesion(session);
       await cargarPerfil(session);
       if (evento === 'PASSWORD_RECOVERY') setModoRecuperacion(true);
@@ -112,13 +150,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => listener.subscription.unsubscribe();
   }, []);
 
+  // Se puede entrar con el correo o con el usuario corto ("agencia").
   const iniciarSesion = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({ email: correoDeUsuario(email), password });
     return { error };
   };
 
+  // Cerrar sesión también olvida esta cuenta en este navegador.
   const cerrarSesion = async () => {
+    const { data } = await supabase.auth.getSession();
+    if (data.session) olvidarCuenta(data.session.user.id);
     await supabase.auth.signOut();
+  };
+
+  // Cambia a otra de tus cuentas guardadas (sin contraseña) y recarga la página.
+  const cambiarDeCuenta = async (id: string) => {
+    const destino = cuentasGuardadas().find((c) => c.id === id);
+    if (!destino) return { error: 'Esa cuenta ya no está guardada: entra con su usuario y contraseña.' };
+    const { data } = await supabase.auth.getSession();
+    if (data.session) actualizarTokens(data.session);
+    const { error } = await supabase.auth.setSession({ access_token: destino.access_token, refresh_token: destino.refresh_token });
+    if (error) {
+      olvidarCuenta(id);
+      // Vuelve a la cuenta en la que estaba.
+      if (data.session) await supabase.auth.setSession({ access_token: data.session.access_token, refresh_token: data.session.refresh_token });
+      return { error: 'Esa cuenta se cerró: entra otra vez con su usuario y contraseña.' };
+    }
+    window.location.reload();
+    return { error: null };
+  };
+
+  // Para entrar a otra cuenta tuya: esta queda guardada y se muestra la entrada.
+  const agregarCuenta = async () => {
+    const { data } = await supabase.auth.getSession();
+    if (data.session) actualizarTokens(data.session);
+    await supabase.auth.signOut({ scope: 'local' });
   };
 
   const actualizarContrasena = async (nuevaContrasena: string) => {
@@ -148,6 +214,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         actualizarContrasena,
         recargarEmpresa,
         recargarUsuario,
+        estadoCuenta,
+        esAgencia,
+        otrasCuentas,
+        cambiarDeCuenta,
+        agregarCuenta,
       }}
     >
       {children}

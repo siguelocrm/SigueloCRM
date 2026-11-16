@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { supabase } from '../supabase/client.js';
 import type { RolUsuario } from '../types/dominio.js';
+import { estaBloqueada } from '../siguelo/agencia/bloqueo.js';
 
 export interface UsuarioAutenticado {
   id: string;
@@ -42,6 +43,11 @@ export function requiereRol(...rolesPermitidos: RolUsuario[]) {
     // SígueloCRM: un usuario desactivado (o con el acceso vencido) no puede usar el servidor.
     if ((perfil as { activo?: boolean }).activo === false) {
       return res.status(403).json({ error: 'Tu usuario está desactivado o tu acceso venció.' });
+    }
+
+    // SígueloCRM: la cuenta entera en pausa o vencida (Agencia → Cuentas).
+    if (await estaBloqueada(perfil.empresa_id)) {
+      return res.status(403).json({ error: 'Esta cuenta está en pausa o su plan venció.' });
     }
 
     if (!rolesPermitidos.includes(perfil.rol)) {

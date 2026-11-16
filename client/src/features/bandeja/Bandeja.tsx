@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { LogOut, MessageSquare, Moon, MoreHorizontal, Search, Sun, X } from 'lucide-react';
+import { LogOut, MessageSquare, Moon, MoreHorizontal, Plus, Repeat, Search, Sun, X } from 'lucide-react';
 import type { RealtimePostgresInsertPayload, RealtimePostgresUpdatePayload } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../lib/AuthContext';
@@ -36,6 +36,7 @@ import IA from '../ia/IA';
 import Inscripciones from '../inscripciones/Inscripciones';
 import Redes from '../redes/Redes';
 import Masivos from '../masivos/Masivos';
+import Agencia from '../agencia/Agencia';
 import { soloDelNegocio, useNegocios } from '../negocios/useNegocios';
 import Oportunidades from '../oportunidades/Oportunidades';
 import { EstadoVacio, useToast } from '../../components/ui';
@@ -62,7 +63,7 @@ function leerPlegado(): boolean {
 }
 
 export default function Bandeja() {
-  const { usuario, empresa, cerrarSesion } = useAuth();
+  const { usuario, empresa, cerrarSesion, esAgencia, otrasCuentas, cambiarDeCuenta, agregarCuenta } = useAuth();
   const toast = useToast();
   const esMovil = useEsMovil();
   // Por debajo de 1280 px el menú es siempre un riel de íconos.
@@ -192,7 +193,7 @@ export default function Bandeja() {
   const esAdmin = usuario.rol === 'supervisor' || usuario.rol === 'dueno';
   const esDueno = usuario.rol === 'dueno';
   const seccionesVisibles = SECCIONES.filter(
-    (s) => (!s.soloAdmin || esAdmin) && (!s.soloDueno || esDueno),
+    (s) => (!s.soloAdmin || esAdmin) && (!s.soloDueno || esDueno) && (!s.soloAgencia || esAgencia),
   );
   const seccionActual = SECCIONES.find((s) => s.id === seccion) || SECCIONES[0];
   const gruposVisibles = Array.from(new Set(seccionesVisibles.map((s) => s.grupo))).map(
@@ -219,6 +220,7 @@ export default function Bandeja() {
     if (seccion === 'inscripciones') return <Inscripciones onAbrirChat={abrirChatDeContacto} />;
     if (seccion === 'redes') return <Redes />;
     if (seccion === 'masivos') return <Masivos />;
+    if (seccion === 'agencia' && esAgencia) return <Agencia />;
     if (seccion === 'oportunidades') return <Oportunidades onAbrirChat={abrirChatDeContacto} />;
     return <EstadoVacio icono={seccionActual.icon} titulo={seccionActual.label} texto="Esta sección todavía no está construida." />;
   };
@@ -336,6 +338,21 @@ export default function Bandeja() {
             </div>
           </div>
         ))}
+        {(otrasCuentas.length > 0 || esAgencia) && (
+          <div className="pt-3 flex flex-col gap-1.5">
+            <div className="eyebrow">Tus cuentas</div>
+            {otrasCuentas.map((c) => (
+              <button key={c.id} onClick={() => cambiarDeCuenta(c.id).then((r) => r.error && window.alert(r.error))} className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-left text-[13px] font-semibold" style={{ border: `1px solid ${BORDE}`, color: TEXTO_PRIMARIO }}>
+                <Repeat size={14} />Cambiar a {c.empresa || c.correo}
+              </button>
+            ))}
+            {esAgencia && (
+              <button onClick={agregarCuenta} className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-left text-[13px] font-semibold" style={{ border: `1px solid ${BORDE}`, color: TEXTO_SECUNDARIO }}>
+                <Plus size={14} />Entrar a otra cuenta tuya
+              </button>
+            )}
+          </div>
+        )}
         <button onClick={cerrarSesion} className="mt-4 w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-semibold" style={{ border: `1px solid ${BORDE}`, color: TEXTO_SECUNDARIO }}>
           <LogOut size={14} />Cerrar sesión
         </button>
@@ -368,6 +385,9 @@ export default function Bandeja() {
       empresa={empresa}
       usuario={usuario}
       onCerrarSesion={cerrarSesion}
+      otrasCuentas={otrasCuentas}
+      onCambiarCuenta={(id) => cambiarDeCuenta(id).then((r) => { if (r.error) window.alert(r.error); })}
+      onAgregarCuenta={esAgencia ? agregarCuenta : undefined}
       insignias={insignias}
       temaClaro={temaClaro}
       onTema={cambiarTema}

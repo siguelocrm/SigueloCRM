@@ -23,7 +23,7 @@ botRouter.post('/respuestas-automaticas/:id/disparar', ...conNumero((req) => req
     return res.status(503).json({ error: 'Esa línea de WhatsApp no está conectada' });
   }
 
-  const { data: regla, error } = await supabase.from('respuestas_automaticas').select('tipo, pasos, flujo').eq('id', id).maybeSingle();
+  const { data: regla, error } = await supabase.from('respuestas_automaticas').select('tipo, pasos, flujo').eq('id', id).eq('empresa_id', req.usuarioAutenticado!.empresa_id).maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
   if (!regla) return res.status(404).json({ error: 'No se encontró la respuesta automática' });
   const esFlujo = regla.tipo === 'flujo' && !!regla.flujo;

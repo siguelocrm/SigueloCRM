@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Check, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../../lib/AuthContext';
+import { usuarioCorto } from '../../lib/cuentas';
 import { NAVY, BLUE, BORDE, BORDE_INPUT, TEXTO_PRIMARIO, TEXTO_SECUNDARIO, TEXTO_TERCIARIO, FOCO_INPUT } from '../../lib/tema';
 
 // Antes de entrar todavía no se puede leer la empresa (permisos), así que el
@@ -14,7 +15,8 @@ const CARACTERISTICAS = [
 ];
 
 export default function Login() {
-  const { iniciarSesion } = useAuth();
+  const { iniciarSesion, otrasCuentas, cambiarDeCuenta } = useAuth();
+  const [volviendo, setVolviendo] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [verPassword, setVerPassword] = useState(false);
@@ -40,7 +42,16 @@ export default function Login() {
     setEnviando(true);
     const { error } = await iniciarSesion(email, password);
     setEnviando(false);
-    if (error) setError('Email o contraseña incorrectos.');
+    if (error) setError('Usuario o contraseña incorrectos.');
+  };
+
+  // Tus cuentas guardadas en este navegador: volver a una sin escribir la contraseña.
+  const volverA = async (id: string) => {
+    setError('');
+    setVolviendo(id);
+    const r = await cambiarDeCuenta(id);
+    setVolviendo(null);
+    if (r.error) setError(r.error);
   };
 
   return (
@@ -86,18 +97,34 @@ export default function Login() {
         <form onSubmit={enviar} className="flex-1 min-w-0 flex flex-col justify-center gap-5 p-7 md:p-10">
           <div className="flex flex-col gap-1">
             <h2 className="m-0 text-[26px] font-bold tracking-tight" style={{ color: TEXTO_PRIMARIO }}>Entrar</h2>
-            <p className="m-0 text-[13.5px]" style={{ color: TEXTO_SECUNDARIO }}>Ingresá con tu cuenta de agente.</p>
+            <p className="m-0 text-[13.5px]" style={{ color: TEXTO_SECUNDARIO }}>Ingresa con tu correo o tu usuario.</p>
           </div>
+
+          {otrasCuentas.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold" style={{ color: 'var(--fg-2)' }}>Volver a una de tus cuentas</span>
+              {otrasCuentas.map((c) => (
+                <button key={c.id} type="button" onClick={() => volverA(c.id)} disabled={volviendo !== null} className="flex items-center justify-between gap-2 rounded-lg px-3.5 py-2.5 text-left text-sm" style={{ border: `1px solid ${BORDE_INPUT}`, color: TEXTO_PRIMARIO }}>
+                  <span className="min-w-0 truncate"><b>{c.empresa || 'Mi cuenta'}</b> <span style={{ color: TEXTO_TERCIARIO }}>· {usuarioCorto(c.correo)}</span></span>
+                  <span className="text-xs font-semibold shrink-0" style={{ color: BLUE }}>{volviendo === c.id ? 'Entrando…' : 'Entrar'}</span>
+                </button>
+              ))}
+              <span className="text-[11.5px]" style={{ color: TEXTO_TERCIARIO }}>O entra a otra cuenta:</span>
+            </div>
+          )}
 
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold" style={{ color: 'var(--fg-2)' }}>Correo</label>
+              <label className="text-xs font-semibold" style={{ color: 'var(--fg-2)' }}>Correo o usuario</label>
               <input
-                type="email"
+                type="text"
                 required
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="tuemail@ejemplo.com"
+                placeholder="tuemail@ejemplo.com o tu usuario"
                 autoComplete="username"
                 className="w-full rounded-lg px-3.5 py-2.5 text-sm outline-none"
                 style={{ border: `1px solid ${BORDE_INPUT}`, color: TEXTO_PRIMARIO }}

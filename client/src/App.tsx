@@ -6,7 +6,7 @@ import AvisoBaseAtrasada from './components/AvisoBaseAtrasada';
 import { ToastProvider } from './components/ui';
 
 function Contenido() {
-  const { sesion, usuario, cargando, modoRecuperacion, cerrarSesion } = useAuth();
+  const { sesion, usuario, cargando, modoRecuperacion, cerrarSesion, estadoCuenta } = useAuth();
 
   if (cargando) {
     return (
@@ -26,6 +26,18 @@ function Contenido() {
         <span className="text-white text-sm">
           Tu cuenta no tiene un perfil en la tabla "usuarios" todavía. Pedile a un administrador que te cree como agente.
         </span>
+      </div>
+    );
+  }
+
+  // SígueloCRM: la cuenta entera en pausa o con el plan vencido (la agencia la renueva; no se borró nada).
+  if (estadoCuenta === 'pausada' || estadoCuenta === 'vencida') {
+    return (
+      <div className="w-full h-dvh flex flex-col gap-4 items-center justify-center text-center px-6" style={{ background: '#001D44' }}>
+        <span className="text-white text-sm max-w-md">
+          {estadoCuenta === 'vencida' ? 'El plan de esta cuenta venció.' : 'Esta cuenta está en pausa.'} Comunícate con quien te dio el acceso para renovarlo: todo lo tuyo sigue guardado.
+        </span>
+        <button onClick={cerrarSesion} className="text-sm font-semibold rounded-lg px-4 py-2" style={{ backgroundColor: 'white', color: '#001D44' }}>Cerrar sesión</button>
       </div>
     );
   }

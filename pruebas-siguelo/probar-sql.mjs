@@ -227,4 +227,45 @@ await db.query(`update siguelo_accesos set vence_en = now() - interval '1 day' w
 assert.equal((await ver(P)).conv.length, 2, 'al dueño principal no le vence nunca');
 await db.query(`update siguelo_accesos set vence_en = null where usuario_id = $1`, [P]);
 console.log('✓ un acceso vencido o desactivado no ve nada; al renovarlo vuelve; al dueño principal no le vence');
+// ---------- 41. Varias cuentas: la de un cliente está totalmente separada ----------
+const otra = (await uno(`insert into empresas (nombre) values ('Cliente de la agencia') returning id`)).id;
+await db.exec(siguelo); // pegar el SQL otra vez con dos empresas: no rompe nada
+assert.deepEqual((await db.query(`select empresa_id from siguelo_agencias`)).rows.map((x) => x.empresa_id), [empresa], 'la primera empresa (la de siempre) es la agencia');
+const P2 = '00000000-0000-0000-0000-000000000077';
+await db.query(`insert into usuarios (id, empresa_id, nombre, rol) values ($1, $2, 'Dueña cliente', 'dueno')`, [P2, otra]);
+await db.query(`insert into siguelo_accesos (usuario_id, empresa_id, principal, todas_lineas) values ($1, $2, true, true)`, [P2, otra]);
+const LC = (await uno(`insert into lineas_whatsapp (empresa_id, nombre, numero) values ($1, 'L-Cliente', '593') returning id`, [otra])).id;
+const cvC = (await uno(`insert into conversaciones (linea_id, contacto_telefono, estado) values ($1, '59189999999', 'abierto') returning id`, [LC])).id;
+await db.query(`insert into mensajes (conversacion_id, remitente, contenido) values ($1, 'cliente', 'del cliente')`, [cvC]);
+await db.query(`insert into contactos (empresa_id, telefono, nombre) values ($1, '59189999999', 'Cliente final')`, [otra]);
+const verTodo = async (uid) => ({
+  lineas: (await como(uid, `select nombre from lineas_whatsapp order by nombre`)).rows.map((x) => x.nombre),
+  conv: (await como(uid, `select count(*)::int n from conversaciones`)).rows[0].n,
+  msj: (await como(uid, `select contenido from mensajes where contenido = 'del cliente'`)).rows.length,
+  tel: (await como(uid, `select telefono from contactos where telefono = '59189999999'`)).rows.length,
+  negocios: (await como(uid, `select count(*)::int n from siguelo_negocios`)).rows[0].n,
+});
+const delCliente = await verTodo(P2);
+assert.deepEqual(delCliente, { lineas: ['L-Cliente'], conv: 1, msj: 1, tel: 1, negocios: 0 }, 'el cliente ve solo lo suyo');
+const delDueno = await verTodo(P);
+assert.ok(!delDueno.lineas.includes('L-Cliente') && delDueno.msj === 0 && delDueno.tel === 0 && delDueno.negocios > 0, 'tu cuenta no ve nada del cliente');
+assert.equal((await como(P, `select siguelo_ve_linea($1) v`, [LC])).rows[0].v, false, 'ver "todos los números" no incluye los de otra cuenta');
+await assert.rejects(como(P2, `insert into mensajes (conversacion_id, remitente, contenido) values ($1, 'agente', 'x')`, [cv1]), /row-level security/, 'el cliente no escribe en tus chats');
+console.log('✓ varias cuentas: cada una ve solo lo suyo (ni el dueño de una ve la otra)');
+
+// Cuenta en pausa o vencida: nadie de esa cuenta ve nada (ni su dueño); al renovar vuelve.
+await db.query(`insert into siguelo_cuentas (empresa_id, agencia_id, nombre, vence_en) values ($1, $2, 'Cliente', now() + interval '30 days')`, [otra, empresa]);
+assert.equal((await como(P2, `select siguelo_mi_cuenta() e`)).rows[0].e, '', 'al día');
+assert.equal((await como(P, `select nombre from siguelo_cuentas`)).rows.length, 1, 'la agencia ve sus cuentas');
+assert.equal((await como(P2, `select nombre from siguelo_cuentas`)).rows.length, 0, 'el cliente no ve la lista de cuentas');
+await db.query(`update siguelo_cuentas set vence_en = now() - interval '1 minute' where empresa_id = $1`, [otra]);
+assert.deepEqual(await verTodo(P2), { lineas: [], conv: 0, msj: 0, tel: 0, negocios: 0 }, 'vencida: no ve nada');
+assert.equal((await como(P2, `select siguelo_mi_cuenta() e`)).rows[0].e, 'vencida');
+await db.query(`update siguelo_cuentas set vence_en = now() + interval '30 days', pausada = true where empresa_id = $1`, [otra]);
+assert.equal((await como(P2, `select siguelo_mi_cuenta() e`)).rows[0].e, 'pausada');
+assert.equal((await verTodo(P2)).conv, 0, 'en pausa: no ve nada');
+await db.query(`update siguelo_cuentas set pausada = false where empresa_id = $1`, [otra]);
+assert.deepEqual(await verTodo(P2), delCliente, 'renovada: vuelve a ver todo, no se perdió nada');
+assert.deepEqual(await verTodo(P), delDueno, 'tu cuenta no cambia');
+console.log('✓ cuenta vencida o en pausa: nadie de esa cuenta ve nada; al renovar vuelve todo');
 console.log('\nTodo OK');

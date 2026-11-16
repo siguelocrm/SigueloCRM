@@ -207,7 +207,31 @@ class Consulta {
   }
 }
 
+// Usuarios de Supabase Auth falsos (correo → contraseña), para crear cuentas.
+export const usuariosAuth = new Map();
+const auth = {
+  admin: {
+    async createUser({ email, password }) {
+      if ([...usuariosAuth.values()].some((u) => u.email === email)) return { data: { user: null }, error: { message: 'A user with this email address has already been registered' } };
+      const id = crypto.randomUUID();
+      usuariosAuth.set(id, { id, email, password });
+      return { data: { user: { id, email } }, error: null };
+    },
+    async deleteUser(id) {
+      usuariosAuth.delete(id);
+      return { data: {}, error: null };
+    },
+    async updateUserById(id, cambios) {
+      const u = usuariosAuth.get(id);
+      if (!u) return { data: null, error: { message: 'User not found' } };
+      Object.assign(u, cambios);
+      return { data: { user: u }, error: null };
+    },
+  },
+};
+
 export const db = {
+  auth,
   from: (t) => new Consulta(t),
   async rpc(fn, args) {
     try {

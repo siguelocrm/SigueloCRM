@@ -564,6 +564,7 @@ export type SigueloDatabase = {
         motivo_perdida_id: string | null;
         cerrada_en: string | null;
         actualizado_en: string;
+        creado_por?: string | null;
       }>;
       siguelo_cursos: Tabla<CursoRow>;
       siguelo_asistente: Tabla<MensajeAsistenteRow>;
@@ -591,6 +592,11 @@ export type SigueloDatabase = {
       siguelo_pagos: Tabla<PagoRow>;
       campos_personalizados: Tabla<{ id: string; empresa_id: string; nombre: string; tipo: string; opciones: string[]; orden: number }>;
       contacto_campos: Tabla<{ contacto_id: string; campo_id: string; valor: string | null }>;
+      empresas: Tabla<{ id: string; nombre: string; logo_url: string | null; color_primario: string | null; color_acento: string | null; creado_en: string }>;
+      siguelo_agencias: Tabla<{ empresa_id: string; creado_en: string }>;
+      siguelo_planes: Tabla<PlanRow>;
+      siguelo_cuentas: Tabla<CuentaRow>;
+      siguelo_ventas: Tabla<VentaRow>;
       contacto_documentos: Tabla<{ id: string; contacto_id: string; nombre: string; ruta: string; url: string; tamano: number | null; subido_por: string | null; creado_en: string }>;
     };
     Views: Record<string, never>;
@@ -601,4 +607,53 @@ export type SigueloDatabase = {
       siguelo_redes_codigo: { Args: Record<string, never>; Returns: number };
     };
   };
+};
+
+// ---------- Agencia: planes, cuentas de clientes y ventas (sección 41) ----------
+export type PlanRow = {
+  id: string;
+  empresa_id: string;
+  nombre: string;
+  precio: number;
+  moneda: string;
+  duracion_dias: number;
+  incluye: string[];
+  con_crm: boolean;
+  activo: boolean;
+  creado_en: string;
+  actualizado_en: string;
+};
+export type CuentaRow = {
+  empresa_id: string;
+  agencia_id: string;
+  nombre: string;
+  contacto: string | null;
+  telefono: string | null;
+  usuario: string | null;
+  usuario_id: string | null;
+  plan_id: string | null;
+  vence_en: string | null;
+  pausada: boolean;
+  propia: boolean;
+  notas: string | null;
+  creado_en: string;
+  actualizado_en: string;
+};
+export type VentaRow = {
+  id: string;
+  empresa_id: string;
+  plan_id: string | null;
+  plan_nombre: string | null;
+  cliente: string;
+  telefono: string | null;
+  monto: number;
+  moneda: string;
+  fecha: string;
+  desde: string | null;
+  hasta: string | null;
+  cuenta_id: string | null;
+  contacto_id: string | null;
+  notas: string | null;
+  creado_por: string | null;
+  creado_en: string;
 };

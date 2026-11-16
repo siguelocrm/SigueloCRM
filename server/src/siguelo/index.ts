@@ -8,6 +8,7 @@ import { procesarSalida } from './ia/salida.js';
 import { revisarPagos } from './pagos/inscripcion.js';
 import { revisarRedes } from './redes/redes.js';
 import type { AjustesRow } from './tipos.js';
+import { cuentasBloqueadas } from './agencia/bloqueo.js';
 import { desactivarVencidos } from './usuarios/accesos.js';
 import { procesarMasivos, reanudarAlArrancar } from './masivos/masivos.js';
 import { alLlegarMensaje } from './eventos.js';
@@ -63,12 +64,14 @@ async function ajustesActivos(forzar = false): Promise<AjustesRow[]> {
 }
 
 async function vueltaDelMotor(): Promise<void> {
-  for (const aj of await ajustesActivos(true)) await revisarEmpresa(aj);
+  const bloqueadas = await cuentasBloqueadas();
+  for (const aj of await ajustesActivos(true)) if (!bloqueadas.has(aj.empresa_id)) await revisarEmpresa(aj);
   await limpiarRegistroViejo();
 }
 
 async function vueltaDeLaCola(): Promise<void> {
-  for (const aj of await ajustesActivos()) await procesarCola(aj);
+  const bloqueadas = await cuentasBloqueadas();
+  for (const aj of await ajustesActivos()) if (!bloqueadas.has(aj.empresa_id)) await procesarCola(aj);
 }
 
 // La IA (Fase 3) lleva sus propios candados: una lectura puede tardar varios

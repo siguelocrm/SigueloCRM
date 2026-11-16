@@ -29,7 +29,7 @@ etiquetasRouter.post('/etiquetas/:accion(asignar|quitar)', ...conNumero((req) =>
 
   try {
     const [{ data: contacto }, { data: etiqueta }] = await Promise.all([
-      supabase.from('contactos').select('telefono, lid').eq('id', contacto_id).single(),
+      supabase.from('contactos').select('telefono, lid').eq('id', contacto_id).eq('empresa_id', req.usuarioAutenticado!.empresa_id).single(),
       supabase.from('etiquetas_whatsapp').select('whatsapp_id').eq('id', etiqueta_id).eq('linea_id', linea_id).single(),
     ]);
     if (!contacto) return res.status(404).json({ error: 'Contacto no encontrado' });

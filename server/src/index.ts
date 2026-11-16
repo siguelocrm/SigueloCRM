@@ -6,6 +6,7 @@ import { usuariosSigueloRouter } from './siguelo/usuarios/rutas.js';
 import { redesRouter } from './siguelo/redes/rutas.js';
 import { masivosRouter } from './siguelo/masivos/rutas.js';
 import { aulaRouter } from './siguelo/aula/rutas.js';
+import { agenciaRouter } from './siguelo/agencia/rutas.js';
 import { iniciarVigia } from './siguelo/vigia.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -49,6 +50,7 @@ app.use(usuariosSigueloRouter);
 app.use(redesRouter);
 app.use(masivosRouter);
 app.use(aulaRouter);
+app.use(agenciaRouter);
 
 // Para saber si el CRM arrancó bien: el despliegue la consulta después de
 // publicar una versión nueva y, si no responde, vuelve a la anterior.
@@ -58,9 +60,12 @@ app.get('/salud', (_req, res) => {
 
 // Nombre y logo del negocio para la pantalla de entrada, antes de iniciar
 // sesión (con la sesión todavía no se puede leer la empresa por los permisos).
+// SígueloCRM: con varias cuentas (tus clientes entran por la misma página) no se muestra la marca
+// de ninguna: la entrada queda neutra y cada uno ve la suya al entrar.
 app.get('/marca', async (_req, res) => {
-  const { data } = await supabase.from('empresas').select('nombre, logo_url').limit(1).maybeSingle();
-  res.json({ nombre: data?.nombre ?? null, logo_url: data?.logo_url ?? null });
+  const { data } = await supabase.from('empresas').select('nombre, logo_url').order('creado_en').limit(2);
+  const unica = data?.length === 1 ? data[0] : null;
+  res.json({ nombre: unica?.nombre ?? null, logo_url: unica?.logo_url ?? null });
 });
 
 // En el servidor, este mismo proceso sirve también la página ya compilada

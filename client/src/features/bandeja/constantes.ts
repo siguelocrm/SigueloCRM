@@ -19,6 +19,7 @@ import {
   GraduationCap,
   Share2,
   Megaphone,
+  Briefcase,
   type LucideIcon,
   Settings,
 } from 'lucide-react';
@@ -30,6 +31,8 @@ export interface Seccion {
   grupo: string;
   soloAdmin?: boolean;
   soloDueno?: boolean;
+  // Solo el dueño principal de una cuenta de agencia (las tuyas), nunca un cliente.
+  soloAgencia?: boolean;
 }
 
 // Tres bloques (rediseño oct. 2026): lo que se usa todos los días, lo que se
@@ -50,6 +53,7 @@ export const SECCIONES: Seccion[] = [
   { id: 'ia', icon: Sparkles, label: 'IA', grupo: 'Automatizar', soloAdmin: true },
   { id: 'inscripciones', icon: GraduationCap, label: 'Inscripciones', grupo: 'Automatizar', soloAdmin: true },
   { id: 'redes', icon: Share2, label: 'Redes sociales', grupo: 'Automatizar', soloAdmin: true },
+  { id: 'agencia', icon: Briefcase, label: 'Agencia', grupo: 'Agencia', soloAgencia: true },
   { id: 'reportes', icon: LineChart, label: 'Reportes', grupo: 'Administrar' },
   { id: 'usuarios', icon: UserCog, label: 'Usuarios', grupo: 'Administrar', soloAdmin: true },
   { id: 'conexiones', icon: Smartphone, label: 'Conexiones', grupo: 'Administrar' },

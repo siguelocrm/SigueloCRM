@@ -96,7 +96,7 @@ redesRouter.get('/siguelo/meta/volver', async (req, res) => {
 
 // Política de privacidad pública: Meta pide su dirección para poner la app en modo "Activo".
 redesRouter.get('/siguelo/privacidad', async (_req, res) => {
-  const { data } = await supabase.from('empresas').select('nombre').limit(1).maybeSingle();
+  const { data } = await supabase.from('empresas').select('nombre').order('creado_en').limit(1).maybeSingle();
   const nombre = String(data?.nombre || 'Este negocio').replace(/[<>&"]/g, '');
   res
     .status(200)

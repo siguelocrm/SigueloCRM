@@ -2,6 +2,7 @@ import { db } from '../db.js';
 import { fechaDe } from '../horario.js';
 import { chatJSON, type MensajeChat, type ResultadoChat } from './openai.js';
 import type { IaRow } from '../tipos.js';
+import { cuentasBloqueadas } from '../agencia/bloqueo.js';
 
 // Ajustes de la IA, la clave de OpenAI (solo la lee el servidor) y el freno de
 // consultas por día.
@@ -13,7 +14,10 @@ let avisoFaltaSql = false;
 
 // Empresas con la IA activa y su clave cargada.
 export async function empresasConIA(): Promise<Config[]> {
-  if (Date.now() - cache.leido < VALIDO_MS) return [...cache.porEmpresa.values()];
+  if (Date.now() - cache.leido < VALIDO_MS) {
+    const bloqueadas = await cuentasBloqueadas();
+    return [...cache.porEmpresa.values()].filter((c) => !bloqueadas.has(c.ia.empresa_id));
+  }
   const [ias, claves, ajustes] = await Promise.all([
     db.from('siguelo_ia').select('*').eq('activa', true),
     db.from('siguelo_ia_clave').select('empresa_id, clave'),
@@ -34,7 +38,8 @@ export async function empresasConIA(): Promise<Config[]> {
     if (clave) porEmpresa.set(ia.empresa_id, { ia, clave, zona: zonaPor.get(ia.empresa_id) || 'America/La_Paz' });
   }
   cache = { leido: Date.now(), porEmpresa };
-  return [...porEmpresa.values()];
+  const bloqueadas = await cuentasBloqueadas();
+  return [...porEmpresa.values()].filter((c) => !bloqueadas.has(c.ia.empresa_id));
 }
 
 // La IA de una empresa aunque esté apagada (para el asistente): solo hace falta la clave.
