@@ -268,4 +268,16 @@ await db.query(`update siguelo_cuentas set pausada = false where empresa_id = $1
 assert.deepEqual(await verTodo(P2), delCliente, 'renovada: vuelve a ver todo, no se perdió nada');
 assert.deepEqual(await verTodo(P), delDueno, 'tu cuenta no cambia');
 console.log('✓ cuenta vencida o en pausa: nadie de esa cuenta ve nada; al renovar vuelve todo');
+
+// ---------- 42. Límites por cuenta: 1 número y 1 negocio, salvo que lo amplíes ----------
+await db.query(`update siguelo_cuentas set max_numeros = 1, max_negocios = 1 where empresa_id = $1`, [otra]);
+await assert.rejects(db.query(`insert into lineas_whatsapp (empresa_id, nombre, numero) values ($1, 'L-Cliente-2', '594')`, [otra]), /Tu plan permite hasta 1 número de WhatsApp/, 'ya tiene 1 número');
+await db.query(`insert into siguelo_negocios (empresa_id, nombre) values ($1, 'Consultorio')`, [otra]);
+await assert.rejects(db.query(`insert into siguelo_negocios (empresa_id, nombre) values ($1, 'Otro')`, [otra]), /Tu plan permite hasta 1 negocio\./);
+await db.query(`update siguelo_cuentas set max_numeros = 3 where empresa_id = $1`, [otra]);
+await db.query(`insert into lineas_whatsapp (empresa_id, nombre, numero) values ($1, 'L-Cliente-2', '594')`, [otra]);
+await db.query(`update siguelo_cuentas set max_negocios = null where empresa_id = $1`, [otra]);
+await db.query(`insert into siguelo_negocios (empresa_id, nombre) values ($1, 'Otro'), ($1, 'Otro más')`, [otra]);
+await db.query(`insert into lineas_whatsapp (empresa_id, nombre, numero) values ($1, 'L-Club-extra', '595')`, [empresa]);
+console.log('✓ límites por cuenta: 1 número y 1 negocio por defecto; ampliarlos o "sin límite" funciona; tus cuentas no tienen límite');
 console.log('\nTodo OK');

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import type { LineaWhatsapp } from '../../lib/tipos';
+import type { ConfigReuniones } from './ReunionesNegocio';
 
 // Negocios por número (SígueloCRM, Fase 2): cada número trabaja como un
 // negocio con su ficha, sus respuestas rápidas, sus reglas del bot y, si hace
@@ -26,6 +27,8 @@ export interface Negocio {
   ubicacion?: string | null;
   // Número al que le llegan los avisos de este negocio (vacío = el de IA → Ajustes → Avisos).
   avisos_telefono?: string | null;
+  // Reuniones virtuales que agenda la IA.
+  reuniones?: ConfigReuniones | null;
 }
 
 export interface GrupoNegocio {

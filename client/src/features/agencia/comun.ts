@@ -3,7 +3,7 @@ import { BORDE, TEXTO_PRIMARIO } from '../../lib/tema';
 
 // Lo que comparten las pantallas de la Agencia (server/src/siguelo/agencia).
 
-export type Plan = { id: string; nombre: string; precio: number; moneda: string; duracion_dias: number; incluye: string[]; con_crm: boolean; activo: boolean };
+export type Plan = { id: string; nombre: string; precio: number; moneda: string; duracion_dias: number; incluye: string[]; con_crm: boolean; activo: boolean; max_numeros?: number | null; max_negocios?: number | null; usar_mi_clave?: boolean };
 export type Cuenta = {
   empresa_id: string;
   nombre: string;
@@ -17,6 +17,8 @@ export type Cuenta = {
   notas: string | null;
   creado_en: string;
   estado: 'activa' | 'pausada' | 'vencida';
+  max_numeros?: number | null;
+  max_negocios?: number | null;
   numeros: number;
   conectados: number;
 };
@@ -67,3 +69,11 @@ export function nuevaContrasena(): string {
   const azar = (s: string) => s[Math.floor((crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32) * s.length)];
   return Array.from({ length: 5 }, () => azar(letras)).join('') + Array.from({ length: 3 }, () => azar(numeros)).join('');
 }
+
+// Límite de números o negocios: null = sin límite.
+export const textoLimite = (n: number | null | undefined, uno: string, varios: string) => (n === null ? `${varios} sin límite` : `hasta ${n ?? 1} ${(n ?? 1) === 1 ? uno : varios}`);
+
+// Selector de límite: 1, 2, 3, 5, 10 o sin límite.
+export const OPCIONES_LIMITE = ['1', '2', '3', '5', '10', ''] as const;
+export const limiteDeTexto = (v: string): number | null => (v === '' ? null : Number(v));
+export const textoDeLimite = (n: number | null | undefined) => (n === null ? '' : String(n ?? 1));

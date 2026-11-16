@@ -11,6 +11,7 @@ import { PROMPT_COMPROBANTE, controlar, elegirCurso, formatoMonto, transaccionNo
 import { configClub, gruposClub, lleno, rpcVendedor, subirFoto, tarifasClub, textoHorario, vendedorYo } from '../club/club.js';
 import { armarReserva, faltanClub, mezclarDatosClub } from './reserva.js';
 import { configAula, gruposAula, inscribirEnAula, planesAula, textoPlan, type PlanAula } from '../aula/aula.js';
+import { DOMINIO_USUARIOS, ventaPorPago } from '../agencia/agencia.js';
 import { crearPregunta } from '../ia/dueno.js';
 import type { CursoRow, DatosClub, EstadoPago, IaRow, PagoPorLeerRow, PagoRow, TextosCurso } from '../tipos.js';
 
@@ -287,6 +288,11 @@ async function confirmar(x: Vuelta, pago: PagoRow, curso: CursoRow, aMano = fals
   const etapa = await moverDeEtapa(empresaId, contacto, curso, pago.linea_id);
   if (etapa) hechos.push(`pasó a "${etapa}"`);
 
+  if (curso.plan_id) {
+    await actualizar(pago, { motivo: null, accion: null, oportunidad_id: oportunidadId, curso_id: curso.id });
+    await registrar(empresaId, contacto.id, 'pago', `Pago de ${quien(contacto.nombre, pago.telefono).replace(/\*/g, '')} confirmado${aMano ? ' a mano' : ''} (${formatoMonto(monto, curso.moneda)}): ${hechos.join(' · ') || 'listo'}; se registra la venta del plan.`);
+    return completarAgencia(x, { ...pago, oportunidad_id: oportunidadId }, curso, aMano);
+  }
   if (curso.club) {
     await actualizar(pago, { motivo: null, accion: null, oportunidad_id: oportunidadId, curso_id: curso.id });
     if (!aMano) await avisar(x, pago, `💰 ${quien(contacto.nombre, pago.telefono)} pagó ${formatoMonto(monto, curso.moneda)}: ✅ comprobante correcto, se le piden los datos para la reserva en tu sistema del club.`);
@@ -418,7 +424,8 @@ async function leerComprobante(x: Vuelta, pago: PagoRow): Promise<boolean> {
     repetido = !!usados?.length;
   }
   let yaInscrito = false;
-  if (curso && contactoId) {
+  // Un plan de tu agencia se paga cada mes: volver a pagarlo es renovarlo, no un error.
+  if (curso && contactoId && !curso.plan_id) {
     const { count } = await db
       .from('siguelo_pagos')
       .select('id', { count: 'exact', head: true })
@@ -522,6 +529,8 @@ async function hacerAccion(x: Vuelta, pago: PagoRow): Promise<void> {
     if (!curso) return actualizar(pago, { motivo: 'Elige el curso antes de confirmar' });
     if (pago.estado === 'datos' && curso.club) return completarClub(x, pago, curso, false);
     if (curso.aula && (pago.estado === 'datos' || (pago.estado === 'revisar' && pago.oportunidad_id))) return completarAula(x, pago, curso, false);
+    // Un plan de tu agencia que quedó para revisar (por ejemplo, no se pudo crear el acceso): se reintenta.
+    if (curso.plan_id && pago.estado === 'revisar' && pago.oportunidad_id) return completarAgencia(x, pago, curso, true);
     if (pago.estado === 'datos' || pago.estado === 'reservado') return inscribir(x, pago, curso, true);
     if (pago.estado !== 'inscrito') {
       if (!pago.contacto_id) await actualizar(pago, { contacto_id: await asegurarContacto(x.c.ia.empresa_id, pago.telefono) });
@@ -776,6 +785,84 @@ async function inscribirAula(x: Vuelta, pago: PagoRow, curso: CursoRow, alumno: 
   } catch (err) {
     await paraRevisar(x, pago, curso, `No se pudo inscribir en el aula: ${(err as Error).message}`);
   }
+}
+
+// ---------- Plan de tu agencia ----------
+// El cliente pagó un plan: se registra la venta, se crea o renueva su acceso al CRM (si el plan lo
+// trae), se le confirma y te llega un aviso con todo lo que necesitas para seguir con él.
+async function completarAgencia(x: Vuelta, pago: PagoRow, curso: CursoRow, aMano = false): Promise<void> {
+  if (pago.agencia?.venta_id) return; // ya se registró (no se repite)
+  const empresaId = x.c.ia.empresa_id;
+  const contacto = await contactoDe(pago.contacto_id);
+  if (!contacto || !curso.plan_id) return paraRevisar(x, pago, curso, 'No se encontró el contacto o el plan');
+  const monto = Number(pago.monto ?? curso.precio);
+  const tel = pago.telefono.split('@')[0];
+  // Lo que contó en la conversación, para su cuenta y para tu aviso.
+  const { data: chat } = pago.conversacion_id
+    ? await db.from('mensajes').select('remitente, tipo, contenido, creado_en').eq('conversacion_id', pago.conversacion_id).order('creado_en', { ascending: false }).limit(40)
+    : { data: [] };
+  const lineas = [...(chat || [])]
+    .reverse()
+    .filter((m) => (m.tipo === 'texto' || m.tipo === 'audio') && m.contenido?.trim())
+    .map((m) => `${m.remitente === 'cliente' ? 'Cliente' : 'Nosotros'}: ${m.contenido!.trim()}`);
+  const r = await llamar(x.c, [
+    {
+      role: 'system',
+      content: `Un cliente acaba de pagar un plan de una agencia de marketing por WhatsApp. Con la conversación, arma sus datos para que el dueño sepa exactamente cómo seguir.
+Responde SOLO con JSON: {"nombre": "nombre de la persona", "negocio": "nombre de su negocio o empresa", "rubro": "a qué se dedica", "correo": "su correo", "necesita": "qué quiere lograr o qué necesita, en una frase", "acordado": "lo que ya se acordó (fechas, detalles, materiales)", "siguiente": "el siguiente paso concreto que debe hacer el dueño con este cliente"}
+No inventes nada: lo que no está en la conversación va como null.`,
+    },
+    { role: 'user', content: lineas.join('\n') || '(sin mensajes)' },
+  ]);
+  const j = r.ok ? r.json : {};
+  const dato = (v: unknown) => (typeof v === 'string' && v.trim() && !/^(null|ninguno|no)$/i.test(v.trim()) ? v.trim().slice(0, 300) : null);
+  const nombre = dato(j.nombre) || contacto.nombre?.trim() || `+${tel}`;
+  const negocio = dato(j.negocio);
+  const v = await ventaPorPago(empresaId, {
+    plan_id: curso.plan_id,
+    cliente: nombre,
+    negocio,
+    telefono: tel,
+    monto,
+    contacto_id: contacto.id,
+    nota: `Pagó por QR${pago.transaccion ? ` (transacción ${pago.transaccion})` : ''}: la IA revisó el comprobante.`,
+  });
+  if (!v.ok) return paraRevisar(x, pago, curso, `No se pudo registrar la venta del plan: ${v.mensaje}`);
+  const cuenta = v.cuenta;
+  // Primero se anota (un reintento nunca lo registra dos veces); la contraseña no se guarda.
+  await actualizar(pago, { estado: 'inscrito', motivo: null, accion: null, agencia: { venta_id: v.venta_id, cuenta_id: cuenta?.empresa_id ?? null, usuario: cuenta?.usuario ?? null, hecho_en: new Date().toISOString() } });
+  const hasta = cuenta?.vence_en ? new Intl.DateTimeFormat('es', { timeZone: x.c.zona, day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(cuenta.vence_en)) : null;
+  const t = textosDe(curso);
+  const variables = { curso: v.plan.nombre, monto: formatoMonto(monto, curso.moneda) };
+  const mensajes = [{ tipo: 'confirmado', texto: rellenar(t.confirmado, contacto.nombre, variables) }];
+  if (cuenta?.nueva && cuenta.contrasena) {
+    mensajes.push({
+      tipo: 'acceso',
+      texto: `🔑 Tu acceso a la plataforma:\n\nEntra aquí: https://${DOMINIO_USUARIOS}\nUsuario: ${cuenta.usuario}\nContraseña: ${cuenta.contrasena}${hasta ? `\nVigente hasta el ${hasta}` : ''}\n\nAhí conectas tu WhatsApp (en Conexiones) y cargas la información de tu negocio.`,
+    });
+  } else if (cuenta) {
+    mensajes.push({ tipo: 'acceso', texto: `✅ Tu acceso a la plataforma quedó renovado${hasta ? ` hasta el ${hasta}` : ''} (usuario ${cuenta.usuario}).` });
+  }
+  mensajes.push({ tipo: 'registrado', texto: `Ya quedaste registrado en "${v.plan.nombre}" ✅. En breve nos comunicamos contigo para coordinar todo lo demás. ¡Gracias por confiar en nosotros! 🙌` });
+  await mandar(x, pago, mensajes);
+  if (!aMano) {
+    const filas = [
+      `💼 *Nueva venta*: ${quien(nombre, pago.telefono)}${negocio ? ` — ${negocio}` : ''} pagó ${formatoMonto(monto, curso.moneda)} por "${v.plan.nombre}" (comprobante revisado ✅).`,
+      dato(j.rubro) && `   🏷️ Rubro: ${dato(j.rubro)}`,
+      dato(j.correo) && `   ✉️ Correo: ${dato(j.correo)}`,
+      dato(j.necesita) && `   🎯 Necesita: ${dato(j.necesita)}`,
+      dato(j.acordado) && `   🤝 Acordado: ${dato(j.acordado)}`,
+      v.plan.incluye.length ? `   📦 Incluye: ${v.plan.incluye.join(', ')}` : '',
+      cuenta?.nueva
+        ? `   🔑 Su acceso al CRM: usuario *${cuenta.usuario}*, contraseña *${cuenta.contrasena}*${hasta ? ` (hasta el ${hasta})` : ''}. Ya se lo mandé.`
+        : cuenta
+          ? `   🔑 Su acceso al CRM quedó renovado${hasta ? ` hasta el ${hasta}` : ''} (usuario ${cuenta.usuario}).`
+          : `   📌 Plan sin acceso al CRM: le dije que te comunicas con él para coordinar.`,
+      `   👉 Siguiente paso: ${dato(j.siguiente) || 'escríbele para coordinar lo que sigue'}.`,
+    ];
+    await avisar(x, pago, filas.filter(Boolean).join('\n'));
+  }
+  await registrar(empresaId, contacto.id, 'pago', `Venta del plan "${v.plan.nombre}" a ${nombre}${negocio ? ` (${negocio})` : ''}: ${formatoMonto(monto, curso.moneda)}${cuenta ? (cuenta.nueva ? ` · acceso nuevo "${cuenta.usuario}"` : ' · acceso renovado') : ''}.`);
 }
 
 // Cada 2 minutos: las reservas que confirmaste en el club → se le manda el link; las rechazadas quedan para revisar.

@@ -204,6 +204,18 @@ npm test
   nadie de esa cuenta ve nada (también `requiereRol` y `accesoDe`), y su IA, seguimiento y masivos se detienen
   (`agencia/bloqueo.ts`). Cambiar de cuenta: `client/src/lib/cuentas.ts` guarda en el navegador la sesión de las cuentas de
   agencia (nunca las de clientes) y `setSession` + recargar. La página de entrada no muestra marca si hay varias cuentas.
+- **La IA vende tus planes** (sección 42): un curso con QR puede tener `plan_id` (Inscripciones → "Es un plan de mi
+  agencia"). Al confirmarse el pago, `completarAgencia` (pagos/inscripcion.ts) lee los datos del cliente con la IA,
+  `ventaPorPago` (agencia.ts) registra la venta y crea la cuenta (usuario libre a partir del negocio, contraseña nueva) o
+  renueva la de su WhatsApp; al cliente le llegan usuario y contraseña (o "renovado") y "ya quedaste registrado"; a ti un
+  aviso con rubro, correo, qué necesita, lo acordado, el acceso y el siguiente paso. Pagar otra vez un plan es renovar (no
+  "ya estaba inscrito"). Límites por cuenta (`max_numeros`, `max_negocios`; null = sin límite; propias sin límite) con
+  triggers en `lineas_whatsapp` y `siguelo_negocios`; vienen del plan.
+- **Reuniones** (`ia/reuniones.ts`, `siguelo_negocios.reuniones`): franjas por días, duración, aviso mínimo, días adelante y
+  link fijo. El lector le pasa a la IA los huecos libres (sin citas agendadas) por día; con `reunion` agenda la cita
+  (`siguelo_citas`, nota "Reunión virtual…"), la actividad en `tareas` del dueño principal, manda el link y te avisa; si ya
+  tenía una, la cambia. Los recordatorios son los de Seguimiento → Citas (el botón de la ficha pone 24 h, 1 h y 15 min y
+  enciende el seguimiento).
 - **Pagos** (`pagos/`): cada 10 s, `inscripcion.ts` toma las fotos/PDF nuevas de clientes en números con cursos
   (`siguelo_pagos_por_leer`), las manda a la IA con visión, y `comprobante.ts` decide sin IA (monto, destinatario, fecha,
   transacción repetida, señales de edición). Confirmado → documento en la ficha, oportunidad ganada, etapa ganada, pide los

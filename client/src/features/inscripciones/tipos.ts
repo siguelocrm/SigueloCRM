@@ -24,6 +24,8 @@ export interface Curso {
   club?: boolean;
   // Al pagar, el alumno queda inscrito en el Aula virtual.
   aula?: boolean;
+  // Es un plan de tu agencia: al pagar se registra la venta (y su acceso al CRM si lo trae).
+  plan_id?: string | null;
 }
 
 export type EstadoPago = 'leyendo' | 'no_es' | 'revisar' | 'rechazado' | 'datos' | 'reservado' | 'inscrito';

@@ -6,6 +6,7 @@ import { Boton, EstadoVacio, Tarjeta, useToast } from '../../components/ui';
 import Etiqueta from '../seguimiento/Etiqueta';
 import { claseCampo, estiloArea, estiloCampo } from '../seguimiento/estilos';
 import type { DatosNegocios, GrupoNegocio, Negocio } from './useNegocios';
+import ReunionesNegocio, { type ConfigReuniones } from './ReunionesNegocio';
 
 type Borrador = {
   nombre: string;
@@ -21,6 +22,7 @@ type Borrador = {
   embudo_id: string;
   club_sucursal_id: string;
   lineas: string[];
+  reuniones: ConfigReuniones | null;
 };
 
 const aBorrador = (n: Negocio | null, lineas: string[]): Borrador => ({
@@ -37,6 +39,7 @@ const aBorrador = (n: Negocio | null, lineas: string[]): Borrador => ({
   embudo_id: n?.embudo_id ?? '',
   club_sucursal_id: n?.club_sucursal_id ?? '',
   lineas,
+  reuniones: n?.reuniones ? { ...n.reuniones, franjas: (n.reuniones.franjas || []).map((f) => ({ ...f, dias: [...f.dias] })) } : null,
 });
 
 const idNuevo = () => Math.random().toString(36).slice(2, 10);
@@ -116,6 +119,8 @@ export default function FichasNegocios({ datos, empresaId, puedeEditar }: Props)
       grupos: grupos.map((g) => ({ id: g.id, nombre: g.nombre.trim(), link: g.link.trim(), cuando: g.cuando.trim() })),
       embudo_id: borrador.embudo_id || null,
       ...(sucursalesClub ? { club_sucursal_id: borrador.club_sucursal_id || null } : {}),
+      // Sin la sección 42 del SQL la columna no existe: solo se manda si se usa.
+      ...(borrador.reuniones || (n && 'reuniones' in n) ? { reuniones: borrador.reuniones ? { ...borrador.reuniones, enlace: borrador.reuniones.enlace?.trim() || '' } : null } : {}),
       actualizado_en: new Date().toISOString(),
     };
     let id = n?.id;
@@ -189,6 +194,7 @@ export default function FichasNegocios({ datos, empresaId, puedeEditar }: Props)
         <Campo etiqueta="Zonas que atiende" ayuda="Barrios o ciudades cercanos. La IA los usa para sugerir la sucursal más cercana.">
           <input value={borrador.zonas} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, zonas: e.target.value })} placeholder="Ej. Quillacollo, Tiquipaya, Colcapirhua" className={`${claseCampo} font-normal`} style={estiloCampo} />
         </Campo>
+        <ReunionesNegocio valor={borrador.reuniones} onCambiar={(reuniones) => setBorrador({ ...borrador, reuniones })} puedeEditar={puedeEditar} empresaId={empresaId} />
         {sucursalesClub && (
           <Campo etiqueta="Sucursal en tu sistema del club" ayuda="La IA responde con los horarios, cupos y precios en vivo de esta sucursal, y las inscripciones pagadas quedan como reserva en ella.">
             <select value={borrador.club_sucursal_id} disabled={!puedeEditar} onChange={(e) => setBorrador({ ...borrador, club_sucursal_id: e.target.value })} className={`${claseCampo} font-normal`} style={estiloCampo}>

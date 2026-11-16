@@ -5,7 +5,8 @@ import { Boton, EstadoVacio, Tarjeta, useToast } from '../../components/ui';
 import { TEXTO_PRIMARIO, TEXTO_SECUNDARIO, TEXTO_TERCIARIO } from '../../lib/tema';
 import Etiqueta from '../seguimiento/Etiqueta';
 import Acceso from './Acceso';
-import { claseCampo, diaDe, estiloCampo, fecha, finDelDia, nuevaContrasena, sugerirUsuario, type Cuenta, type Plan } from './comun';
+import { claseCampo, diaDe, estiloCampo, fecha, finDelDia, nuevaContrasena, sugerirUsuario, textoLimite, type Cuenta, type Plan } from './comun';
+import Limite from './Limite';
 
 // Las cuentas del CRM que creaste: las de tus clientes y las tuyas (el club, la agencia).
 // Cada una es aparte: sus números, contactos e IA no se mezclan con nada tuyo.
@@ -28,8 +29,19 @@ function FormCuenta({ planes, onCerrar, onCreada }: { planes: Plan[]; onCerrar: 
   const [planId, setPlanId] = useState('');
   const [propia, setPropia] = useState(false);
   const [miClave, setMiClave] = useState(true);
+  const [maxNumeros, setMaxNumeros] = useState<number | null>(1);
+  const [maxNegocios, setMaxNegocios] = useState<number | null>(1);
   const [guardando, setGuardando] = useState(false);
   const etiqueta = (t: string) => <span className="text-[12px] font-semibold" style={{ color: TEXTO_SECUNDARIO }}>{t}</span>;
+  // Con un plan, sus límites.
+  const elegirPlan = (id: string) => {
+    setPlanId(id);
+    const p = planes.find((x) => x.id === id);
+    if (p) {
+      setMaxNumeros(p.max_numeros ?? null);
+      setMaxNegocios(p.max_negocios ?? null);
+    }
+  };
 
   const crear = async () => {
     if (!nombre.trim()) return toast('Escribe el nombre de la cuenta.', 'error');
@@ -45,6 +57,8 @@ function FormCuenta({ planes, onCerrar, onCreada }: { planes: Plan[]; onCerrar: 
       plan_id: planId || null,
       propia,
       usar_mi_clave: miClave,
+      max_numeros: maxNumeros,
+      max_negocios: maxNegocios,
     });
     setGuardando(false);
     if (!r.ok) return toast(r.error || 'No se pudo crear.', 'error');
@@ -61,7 +75,7 @@ function FormCuenta({ planes, onCerrar, onCreada }: { planes: Plan[]; onCerrar: 
         <label className="flex flex-col gap-1">{etiqueta('Su WhatsApp')}<input value={telefono} onChange={(e) => setTelefono(e.target.value)} inputMode="tel" className={claseCampo} style={estiloCampo} /></label>
         <label className="flex flex-col gap-1">
           {etiqueta('Plan (opcional)')}
-          <select value={planId} onChange={(e) => setPlanId(e.target.value)} className={claseCampo} style={estiloCampo}>
+          <select value={planId} onChange={(e) => elegirPlan(e.target.value)} className={claseCampo} style={estiloCampo}>
             <option value="">Sin plan</option>
             {planes.filter((p) => p.activo).map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
           </select>
@@ -75,6 +89,8 @@ function FormCuenta({ planes, onCerrar, onCreada }: { planes: Plan[]; onCerrar: 
           </span>
         </label>
         {!propia && <label className="flex flex-col gap-1">{etiqueta('Acceso hasta (vacío = sin vencimiento)')}<input type="date" value={vence} onChange={(e) => setVence(e.target.value)} className={claseCampo} style={estiloCampo} /></label>}
+        {!propia && <label className="flex flex-col gap-1">{etiqueta('Números de WhatsApp que puede conectar')}<Limite valor={maxNumeros} onCambiar={setMaxNumeros} uno="número" varios="números" /></label>}
+        {!propia && <label className="flex flex-col gap-1">{etiqueta('Negocios que puede crear')}<Limite valor={maxNegocios} onCambiar={setMaxNegocios} uno="negocio" varios="negocios" /></label>}
       </div>
       <label className="flex items-start gap-2 text-[12.5px]" style={{ color: TEXTO_PRIMARIO }}>
         <input type="checkbox" className="mt-0.5" checked={propia} onChange={(e) => setPropia(e.target.checked)} />
@@ -96,6 +112,9 @@ function FilaCuenta({ c, planes, onCambio }: { c: Cuenta; planes: Plan[]; onCamb
   const toast = useToast();
   const [ocupado, setOcupado] = useState(false);
   const [editVence, setEditVence] = useState(false);
+  const [editLimites, setEditLimites] = useState(false);
+  const [maxNumeros, setMaxNumeros] = useState<number | null>(c.max_numeros === undefined ? 1 : c.max_numeros);
+  const [maxNegocios, setMaxNegocios] = useState<number | null>(c.max_negocios === undefined ? 1 : c.max_negocios);
   const [vence, setVence] = useState(diaDe(c.vence_en));
   const [acceso, setAcceso] = useState<{ usuario: string; contrasena: string } | null>(null);
   const est = c.propia ? { texto: 'Tuya', color: 'var(--accent)' } : ESTADO[c.estado];
@@ -136,12 +155,14 @@ function FilaCuenta({ c, planes, onCambio }: { c: Cuenta; planes: Plan[]; onCamb
           </span>
           <span className="text-[12px]" style={{ color: TEXTO_TERCIARIO }}>
             {c.numeros ? `${c.conectados} de ${c.numeros} ${c.numeros === 1 ? 'número conectado' : 'números conectados'}` : 'Todavía no conectó su WhatsApp'}
+            {!c.propia && ` · puede ${textoLimite(c.max_numeros, 'número', 'números')} y ${textoLimite(c.max_negocios, 'negocio', 'negocios')}`}
             {(c.contacto || c.telefono) && ` · ${[c.contacto, c.telefono].filter(Boolean).join(' · ')}`}
             {` · creada el ${fecha(c.creado_en)}`}
           </span>
         </div>
         <div className="flex flex-wrap gap-1.5">
           {!c.propia && <Boton tamano="sm" onClick={() => setEditVence((v) => !v)} disabled={ocupado}>Cambiar vencimiento</Boton>}
+          {!c.propia && <Boton tamano="sm" onClick={() => setEditLimites((v) => !v)} disabled={ocupado}>Números y negocios</Boton>}
           {!c.propia && (c.pausada ? (
             <Boton tamano="sm" icono={Play} onClick={() => cambiar({ pausada: false }, 'La cuenta volvió a funcionar.')} disabled={ocupado}>Reanudar</Boton>
           ) : (
@@ -150,6 +171,13 @@ function FilaCuenta({ c, planes, onCambio }: { c: Cuenta; planes: Plan[]; onCamb
           <Boton tamano="sm" icono={KeyRound} onClick={nuevaClave} disabled={ocupado}>Nueva contraseña</Boton>
         </div>
       </div>
+      {editLimites && (
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="flex flex-col gap-1 text-[12px] font-semibold" style={{ color: TEXTO_SECUNDARIO }}>Números de WhatsApp<Limite valor={maxNumeros} onCambiar={setMaxNumeros} uno="número" varios="números" /></label>
+          <label className="flex flex-col gap-1 text-[12px] font-semibold" style={{ color: TEXTO_SECUNDARIO }}>Negocios<Limite valor={maxNegocios} onCambiar={setMaxNegocios} uno="negocio" varios="negocios" /></label>
+          <Boton tamano="sm" variante="primario" disabled={ocupado} onClick={async () => { if (await cambiar({ max_numeros: maxNumeros, max_negocios: maxNegocios }, 'Límites guardados.')) setEditLimites(false); }}>Guardar</Boton>
+        </div>
+      )}
       {editVence && (
         <div className="flex flex-wrap items-center gap-2">
           <input type="date" value={vence} onChange={(e) => setVence(e.target.value)} className={claseCampo} style={{ ...estiloCampo, width: 170 }} />

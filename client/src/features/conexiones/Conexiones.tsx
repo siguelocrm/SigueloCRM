@@ -5,11 +5,13 @@ import { useAuth } from '../../lib/AuthContext';
 import { tinte, NAVY, TEAL, AMBER, ESTADO_LINEA_STYLE, BORDE, SOMBRA_CARD, TEXTO_PRIMARIO, TEXTO_SECUNDARIO, TEXTO_TERCIARIO } from '../../lib/tema';
 import type { LineaWhatsapp } from '../../lib/tipos';
 import { conSesion } from '../../lib/backend';
+import { useToast } from '../../components/ui';
 
 const puntoEstado: Record<LineaWhatsapp['estado'], string> = { activo: '#12B76A', conectando: AMBER, desconectado: '#98A2B3' };
 
 export default function Conexiones() {
   const { usuario } = useAuth();
+  const toast = useToast();
   const [lineas, setLineas] = useState<LineaWhatsapp[]>([]);
   const [nombreNueva, setNombreNueva] = useState('');
   const [creando, setCreando] = useState(false);
@@ -45,9 +47,11 @@ export default function Conexiones() {
   const crearLinea = async () => {
     if (!nombreNueva.trim()) return;
     setCreando(true);
-    await supabase.from('lineas_whatsapp').insert({ empresa_id: usuario!.empresa_id, nombre: nombreNueva, numero: '', estado: 'desconectado' });
-    setNombreNueva('');
+    const { error } = await supabase.from('lineas_whatsapp').insert({ empresa_id: usuario!.empresa_id, nombre: nombreNueva, numero: '', estado: 'desconectado' });
     setCreando(false);
+    // Por ejemplo, el límite de números del plan de esta cuenta.
+    if (error) return toast(error.message, 'error');
+    setNombreNueva('');
     cargar();
   };
 

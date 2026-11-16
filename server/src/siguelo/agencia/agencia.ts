@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import { db } from '../db.js';
 import { registrar } from '../registro.js';
 import { cambiarEtapa } from '../motor.js';
@@ -31,6 +32,11 @@ const fechaValida = (x: unknown): string | null => {
   const t = new Date(String(x)).getTime();
   return Number.isFinite(t) ? new Date(t).toISOString() : null;
 };
+// El WhatsApp guardado como lo guarda el CRM (591…), para reconocer al cliente cuando vuelve a pagar.
+const telefonoDe = (x: unknown) => {
+  const t = numeroPersonal(texto(x, 30));
+  return t.length >= 7 ? t : texto(x, 30) || null;
+};
 const dd = (iso: string) => new Intl.DateTimeFormat('es', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/La_Paz' }).format(new Date(iso));
 
 type Resultado<T> = ({ ok: true } & T) | { ok: false; mensaje: string };
@@ -54,7 +60,17 @@ export type DatosCuenta = {
   notas?: string;
   propia?: boolean; // una cuenta tuya: también puede crear cuentas y tiene el botón para cambiar de cuenta
   usar_mi_clave?: boolean; // la IA de esa cuenta usa tu clave de OpenAI
+  max_numeros?: number | null; // cuántos números de WhatsApp puede conectar (null = sin límite)
+  max_negocios?: number | null;
 };
+
+// "3" → 3; null, "" o "sin límite" → null; nada → el valor por defecto.
+function limite(x: unknown, porDefecto: number | null): number | null | false {
+  if (x === undefined) return porDefecto;
+  if (x === null || x === '') return null;
+  const n = Math.round(Number(x));
+  return Number.isFinite(n) && n >= 0 && n <= 1000 ? n : false;
+}
 
 export async function crearCuenta(agenciaId: string, d: DatosCuenta): Promise<Resultado<{ empresa_id: string; usuario: string }>> {
   const nombre = texto(d.nombre, 120);
@@ -68,6 +84,9 @@ export async function crearCuenta(agenciaId: string, d: DatosCuenta): Promise<Re
     const { data: plan } = await db.from('siguelo_planes').select('id').eq('id', d.plan_id).eq('empresa_id', agenciaId).maybeSingle();
     if (!plan) return { ok: false, mensaje: 'Ese plan no existe.' };
   }
+  const maxNumeros = limite(d.max_numeros, 1);
+  const maxNegocios = limite(d.max_negocios, 1);
+  if (maxNumeros === false || maxNegocios === false) return { ok: false, mensaje: 'Revisa los límites de números y negocios.' };
 
   // 1. La empresa nueva (vacía; la base le pone su embudo por defecto).
   const { data: empresa, error: errEmpresa } = await db.from('empresas').insert({ nombre }).select('id').single();
@@ -98,13 +117,15 @@ export async function crearCuenta(agenciaId: string, d: DatosCuenta): Promise<Re
         agencia_id: agenciaId,
         nombre,
         contacto: texto(d.contacto, 80) || null,
-        telefono: texto(d.telefono, 30) || null,
+        telefono: telefonoDe(d.telefono),
         usuario: correo,
         usuario_id: usuarioId,
         plan_id: d.plan_id || null,
         vence_en: d.propia ? null : vence,
         propia: !!d.propia,
         notas: texto(d.notas, 1000) || null,
+        max_numeros: maxNumeros,
+        max_negocios: maxNegocios,
       }),
     ...(d.propia ? [() => db.from('siguelo_agencias').insert({ empresa_id: empresa.id })] : []),
   ];
@@ -134,7 +155,7 @@ async function cuentaDe(agenciaId: string, empresaId: string): Promise<CuentaRow
   return data;
 }
 
-export type CambiosCuenta = { nombre?: string; contacto?: string; telefono?: string; notas?: string; vence_en?: string | null; pausada?: boolean; plan_id?: string | null; password?: string };
+export type CambiosCuenta = { nombre?: string; contacto?: string; telefono?: string; notas?: string; vence_en?: string | null; pausada?: boolean; plan_id?: string | null; password?: string; max_numeros?: number | null; max_negocios?: number | null };
 
 export async function actualizarCuenta(agenciaId: string, empresaId: string, b: CambiosCuenta): Promise<Resultado<object>> {
   const cuenta = await cuentaDe(agenciaId, empresaId);
@@ -142,7 +163,13 @@ export async function actualizarCuenta(agenciaId: string, empresaId: string, b: 
   const cambios: Partial<CuentaRow> = { actualizado_en: new Date().toISOString() };
   if (typeof b.nombre === 'string' && b.nombre.trim()) cambios.nombre = texto(b.nombre, 120);
   if (typeof b.contacto === 'string') cambios.contacto = texto(b.contacto, 80) || null;
-  if (typeof b.telefono === 'string') cambios.telefono = texto(b.telefono, 30) || null;
+  if (typeof b.telefono === 'string') cambios.telefono = telefonoDe(b.telefono);
+  for (const k of ['max_numeros', 'max_negocios'] as const) {
+    if (b[k] === undefined) continue;
+    const n = limite(b[k], null);
+    if (n === false) return { ok: false, mensaje: 'Revisa los límites de números y negocios.' };
+    cambios[k] = n;
+  }
   if (typeof b.notas === 'string') cambios.notas = texto(b.notas, 1000) || null;
   if (b.vence_en !== undefined) cambios.vence_en = b.vence_en === null ? null : fechaValida(b.vence_en);
   if (typeof b.pausada === 'boolean') cambios.pausada = b.pausada;
@@ -169,7 +196,7 @@ export async function actualizarCuenta(agenciaId: string, empresaId: string, b: 
 }
 
 // ---------- Planes ----------
-export type DatosPlan = { nombre?: string; precio?: number; moneda?: string; duracion_dias?: number; incluye?: string[]; con_crm?: boolean; activo?: boolean };
+export type DatosPlan = { nombre?: string; precio?: number; moneda?: string; duracion_dias?: number; incluye?: string[]; con_crm?: boolean; activo?: boolean; max_numeros?: number | null; max_negocios?: number | null; usar_mi_clave?: boolean };
 
 function revisarPlan(b: DatosPlan, nuevo: boolean): Resultado<{ plan: Partial<PlanRow> }> {
   const plan: Partial<PlanRow> = {};
@@ -191,6 +218,13 @@ function revisarPlan(b: DatosPlan, nuevo: boolean): Resultado<{ plan: Partial<Pl
   if (b.incluye !== undefined) plan.incluye = (Array.isArray(b.incluye) ? b.incluye : []).map((x) => texto(x, 200)).filter(Boolean).slice(0, 40);
   if (typeof b.con_crm === 'boolean') plan.con_crm = b.con_crm;
   if (typeof b.activo === 'boolean') plan.activo = b.activo;
+  if (typeof b.usar_mi_clave === 'boolean') plan.usar_mi_clave = b.usar_mi_clave;
+  for (const k of ['max_numeros', 'max_negocios'] as const) {
+    if (b[k] === undefined) continue;
+    const n = limite(b[k], null);
+    if (n === false) return { ok: false, mensaje: 'Revisa los límites de números y negocios.' };
+    plan[k] = n;
+  }
   return { ok: true, plan };
 }
 
@@ -216,10 +250,13 @@ export type DatosVenta = {
   notas?: string;
   // Si el plan trae CRM: crear su cuenta o renovar una que ya tiene.
   cuenta?: { modo: 'nueva'; nombre?: string; usuario: string; password: string; usar_mi_clave?: boolean } | { modo: 'renovar'; empresa_id: string } | null;
+  // La venta la registró la IA al confirmar un pago: el contacto ya quedó ganado (no se repite).
+  contacto_id?: string | null;
+  anotar?: boolean;
 };
 
 // El cliente queda en el CRM de tu agencia: como contacto, en "Venta ganada", con la oportunidad ganada y una nota.
-async function anotarEnTuCRM(agenciaId: string, usuarioId: string, cliente: string, telefono: string, producto: string, monto: number, nota: string): Promise<string | null> {
+async function anotarEnTuCRM(agenciaId: string, usuarioId: string | null, cliente: string, telefono: string, producto: string, monto: number, nota: string): Promise<string | null> {
   const tel = numeroPersonal(telefono);
   if (tel.length < 7) return null;
   let { data: contacto } = await db.from('contactos').select('id, etapa_id').eq('empresa_id', agenciaId).eq('telefono', tel).maybeSingle();
@@ -237,7 +274,7 @@ async function anotarEnTuCRM(agenciaId: string, usuarioId: string, cliente: stri
   return contacto.id;
 }
 
-export async function registrarVenta(agenciaId: string, usuarioId: string, b: DatosVenta): Promise<Resultado<{ id: string; cuenta: { empresa_id: string; usuario: string; nueva: boolean; vence_en: string | null } | null }>> {
+export async function registrarVenta(agenciaId: string, usuarioId: string | null, b: DatosVenta): Promise<Resultado<{ id: string; cuenta: { empresa_id: string; usuario: string; nueva: boolean; vence_en: string | null } | null }>> {
   const cliente = texto(b.cliente, 120);
   if (!cliente) return { ok: false, mensaje: 'Escribe el nombre del cliente.' };
   let plan: PlanRow | null = null;
@@ -266,6 +303,8 @@ export async function registrarVenta(agenciaId: string, usuarioId: string, b: Da
         vence_en: hasta,
         plan_id: plan.id,
         usar_mi_clave: b.cuenta.usar_mi_clave,
+        max_numeros: plan.max_numeros ?? null,
+        max_negocios: plan.max_negocios ?? null,
       });
       if (!r.ok) return r;
       cuenta = { empresa_id: r.empresa_id, usuario: r.usuario, nueva: true, vence_en: hasta };
@@ -276,7 +315,9 @@ export async function registrarVenta(agenciaId: string, usuarioId: string, b: Da
       const base = Math.max(new Date(fecha).getTime(), actual.vence_en ? new Date(actual.vence_en).getTime() : 0);
       desde = new Date(base).toISOString();
       hasta = new Date(base + dias * DIA).toISOString();
-      const r = await actualizarCuenta(agenciaId, actual.empresa_id, { vence_en: hasta, pausada: false, plan_id: plan.id });
+      // Con el plan nuevo, sus límites (si el nuevo permite más).
+      const mas = (a: number | null | undefined, b: number | null | undefined) => (a === null || b === null || a === undefined || b === undefined ? null : Math.max(a, b));
+      const r = await actualizarCuenta(agenciaId, actual.empresa_id, { vence_en: hasta, pausada: false, plan_id: plan.id, max_numeros: mas(actual.max_numeros, plan.max_numeros), max_negocios: mas(actual.max_negocios, plan.max_negocios) });
       if (!r.ok) return r;
       cuenta = { empresa_id: actual.empresa_id, usuario: usuarioDe(actual.usuario ?? ''), nueva: false, vence_en: hasta };
     }
@@ -284,7 +325,8 @@ export async function registrarVenta(agenciaId: string, usuarioId: string, b: Da
 
   const producto = plan?.nombre ?? 'Servicio de la agencia';
   const nota = `Compró "${producto}" por ${plan?.moneda ?? 'Bs'} ${monto}${hasta ? ` (hasta el ${dd(hasta)})` : ''}${b.notas ? `: ${texto(b.notas, 300)}` : ''}`;
-  const contactoId = b.telefono ? await anotarEnTuCRM(agenciaId, usuarioId, cliente, b.telefono, producto, monto, nota).catch(() => null) : null;
+  const contactoId =
+    b.anotar === false ? b.contacto_id ?? null : b.telefono ? await anotarEnTuCRM(agenciaId, usuarioId, cliente, b.telefono, producto, monto, nota).catch(() => null) : null;
   const { data: venta, error } = await db
     .from('siguelo_ventas')
     .insert({
@@ -335,4 +377,54 @@ export async function datosAgencia(agenciaId: string) {
       conectados: (lineas || []).filter((l) => l.empresa_id === c.empresa_id && l.estado === 'activo').length,
     })),
   };
+}
+
+// ---------- La IA vende: el cliente pagó un plan (comprobante confirmado) ----------
+
+// La cuenta de este cliente (por su WhatsApp), si ya tiene una.
+export async function cuentaPorTelefono(agenciaId: string, telefono: string): Promise<CuentaRow | null> {
+  const tel = numeroPersonal(telefono.split('@')[0]);
+  if (tel.length < 7) return null;
+  const { data } = await db.from('siguelo_cuentas').select('*').eq('agencia_id', agenciaId).eq('propia', false).eq('telefono', tel).order('creado_en', { ascending: false }).limit(1);
+  return data?.[0] ?? null;
+}
+
+// Contraseña fácil de dictar (sin 0/O ni 1/l).
+export function contrasenaNueva(): string {
+  const letras = 'abcdefghjkmnpqrstuvwxyz';
+  const numeros = '23456789';
+  const azar = (x: string) => x[randomInt(x.length)];
+  return Array.from({ length: 5 }, () => azar(letras)).join('') + Array.from({ length: 3 }, () => azar(numeros)).join('');
+}
+const sugerido = (nombre: string) =>
+  nombre.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '').slice(0, 18) || 'cliente';
+
+export type VentaAutomatica = Resultado<{ venta_id: string; plan: PlanRow; cuenta: { empresa_id: string; usuario: string; nueva: boolean; vence_en: string | null; contrasena: string | null } | null }>;
+
+// Registra la venta del plan y, si trae el CRM, crea su acceso (o renueva el que tiene).
+export async function ventaPorPago(agenciaId: string, d: { plan_id: string; cliente: string; negocio: string | null; telefono: string; monto: number; contacto_id: string | null; nota: string }): Promise<VentaAutomatica> {
+  const { data: plan } = await db.from('siguelo_planes').select('*').eq('id', d.plan_id).eq('empresa_id', agenciaId).maybeSingle();
+  if (!plan) return { ok: false, mensaje: 'El plan de este curso ya no existe (Agencia → Planes).' };
+  const base: DatosVenta = { cliente: d.cliente, telefono: d.telefono, plan_id: plan.id, monto: d.monto, notas: d.nota, contacto_id: d.contacto_id, anotar: false };
+  if (!plan.con_crm) {
+    const r = await registrarVenta(agenciaId, null, base);
+    return r.ok ? { ok: true, venta_id: r.id, plan, cuenta: null } : r;
+  }
+  const actual = await cuentaPorTelefono(agenciaId, d.telefono);
+  if (actual) {
+    const r = await registrarVenta(agenciaId, null, { ...base, cuenta: { modo: 'renovar', empresa_id: actual.empresa_id } });
+    return r.ok ? { ok: true, venta_id: r.id, plan, cuenta: r.cuenta ? { ...r.cuenta, contrasena: null } : null } : r;
+  }
+  // Cuenta nueva: un usuario libre a partir del nombre del negocio (consultoriopaz, consultoriopaz2…).
+  const contrasena = contrasenaNueva();
+  const raiz = sugerido(d.negocio || d.cliente);
+  let ultimo: VentaAutomatica = { ok: false, mensaje: 'No se pudo crear el acceso.' };
+  for (let i = 0; i < 6; i++) {
+    const usuario = i === 0 ? raiz : `${raiz}${i + 1}`;
+    const r = await registrarVenta(agenciaId, null, { ...base, cuenta: { modo: 'nueva', nombre: d.negocio || d.cliente, usuario, password: contrasena, usar_mi_clave: plan.usar_mi_clave !== false } });
+    if (r.ok) return { ok: true, venta_id: r.id, plan, cuenta: r.cuenta ? { ...r.cuenta, contrasena } : null };
+    ultimo = r;
+    if (!/Ya existe alguien con el usuario/.test(r.mensaje)) break;
+  }
+  return ultimo;
 }

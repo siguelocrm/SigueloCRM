@@ -4,7 +4,8 @@ import { llamarBackend } from '../../lib/backend';
 import { Boton, EstadoVacio, Tarjeta, useToast } from '../../components/ui';
 import { TEXTO_PRIMARIO, TEXTO_SECUNDARIO, TEXTO_TERCIARIO } from '../../lib/tema';
 import Etiqueta from '../seguimiento/Etiqueta';
-import { claseCampo, duracion, estiloArea, estiloCampo, monto, type Plan } from './comun';
+import { claseCampo, duracion, estiloArea, estiloCampo, monto, textoLimite, type Plan } from './comun';
+import Limite from './Limite';
 
 // Los planes de tu agencia: qué incluyen, cuánto cuestan, cuánto duran y si traen el CRM de
 // WhatsApp (al venderlo se crea el acceso del cliente).
@@ -17,13 +18,16 @@ function FormPlan({ plan, onCerrar, onGuardado }: { plan: Plan | null; onCerrar:
   const [dias, setDias] = useState(String(plan?.duracion_dias ?? 30));
   const [incluye, setIncluye] = useState((plan?.incluye ?? []).join('\n'));
   const [conCrm, setConCrm] = useState(plan?.con_crm ?? false);
+  const [maxNumeros, setMaxNumeros] = useState<number | null>(plan ? plan.max_numeros ?? null : 1);
+  const [maxNegocios, setMaxNegocios] = useState<number | null>(plan ? plan.max_negocios ?? null : 1);
+  const [miClave, setMiClave] = useState(plan?.usar_mi_clave ?? true);
   const [guardando, setGuardando] = useState(false);
   const etiqueta = (t: string) => <span className="text-[12px] font-semibold" style={{ color: TEXTO_SECUNDARIO }}>{t}</span>;
 
   const guardar = async () => {
     if (!nombre.trim()) return toast('Ponle un nombre al plan.', 'error');
     setGuardando(true);
-    const cuerpo = { nombre: nombre.trim(), precio: Number(precio || 0), moneda: moneda.trim() || 'Bs', duracion_dias: Number(dias || 30), incluye: incluye.split('\n').map((x) => x.trim()).filter(Boolean), con_crm: conCrm };
+    const cuerpo = { nombre: nombre.trim(), precio: Number(precio || 0), moneda: moneda.trim() || 'Bs', duracion_dias: Number(dias || 30), incluye: incluye.split('\n').map((x) => x.trim()).filter(Boolean), con_crm: conCrm, max_numeros: maxNumeros, max_negocios: maxNegocios, usar_mi_clave: miClave };
     const r = plan ? await llamarBackend(`/siguelo/agencia/planes/${plan.id}`, cuerpo, 'PATCH') : await llamarBackend('/siguelo/agencia/planes', cuerpo);
     setGuardando(false);
     if (!r.ok) return toast(r.error || 'No se pudo guardar.', 'error');
@@ -51,8 +55,20 @@ function FormPlan({ plan, onCerrar, onGuardado }: { plan: Plan | null; onCerrar:
       </label>
       <label className="flex items-start gap-2 text-[13px]" style={{ color: TEXTO_PRIMARIO }}>
         <input type="checkbox" className="mt-0.5" checked={conCrm} onChange={(e) => setConCrm(e.target.checked)} />
-        <span><b>Incluye el CRM de WhatsApp</b>: al registrar la venta se crea el acceso del cliente (con usuario y contraseña) y vence cuando termina el plan. Sin marcar (por ejemplo, solo videos), la venta solo queda registrada.</span>
+        <span><b>Incluye el CRM de WhatsApp</b>: al registrar la venta (o cuando la IA confirma su pago) se crea el acceso del cliente (con usuario y contraseña) y vence cuando termina el plan. Sin marcar (por ejemplo, solo videos), la venta solo queda registrada.</span>
       </label>
+      {conCrm && (
+        <div className="rounded-xl p-3 flex flex-col gap-2.5" style={{ backgroundColor: 'var(--surface-2)' }}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1">{etiqueta('Números de WhatsApp que puede conectar')}<Limite valor={maxNumeros} onCambiar={setMaxNumeros} uno="número" varios="números" /></label>
+            <label className="flex flex-col gap-1">{etiqueta('Negocios que puede crear')}<Limite valor={maxNegocios} onCambiar={setMaxNegocios} uno="negocio" varios="negocios" /></label>
+          </div>
+          <label className="flex items-center gap-2 text-[12.5px]" style={{ color: TEXTO_SECUNDARIO }}>
+            <input type="checkbox" checked={miClave} onChange={(e) => setMiClave(e.target.checked)} />
+            Su IA usa mi clave de OpenAI (si no, el cliente pone la suya en IA → Ajustes)
+          </label>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
         <Boton variante="primario" icono={Check} onClick={guardar} disabled={guardando}>{guardando ? 'Guardando…' : 'Guardar plan'}</Boton>
         <Boton onClick={onCerrar} disabled={guardando}>Cancelar</Boton>
@@ -90,6 +106,7 @@ export default function Planes({ planes, onCambio }: { planes: Plan[]; onCambio:
               <div className="flex flex-col gap-0.5 min-w-0">
                 <span className="text-[15px] font-bold" style={{ color: TEXTO_PRIMARIO }}>{p.nombre}</span>
                 <span className="text-[13px]" style={{ color: TEXTO_SECUNDARIO }}><b>{monto(p.precio, p.moneda)}</b> · {duracion(p.duracion_dias)}</span>
+                {p.con_crm && <span className="text-[12px]" style={{ color: TEXTO_TERCIARIO }}>{textoLimite(p.max_numeros, 'número', 'números')} · {textoLimite(p.max_negocios, 'negocio', 'negocios')}</span>}
               </div>
               <div className="flex flex-wrap justify-end gap-1">
                 {p.con_crm ? <Etiqueta color="var(--accent)">Con CRM de WhatsApp</Etiqueta> : <Etiqueta color="var(--fg-3)">Sin CRM</Etiqueta>}

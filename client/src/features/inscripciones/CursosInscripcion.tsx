@@ -38,8 +38,11 @@ export default function CursosInscripcion({ empresaId, cursos, negocios, etapas,
   const [campos, setCampos] = useState<CampoPersonalizado[]>([]);
   const [b, setB] = useState<Borrador | null>(null);
   const [subiendo, setSubiendo] = useState(false);
+  // Planes de tu agencia (solo si esta cuenta es tu agencia y ya los creaste).
+  const [planes, setPlanes] = useState<{ id: string; nombre: string; precio: number; moneda: string; con_crm: boolean }[]>([]);
 
   useEffect(() => {
+    supabase.from('siguelo_planes').select('id, nombre, precio, moneda, con_crm').eq('activo', true).order('creado_en').then(({ data, error }) => setPlanes(error ? [] : data || []));
     supabase.from('campos_personalizados').select('id, nombre, tipo').order('orden').returns<CampoPersonalizado[]>().then(({ data }) => setCampos(data || []));
   }, []);
 
@@ -65,8 +68,8 @@ export default function CursosInscripcion({ empresaId, cursos, negocios, etapas,
     if (!b.destinatario.trim() && b.cuenta.replace(/\D/g, '').length < 4) return toast('Pon el nombre del titular o el número de cuenta: así se controla que el pago llegó a ti.', 'error');
     const { id, precioTexto: _p, ...sinPrecio } = b;
     // Sin la última versión del SQL, la columna "club" no existe: solo se manda si se usa.
-    const { club, aula, ...resto } = sinPrecio;
-    const fila = { ...resto, ...(club || clubConectado ? { club: !!club } : {}), ...(aula || aulaConectada ? { aula: !!aula } : {}), nombre: b.nombre.trim(), precio, link_grupo: b.link_grupo.trim(), max_horas: Math.min(720, Math.max(1, Math.round(b.max_horas) || 72)), actualizado_en: new Date().toISOString() };
+    const { club, aula, plan_id, ...resto } = sinPrecio;
+    const fila = { ...resto, ...(club || clubConectado ? { club: !!club } : {}), ...(aula || aulaConectada ? { aula: !!aula } : {}), ...(plan_id || planes.length ? { plan_id: plan_id || null } : {}), nombre: b.nombre.trim(), precio, link_grupo: b.link_grupo.trim(), max_horas: Math.min(720, Math.max(1, Math.round(b.max_horas) || 72)), actualizado_en: new Date().toISOString() };
     const { error } = id ? await supabase.from('siguelo_cursos').update(fila).eq('id', id) : await supabase.from('siguelo_cursos').insert(fila);
     if (error) return toast(`No se pudo guardar: ${error.message}`, 'error');
     toast('Curso guardado', 'ok');
@@ -106,6 +109,28 @@ export default function CursosInscripcion({ empresaId, cursos, negocios, etapas,
               <b style={{ color: TEXTO_PRIMARIO }}>Inscribir en mi Aula virtual.</b> Al pagar, la IA elige el plan del aula por lo que habló el cliente y lo que pagó,
               le pide el nombre de quien tomará las clases si no lo dijo, le crea su cuenta en el aula (o usa la que ya tiene con su celular), lo
               inscribe con su pago y le manda su usuario y contraseña. Pon precio 0: el precio es el de cada plan del aula.
+            </span>
+          </label>
+        )}
+        {(planes.length > 0 || b.plan_id) && (
+          <label className="flex flex-col gap-1.5 text-[12.5px] rounded-lg p-2.5" style={{ color: TEXTO_SECUNDARIO, border: `1px solid ${BORDE}` }}>
+            <b style={{ color: TEXTO_PRIMARIO }}>Es un plan de mi agencia</b>
+            <select
+              value={b.plan_id ?? ''}
+              disabled={!puedeEditar}
+              onChange={(e) => {
+                const p = planes.find((x) => x.id === e.target.value);
+                setB({ ...b, plan_id: e.target.value || null, ...(p ? { club: false, aula: false, nombre: b.nombre || p.nombre, moneda: p.moneda, precioTexto: b.precioTexto || String(p.precio) } : {}) });
+              }}
+              className={`${claseCampo} font-normal`}
+              style={estiloCampo}
+            >
+              <option value="">No (un curso normal)</option>
+              {planes.map((p) => <option key={p.id} value={p.id}>{p.nombre} · {formatoMonto(p.precio, p.moneda)}{p.con_crm ? ' · con CRM' : ''}</option>)}
+            </select>
+            <span>
+              Al confirmarse el pago, la venta queda registrada en Agencia; si el plan trae el CRM, se crea su acceso (o se renueva el que tiene) y le llegan su usuario y
+              contraseña. Al cliente se le confirma que ya está registrado y que te comunicarás con él, y a ti te llega un aviso con todos sus datos.
             </span>
           </label>
         )}
@@ -160,7 +185,7 @@ export default function CursosInscripcion({ empresaId, cursos, negocios, etapas,
           </Campo>
         </div>
 
-        {!b.club && !b.aula && <div className="flex flex-col gap-1.5">
+        {!b.club && !b.aula && !b.plan_id && <div className="flex flex-col gap-1.5">
           <span className="text-[12.5px] font-semibold" style={{ color: TEXTO_SECUNDARIO }}>Datos que se le piden al pagar</span>
           <label className="flex items-center gap-2 text-[12.5px]" style={{ color: TEXTO_SECUNDARIO }}>
             <input type="checkbox" checked={b.datos.includes('nombre')} onChange={(e) => cambiarDato('nombre', e.target.checked)} /> Nombre completo

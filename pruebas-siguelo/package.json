@@ -17,7 +17,7 @@
     "banco": "node ../node_modules/vite/bin/vite.js --config banco/vite.config.mjs",
     "masivos": "node --import tsx --import ./hooks.mjs integracion-masivos.mts",
     "aula": "node --import tsx --import ./hooks.mjs integracion-aula.mts",
-    "agencia": "node --import tsx --import ./hooks.mjs integracion-agencia.mts"
+    "agencia": "node --import tsx --import ./hooks.mjs integracion-agencia.mts && node --import tsx --import ./hooks.mjs integracion-venta-ia.mts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.2.17",

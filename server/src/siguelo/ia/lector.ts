@@ -14,6 +14,7 @@ import { AQUI, armarMensajes, validarResultado, type DatosContexto, type LineaCo
 import { desempaquetar, empaquetar, linkDeMapa } from './ubicacion.js';
 import { crearPregunta, leerDueno } from './dueno.js';
 import { textoParaIA, transcribirAudios } from './audios.js';
+import { agendarReunion, duracionDe, huecosLibres, reunionDe, reunionesActivas, textoReunion, type Hueco } from './reuniones.js';
 import { fueEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import type { CursoRow, EtapaVentaRow, IaRow, LecturaRow, NegocioRow, PorLeerRow, SalidaRow, TipoAviso } from '../tipos.js';
 import { cortar, recortarTexto } from '../textos.js';
@@ -109,6 +110,17 @@ async function cursosDisponibles(empresaId: string, negocioId: string, conversac
 const precioDe = (k: CursoRow) =>
   Number(k.precio) > 0 ? formatoMonto(k.precio, k.moneda) : k.aula ? 'el precio del plan del Aula virtual que elija' : k.club ? 'la mensualidad según los cursos que tome (sistema del club)' : 'precio a consultar';
 const cursosCortos = (cursos: CursoRow[]) => cursos.map((k) => ({ id: k.id, nombre: k.nombre, precio: precioDe(k) }));
+// Un curso que es un plan de tu agencia: con lo que incluye y cuánto dura (para que la IA lo explique).
+async function conPlanes(cursos: CursoRow[]) {
+  const ids = [...new Set(cursos.map((k) => k.plan_id).filter((x): x is string => !!x))];
+  const { data: planes } = ids.length ? await db.from('siguelo_planes').select('*').in('id', ids) : { data: [] };
+  return cursosCortos(cursos).map((k, i) => {
+    const p = (planes || []).find((x) => x.id === cursos[i].plan_id);
+    if (!p) return k;
+    const dura = p.duracion_dias % 30 === 0 ? `${p.duracion_dias / 30} ${p.duracion_dias === 30 ? 'mes' : 'meses'}` : `${p.duracion_dias} días`;
+    return { ...k, precio: `${k.precio} por ${dura}${p.incluye.length ? `; incluye: ${p.incluye.join(', ')}` : ''}${p.con_crm ? '; incluye su acceso a la plataforma (CRM de WhatsApp con IA), que le llega apenas paga' : ''}` };
+  });
+}
 
 // ¿Por qué no responde sola ahora? ('' si puede)
 async function motivoSinAuto(c: Config, conversacionId: string, ultimaPersona: number): Promise<string> {
@@ -142,6 +154,9 @@ type Contexto = {
   preguntaCliente: string;
   // Lo pidió una persona con el botón "Responder con IA" de la bandeja: responde sí o sí, al momento.
   forzado: boolean;
+  // Reuniones virtuales: los horarios que vio la IA y la que quedó agendada en esta lectura.
+  huecos: Hueco[];
+  reunion: { texto: string; enlace: string } | null;
 };
 
 async function encolarAviso(x: Contexto, tipo: TipoAviso, motivo: string): Promise<boolean> {
@@ -220,7 +235,8 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
   // La ubicación en el mapa: la de este negocio o la de otra sucursal.
   const lugar = r.ubicacion === AQUI ? x.negocio : r.ubicacion ? x.otros.find((n) => n.id === r.ubicacion) : undefined;
   const mapa = lugar?.ubicacion?.trim() ? lugar : undefined;
-  if (!texto && !respuestas.length && !grupo && !curso && !bot && !mapa && !(otro && lineaOtro)) {
+  const reunion = x.reunion;
+  if (!texto && !respuestas.length && !grupo && !curso && !bot && !mapa && !(otro && lineaOtro) && !reunion) {
     if (!noSabe) return `no le respondió: la IA no vio nada que contestar${r.resumen ? ` (${r.resumen})` : ''}`;
     const yaEspero = c.ia.si_no_sabe === 'espera' && c.ia.texto_espera.trim() && Date.now() - ms(x.lectura.espera_enviada) <= ESPERA_REPETIR_MS;
     return `no le respondió porque no tiene esa información en la ficha${yaEspero ? ' (el "déjame consultarlo" ya se le mandó hace poco)' : c.ia.si_no_sabe === 'avisar' ? ' (en Ajustes está "No responde y te avisa")' : ''}: respóndele tú o agrega el dato en Negocios`;
@@ -266,6 +282,7 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
   if (grupo) filas.push({ ...base, origen: 'grupo', referencia: grupo.id, contenido: `Aquí tienes el link para unirte a "${grupo.nombre}":\n${grupo.link}`, orden: filas.length });
   if (curso) filas.push({ ...base, origen: 'qr', referencia: curso.id, tipo: 'imagen', media_url: curso.qr_url, contenido: `QR para pagar ${curso.nombre}: ${formatoMonto(curso.precio, curso.moneda)}`, orden: filas.length });
   if (bot) filas.push({ ...base, origen: 'bot', referencia: bot.id, contenido: `Activa "${bot.nombre}" del bot`, orden: filas.length });
+  if (reunion?.enlace) filas.push({ ...base, origen: 'respuesta', referencia: 'reunion', contenido: `📅 Tu reunión: ${reunion.texto}\n🔗 Link para conectarte: ${reunion.enlace}`, orden: filas.length });
   if (mapa) filas.push({ ...base, origen: 'respuesta', referencia: 'ubicacion', tipo: 'ubicacion', contenido: empaquetar(mapa.sucursal ? `${mapa.nombre} (${mapa.sucursal})` : mapa.nombre, mapa.direccion, mapa.ubicacion!.trim()), orden: filas.length });
   if (otro && lineaOtro) {
     // Sale por el número del otro negocio, un rato después de la respuesta.
@@ -304,7 +321,7 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
     if (!guardadas) return `no le respondió: no se pudo guardar la respuesta (${error.message})`;
   }
   if (espera && estado === 'pendiente') x.lectura.espera_enviada = new Date().toISOString();
-  const que = [texto && `"${recortarTexto(texto, 80)}"`, ...respuestas.map((rr) => `"${rr.titulo}"`), grupo && `link de "${grupo.nombre}"`, curso && `QR de "${curso.nombre}"`, bot && `activa "${bot.nombre}" del bot`, mapa && `ubicación de ${mapa.nombre}`, otro && `pase a ${otro.nombre}`]
+  const que = [texto && `"${recortarTexto(texto, 80)}"`, ...respuestas.map((rr) => `"${rr.titulo}"`), grupo && `link de "${grupo.nombre}"`, curso && `QR de "${curso.nombre}"`, bot && `activa "${bot.nombre}" del bot`, reunion?.enlace && 'link de la reunión', mapa && `ubicación de ${mapa.nombre}`, otro && `pase a ${otro.nombre}`]
     .filter(Boolean)
     .join(' + ');
   return estado === 'pendiente' ? `respondiendo: ${que}` : `respuesta lista para que la apruebes${base.motivo ? ` (${base.motivo})` : ''}: ${que}`;
@@ -345,9 +362,49 @@ async function aplicar(x: Contexto, r: ResultadoIA): Promise<string[]> {
     const tipoAviso = r.aviso || (noSabe ? 'pregunta' : null);
     if (tipoAviso && (await encolarAviso(x, tipoAviso, motivo))) hechos.push('aviso a tu WhatsApp');
   }
+  // El cliente confirmó un horario de reunión: queda la cita (con recordatorios) y la actividad en tu Agenda.
+  if (r.reunion) {
+    const hueco = x.huecos.find((h) => String(h.inicio) === r.reunion);
+    const cfg = x.negocio.reuniones;
+    if (hueco && cfg && x.contacto) {
+      const hecho = await agendarReunion(c.ia.empresa_id, x.contacto.id, hueco, x.nombre, cfg.enlace?.trim() || undefined);
+      const texto = textoReunion(hueco.inicio, c.zona);
+      if (hecho.ok) {
+        x.reunion = { texto, enlace: cfg.enlace?.trim() || '' };
+        hechos.push(`${hecho.reprogramada ? 'cambió su reunión para' : 'agendó una reunión virtual'} el ${texto}`);
+        await avisarReunion(x, texto, hecho.reprogramada, r);
+      } else hechos.push(`no se pudo agendar la reunión del ${texto}: ${hecho.mensaje}`);
+    }
+  }
   const rta = await gestionarRespuesta(x, r);
   if (rta) hechos.push(rta);
   return hechos;
+}
+
+// Te avisa a tu WhatsApp de la reunión agendada, con lo que necesitas para prepararla.
+async function avisarReunion(x: Contexto, cuando: string, reprogramada: boolean, r: ResultadoIA): Promise<void> {
+  const av = x.c.ia.avisos;
+  const tel = telefonoAvisosDe(av?.telefono, x.negocio);
+  if (!av?.activo || tel.length < 7) return;
+  const numero = digitos(x.fila.telefono.split('@')[0]);
+  const cfg = x.negocio.reuniones;
+  const filas = [
+    `📅 *${reprogramada ? 'Reunión cambiada' : 'Reunión agendada'}*: *${x.nombre}*${numero ? ` (+${numero})` : ''} — ${x.negocio.nombre}: el ${cuando} (${cfg ? duracionDe(cfg) : 30} min). Quedó en tu Agenda y le llegan sus recordatorios.`,
+    r.resumen && `   📝 ${r.resumen}`,
+    r.interes && `   🎯 Le interesa: ${r.interes}`,
+    x.preguntaCliente && `   💬 Lo último que dijo: "${recortarTexto(x.preguntaCliente, 200)}"`,
+    cfg?.enlace?.trim() && `   🔗 ${cfg.enlace.trim()}`,
+  ].filter(Boolean);
+  await db.from('siguelo_ia_salida').insert({
+    empresa_id: x.c.ia.empresa_id,
+    contacto_id: x.contacto?.id ?? null,
+    linea_id: av.linea_id || x.fila.linea_id,
+    telefono: tel,
+    origen: 'aviso',
+    referencia: 'reunion',
+    contenido: `• ${filas.join('\n')}`,
+    vence: new Date().toISOString(),
+  });
 }
 
 // Lee una conversación. ok: false si falló la IA; hecho: lo que hizo (o por qué no respondió).
@@ -445,6 +502,9 @@ async function leer(c: Config, fila: PorLeerRow, forzado = false): Promise<Leido
     datosAulaParaIA(empresaId, negocio.id),
   ]);
   const nombre = contacto?.nombre?.trim() || fila.telefono.split('@')[0];
+  // Reuniones virtuales: los horarios libres y la que ya tiene este cliente.
+  const cfgReuniones = reunionesActivas(negocio.reuniones) ? negocio.reuniones : null;
+  const [huecos, yaTiene] = cfgReuniones ? await Promise.all([huecosLibres(empresaId, cfgReuniones, c.zona), reunionDe(contacto?.id ?? null)]) : [[], null];
   const datos: DatosContexto = {
     ia: c.ia,
     ahora: formatear(new Date().toISOString(), c.zona),
@@ -456,11 +516,14 @@ async function leer(c: Config, fila: PorLeerRow, forzado = false): Promise<Leido
     respuestasRapidas: respuestas.map((r) => ({ id: r.id, titulo: r.titulo, tipo: r.tipo, contenido: r.contenido, cuando: r.cuando })),
     otrosNegocios: otros,
     grupos: (negocio.grupos || []).filter((g) => g.link && !enviadas.has(g.id)),
-    cursos: cursosCortos(cursos),
+    cursos: await conPlanes(cursos),
     bots,
     club,
     aula,
     aprendido: textoAprendido(aprendido),
+    reuniones: cfgReuniones
+      ? { duracion: duracionDe(cfgReuniones), conEnlace: !!cfgReuniones.enlace?.trim(), huecos: huecos.map((h) => ({ id: String(h.inicio), dia: h.dia, hora: h.hora })), actual: yaTiene ? textoReunion(yaTiene.inicio, c.zona) : null }
+      : undefined,
   };
   const conRespuesta = forzado || c.ia.modo !== 'apagado';
   const { mensajes: prompt, ids: mapa } = armarMensajes(datos, conRespuesta);
@@ -508,6 +571,8 @@ async function leer(c: Config, fila: PorLeerRow, forzado = false): Promise<Leido
     })(),
     ultimaPersona,
     forzado,
+    huecos,
+    reunion: null,
   };
   const hechos = await aplicar(x, r);
   await guardar({ ...leido, resumen: r.resumen || lectura.resumen, interes: r.interes || lectura.interes, atencion: lectura.atencion, avisado: lectura.avisado, espera_enviada: lectura.espera_enviada });

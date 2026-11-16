@@ -171,9 +171,13 @@ export type NegocioRow = {
   ubicacion?: string | null;
   // Número al que le llegan los avisos de este negocio (vacío = el general de la IA).
   avisos_telefono?: string | null;
+  // Reuniones virtuales que agenda la IA.
+  reuniones?: ConfigReuniones | null;
   creado_en: string;
   actualizado_en: string;
 };
+export type FranjaReunion = { dias: number[]; desde: string; hasta: string };
+export type ConfigReuniones = { activa: boolean; franjas: FranjaReunion[]; duracion_min: number; anticipacion_horas?: number; dias_adelante?: number; enlace?: string };
 export type GrupoNegocio = { id: string; nombre: string; link: string; cuando: string };
 export type LineaNegocioRow = { linea_id: string; empresa_id: string; negocio_id: string };
 export type BotNegocioRow = { regla_id: string; negocio_id: string };
@@ -346,6 +350,8 @@ export type CursoRow = {
   club?: boolean;
   // Al pagar, el alumno queda inscrito en el Aula virtual.
   aula?: boolean;
+  // Es un plan de tu agencia: al pagar se registra la venta (y su acceso al CRM si lo trae).
+  plan_id?: string | null;
   creado_en: string;
   actualizado_en: string;
 };
@@ -401,6 +407,8 @@ export type PagoRow = {
   club_reserva_id?: string | null;
   club_revisado_en?: string | null;
   aula?: DatosAula | null;
+  // La venta automática de un plan de tu agencia (para no repetirla).
+  agencia?: { venta_id: string; cuenta_id: string | null; usuario: string | null; hecho_en: string } | null;
   creado_en: string;
   actualizado_en: string;
 };
@@ -518,6 +526,7 @@ export type SigueloDatabase = {
       siguelo_lineas: Tabla<LineaNegocioRow>;
       siguelo_bot_negocio: Tabla<BotNegocioRow>;
       siguelo_citas: Tabla<CitaRow>;
+      tareas: Tabla<{ id: string; empresa_id: string; contacto_id: string; titulo: string; fecha: string | null; completada: boolean; asignado_a: string | null; creado_en: string }>;
       etapas_venta: Tabla<EtapaVentaRow>;
       contactos: Tabla<ContactoSigueloRow>;
       conversaciones: Tabla<{
@@ -620,6 +629,11 @@ export type PlanRow = {
   incluye: string[];
   con_crm: boolean;
   activo: boolean;
+  // Cuántos números y negocios puede tener la cuenta del cliente (null = sin límite).
+  max_numeros?: number | null;
+  max_negocios?: number | null;
+  // La IA de esas cuentas usa tu clave de OpenAI.
+  usar_mi_clave?: boolean;
   creado_en: string;
   actualizado_en: string;
 };
@@ -636,6 +650,8 @@ export type CuentaRow = {
   pausada: boolean;
   propia: boolean;
   notas: string | null;
+  max_numeros?: number | null;
+  max_negocios?: number | null;
   creado_en: string;
   actualizado_en: string;
 };

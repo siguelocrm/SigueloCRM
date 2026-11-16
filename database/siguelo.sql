@@ -1722,3 +1722,56 @@ language sql stable security definer set search_path = public as $$
       and not siguelo_cuenta_bloqueada(u.empresa_id)
   ), false);
 $$;
+
+-- ---------- 42. La IA vende los planes de tu agencia, agenda reuniones y límites por cuenta ----------
+-- Un curso con QR (Inscripciones) puede ser un plan de tu agencia: al confirmarse el pago, la venta
+-- se registra sola y, si el plan trae el CRM, se crea (o renueva) el acceso del cliente.
+alter table siguelo_cursos add column if not exists plan_id uuid references siguelo_planes (id) on delete set null;
+-- Lo que hizo la venta automática (para no repetirla).
+alter table siguelo_pagos add column if not exists agencia jsonb;
+
+-- Cuántos números de WhatsApp y negocios puede tener cada cuenta (null = sin límite).
+-- Lo trae el plan y lo puedes cambiar en cada cuenta. Tus cuentas (propias) no tienen límite.
+alter table siguelo_planes
+  add column if not exists max_numeros integer default 1 check (max_numeros is null or max_numeros >= 0),
+  add column if not exists max_negocios integer default 1 check (max_negocios is null or max_negocios >= 0),
+  add column if not exists usar_mi_clave boolean not null default true;
+alter table siguelo_cuentas
+  add column if not exists max_numeros integer default 1 check (max_numeros is null or max_numeros >= 0),
+  add column if not exists max_negocios integer default 1 check (max_negocios is null or max_negocios >= 0);
+
+create or replace function siguelo_revisar_limite() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  c siguelo_cuentas;
+  maximo integer;
+  hay integer;
+begin
+  select * into c from siguelo_cuentas where empresa_id = new.empresa_id;
+  if c.empresa_id is null or c.propia then return new; end if;
+  if tg_table_name = 'lineas_whatsapp' then
+    maximo := c.max_numeros;
+    select count(*) into hay from lineas_whatsapp where empresa_id = new.empresa_id;
+  else
+    maximo := c.max_negocios;
+    select count(*) into hay from siguelo_negocios where empresa_id = new.empresa_id;
+  end if;
+  if maximo is not null and hay >= maximo then
+    raise exception 'Tu plan permite hasta % %. Pide a tu agencia que amplíe tu plan.', maximo,
+      case when tg_table_name = 'lineas_whatsapp' then (case when maximo = 1 then 'número de WhatsApp' else 'números de WhatsApp' end)
+           else (case when maximo = 1 then 'negocio' else 'negocios' end) end;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists siguelo_limite_numeros on lineas_whatsapp;
+create trigger siguelo_limite_numeros before insert on lineas_whatsapp
+  for each row execute function siguelo_revisar_limite();
+drop trigger if exists siguelo_limite_negocios on siguelo_negocios;
+create trigger siguelo_limite_negocios before insert on siguelo_negocios
+  for each row execute function siguelo_revisar_limite();
+
+-- Reuniones virtuales que agenda la IA (por negocio): días y horarios libres, duración y el link.
+-- {"activa": true, "franjas": [{"dias": [1,2,3,4,5], "desde": "09:00", "hasta": "12:00"}],
+--  "duracion_min": 30, "anticipacion_horas": 2, "dias_adelante": 7, "enlace": "https://meet.google.com/..."}
+alter table siguelo_negocios add column if not exists reuniones jsonb;

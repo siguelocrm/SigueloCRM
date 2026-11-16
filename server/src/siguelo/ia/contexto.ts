@@ -35,6 +35,8 @@ export type DatosContexto = {
   aula?: string;
   // Lo que respondió el dueño a preguntas que no estaban en la ficha (Redes sociales).
   aprendido?: string;
+  // Reuniones virtuales: los horarios libres (id = inicio en ms) y la que ya tiene el cliente.
+  reuniones?: { duracion: number; conEnlace: boolean; huecos: { id: string; dia: string; hora: string }[]; actual: string | null };
 };
 
 export type ResultadoIA = {
@@ -57,6 +59,8 @@ export type ResultadoIA = {
   bot: string | null;
   // De qué lugar mandar el pin de la ubicación: AQUI (este negocio) o el id de otro negocio.
   ubicacion: string | null;
+  // El horario de reunión que el cliente confirmó (id del hueco), o null.
+  reunion: string | null;
 };
 
 // En "ubicacion", este negocio (el resto son ids de otros negocios).
@@ -91,7 +95,7 @@ const recortar = recortarTexto;
 type Mapa = Map<string, string>;
 const corto = (prefijo: string, lista: { id: string }[]): Mapa => new Map(lista.map((x, i) => [`${prefijo}${i + 1}`, x.id]));
 
-export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensajes: MensajeChat[]; ids: { etapas: Mapa; respuestas: Mapa; negocios: Mapa; grupos: Mapa; cursos: Mapa; bots: Mapa; ubicaciones: Mapa } } {
+export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensajes: MensajeChat[]; ids: { etapas: Mapa; respuestas: Mapa; negocios: Mapa; grupos: Mapa; cursos: Mapa; bots: Mapa; ubicaciones: Mapa; reuniones: Mapa } } {
   const ac = d.ia.acciones;
   const ids = {
     etapas: corto('e', d.etapas),
@@ -104,6 +108,7 @@ export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensaj
       ...(d.negocio.ubicacion?.trim() ? [{ id: AQUI }] : []),
       ...d.otrosNegocios.filter((x) => x.ubicacion?.trim()),
     ]),
+    reuniones: corto('h', d.reuniones?.huecos ?? []),
   };
   const idDe = (m: Mapa, id: string) => [...m.entries()].find(([, v]) => v === id)?.[0];
   const e = d.ia.estilo;
@@ -136,6 +141,10 @@ export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensaj
     .join('\n');
   const cursos = d.cursos.map((x) => `- ${idDe(ids.cursos, x.id)}: "${x.nombre}", ${x.precio}`).join('\n');
   const bots = (d.bots || []).map((x) => `- ${idDe(ids.bots, x.id)}: "${x.nombre}" — ACTÍVALO CUANDO: ${recortar(x.cuando, 200)}`).join('\n');
+  // Los horarios libres, por día ("lunes, 18/11: h1 09:00, h2 09:30").
+  const porDia = new Map<string, string[]>();
+  for (const h of d.reuniones?.huecos ?? []) porDia.set(h.dia, [...(porDia.get(h.dia) || []), `${idDe(ids.reuniones, h.id)} ${h.hora}`]);
+  const huecos = [...porDia].map(([dia, hs]) => `- ${dia}: ${hs.join(', ')}`).join('\n');
   const ubicaciones = [...ids.ubicaciones.entries()]
     .map(([k, id]) => {
       if (id === AQUI) return `- ${k}: ESTE negocio (${n.nombre}${n.sucursal ? `, sucursal ${n.sucursal}` : ''})${n.direccion ? `, ${n.direccion}` : ''}`;
@@ -163,6 +172,7 @@ export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensaj
           ...(cursos ? ['"qr": "id del curso cuyo QR de pago hay que mandarle, o null"'] : []),
           ...(bots ? ['"bot": "id de la regla o flujo del bot que hay que activar ahora, o null"'] : []),
           ...(ubicaciones ? ['"ubicacion": "id del lugar cuya ubicación en el mapa hay que mandarle ahora, o null"'] : []),
+          ...(huecos ? ['"reunion": "id del horario de reunión que el cliente CONFIRMÓ, o null"'] : []),
         ]
       : []),
   ];
@@ -284,6 +294,17 @@ ${ubicaciones}
 - Si pregunta dónde están, la dirección, cómo llegar o pide la ubicación, pon el id de ese lugar en "ubicacion": se le manda sola la ubicación en el mapa (el pin de Google Maps). En tu respuesta dile la dirección en una línea; no escribas links. Puedes mandarla todas las veces que la pida.
 - Si pregunta por otra sucursal, manda la ubicación de esa sucursal.`
             : ''
+        }${
+          huecos || d.reuniones?.actual
+            ? `
+
+REUNIONES VIRTUALES (de ${d.reuniones!.duracion} minutos, por videollamada)${d.reuniones!.actual ? `\n- Este cliente YA tiene su reunión agendada: ${d.reuniones!.actual}. No le agendes otra; si quiere cambiarla, ofrécele otros horarios de la lista.` : ''}
+HORARIOS LIBRES (id hora, por día):
+${huecos || '(no hay horarios libres en los próximos días)'}
+- Si el cliente quiere una reunión, o es el siguiente paso para avanzar, ofrécele 2 o 3 horarios de la lista (los más cercanos a lo que pide) y pregúntale cuál le queda.
+- Solo cuando el cliente CONFIRME claramente un día y una hora de la lista, pon su id en "reunion" y confírmale el día y la hora en tu respuesta${d.reuniones!.conEnlace ? ' (el link de la reunión se le manda solo; no lo escribas)' : ''}. Si todavía no eligió, deja "reunion": null.
+- Si pide un día u hora que no está en la lista, dile que ese horario no está disponible y ofrécele los más cercanos. Nunca inventes horarios.`
+            : ''
         }`
       : ''
   }`;
@@ -330,5 +351,6 @@ export function validarResultado(j: Record<string, unknown>, ids: ReturnType<typ
     qr: conRespuesta ? real(ids.cursos, j.qr) : null,
     bot: conRespuesta ? real(ids.bots, j.bot) : null,
     ubicacion,
+    reunion: conRespuesta ? real(ids.reuniones, j.reunion) : null,
   };
 }
