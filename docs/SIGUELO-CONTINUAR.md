@@ -190,6 +190,10 @@ npm test
   `responderConversacion` en `lector.ts`): lee ese chat a pedido, sin los frenos (modo, horario, espera, mensaje viejo,
   ya escribió una persona, flujo o pago en curso), y lo que decide sale al momento (`aprobado`). Al lado se ve por qué no
   respondió sola (último registro `ia`/`ia_error` del contacto). Antes de ir a OpenAI se quitan los medios emojis.
+  **Notas de voz** (`ia/audios.ts`, `transcribir` en `openai.ts`): antes de leer un chat, los audios del cliente sin
+  texto (últimas 48 h, hasta 4) se pasan a texto (`gpt-4o-mini-transcribe`, si no `whisper-1`) y quedan en
+  `mensajes.contenido`; la IA los ve como "[nota de voz] …" y la bandeja muestra la transcripción. También tus audios
+  de respuesta a una pregunta (R12). Si no se puede, queda `ia_error` y la IA pide que lo escriba.
 - **Pagos** (`pagos/`): cada 10 s, `inscripcion.ts` toma las fotos/PDF nuevas de clientes en números con cursos
   (`siguelo_pagos_por_leer`), las manda a la IA con visión, y `comprobante.ts` decide sin IA (monto, destinatario, fecha,
   transacción repetida, señales de edición). Confirmado → documento en la ficha, oportunidad ganada, etapa ganada, pide los
@@ -266,8 +270,7 @@ npm test
   general, primero pregunta qué le interesa; cada opción en su línea.
 
 ### Pendientes conocidos e ideas
-- La IA no escucha audios ni ve fotos del cliente (salvo comprobantes): un audio llega como "[audio]" y suele quedar
-  sin respuesta ("no vio nada que contestar"). Idea: transcribir audios con OpenAI antes de leer.
+- La IA no ve las fotos del cliente (salvo comprobantes en Pagos).
 - El selector de etapa dentro del chat (curso: `HiloMensajes`/`PanelContacto`) lista etapas de todos los embudos.
 - Dashboard y Reportes no separan por embudo.
 - El seguimiento es uno por cliente (por el número de su chat principal).

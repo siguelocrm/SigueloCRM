@@ -71,6 +71,12 @@ export default function BurbujaMensaje({ m }: { m: Mensaje }) {
         // por WhatsApp, ver server/src/whatsapp/audio.ts.
         <audio controls src={m.media_url} className="block" style={{ height: 32, width: 230, maxWidth: '100%' }} />
       )}
+      {m.tipo === 'audio' && m.remitente === 'cliente' && m.contenido?.trim() && (
+        // Lo que dijo en la nota de voz (lo transcribe la IA para poder responderle).
+        <div className="mt-1 text-[12.5px] italic leading-snug" style={{ color: 'var(--fg-2)', maxWidth: 260 }} title="Transcripción de la nota de voz">
+          🎤 {m.contenido}
+        </div>
+      )}
       {m.tipo === 'texto' && <TextoColapsable texto={m.contenido || ''} fondo={fondo} />}
       <span className="flex items-center justify-end gap-1 mt-0.5 text-[11.5px]" style={{ color: fallo ? 'var(--bad)' : 'var(--fg-3)', fontVariantNumeric: 'tabular-nums' }}>
         {fallo ? (

@@ -6,6 +6,7 @@ import { llamar } from './config.js';
 import { negociosDeEmpresa, numeroAviso, telefonoAvisosDe } from '../negocios.js';
 import type { IaRow } from '../tipos.js';
 import { recortarTexto } from '../textos.js';
+import { transcribirAudios } from './audios.js';
 
 // Lo que la IA no sabe te lo pregunta por WhatsApp con un código ("R12"). Cuando
 // le respondes "R12 tu respuesta" (o solo tu respuesta, si hay una sola pregunta
@@ -125,11 +126,13 @@ async function usarRespuesta(c: Config, lineaDueno: string, texto: string, telDu
 export async function leerDueno(c: Config, conversacionId: string, lineaId: string, desde: string | null, telDueno: string): Promise<void> {
   const { data: mensajes } = await db
     .from('mensajes')
-    .select('contenido, tipo, creado_en')
+    .select('id, remitente, contenido, tipo, media_url, creado_en')
     .eq('conversacion_id', conversacionId)
     .eq('remitente', 'cliente')
     .gt('creado_en', desde ?? new Date(Date.now() - 30 * MIN).toISOString())
     .order('creado_en')
     .limit(10);
-  for (const m of mensajes || []) if (m.tipo === 'texto') await usarRespuesta(c, lineaId, String(m.contenido || ''), telDueno);
+  // También puedes responder con una nota de voz ("R12, dile que sí hay cupo"): se pasa a texto.
+  await transcribirAudios(c.clave, c.ia.empresa_id, null, mensajes || []);
+  for (const m of mensajes || []) if ((m.tipo === 'texto' || m.tipo === 'audio') && m.contenido?.trim()) await usarRespuesta(c, lineaId, String(m.contenido), telDueno);
 }

@@ -13,6 +13,7 @@ import { aprendidoDe, textoAprendido } from '../redes/redes.js';
 import { AQUI, armarMensajes, validarResultado, type DatosContexto, type LineaConversacion, type ResultadoIA } from './contexto.js';
 import { desempaquetar, empaquetar, linkDeMapa } from './ubicacion.js';
 import { crearPregunta, leerDueno } from './dueno.js';
+import { textoParaIA, transcribirAudios } from './audios.js';
 import { fueEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import type { CursoRow, EtapaVentaRow, IaRow, LecturaRow, NegocioRow, PorLeerRow, SalidaRow, TipoAviso } from '../tipos.js';
 import { cortar, recortarTexto } from '../textos.js';
@@ -407,10 +408,12 @@ async function leer(c: Config, fila: PorLeerRow, forzado = false): Promise<Leido
 
   const [{ data: contacto }, { data: mensajes }, enviadas] = await Promise.all([
     fila.contacto_id ? db.from('contactos').select('id, nombre, etapa_id, etapa_actualizada_en').eq('id', fila.contacto_id).maybeSingle() : Promise.resolve({ data: null }),
-    db.from('mensajes').select('id, remitente, agente_id, tipo, contenido, creado_en, whatsapp_id').eq('conversacion_id', fila.conversacion_id).order('creado_en', { ascending: false }).limit(30),
+    db.from('mensajes').select('id, remitente, agente_id, tipo, contenido, media_url, creado_en, whatsapp_id').eq('conversacion_id', fila.conversacion_id).order('creado_en', { ascending: false }).limit(30),
     referenciasEnviadas(fila.contacto_id, fila.conversacion_id),
   ]);
   const lista = (mensajes || []).reverse();
+  // Las notas de voz del cliente se pasan a texto antes de leer.
+  await transcribirAudios(c.clave, empresaId, fila.contacto_id, lista);
   // Los automáticos (seguimiento e IA) se marcan como tales para la IA.
   const ids = lista.filter((m) => m.remitente === 'agente').map((m) => m.id);
   const [{ data: deCola }, { data: deIa }, { data: deMasivo }] = ids.length
@@ -426,7 +429,7 @@ async function leer(c: Config, fila: PorLeerRow, forzado = false): Promise<Leido
   for (const m of lista) if (m.remitente === 'agente' && !m.agente_id && m.whatsapp_id && fueEnviadoPorCRM(m.whatsapp_id)) automaticos.add(m.id);
   const conversacion: LineaConversacion[] = lista.map((m) => ({
     quien: m.remitente === 'cliente' ? 'cliente' : automaticos.has(m.id) ? 'automatico' : 'nosotros',
-    texto: m.tipo === 'texto' ? m.contenido || '' : `[${m.tipo}] ${m.contenido || ''}`.trim(),
+    texto: textoParaIA(m),
     cuando: formatear(m.creado_en, c.zona),
   }));
   const ultimaPersona = ms([...lista].reverse().find((m) => m.remitente === 'agente' && m.agente_id)?.creado_en);
@@ -499,7 +502,7 @@ async function leer(c: Config, fila: PorLeerRow, forzado = false): Promise<Leido
       const ultimos: string[] = [];
       for (const m of [...lista].reverse()) {
         if (m.remitente !== 'cliente') break;
-        if (m.tipo === 'texto' && m.contenido?.trim()) ultimos.unshift(m.contenido.trim());
+        if ((m.tipo === 'texto' || m.tipo === 'audio') && m.contenido?.trim()) ultimos.unshift(m.tipo === 'audio' ? `(audio) ${m.contenido.trim()}` : m.contenido.trim());
       }
       return cortar(ultimos.join(' / '), 500);
     })(),

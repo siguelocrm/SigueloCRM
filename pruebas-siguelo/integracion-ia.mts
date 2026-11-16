@@ -21,7 +21,26 @@ const llamadas: Llamada[] = [];
 let responder: (l: Llamada) => any = () => ({ resumen: 'x' });
 let fallar = 0;
 const fetchReal = globalThis.fetch;
+// Notas de voz falsas: el archivo y lo que "dice".
+const audios: Record<string, string> = {};
+const modelosAudio: string[] = [];
+let sinModeloNuevo = false;
 globalThis.fetch = (async (url: string, init: any) => {
+  if (String(url).startsWith('https://media.prueba/')) {
+    const nombre = String(url).split('/').pop()!;
+    return nombre in audios ? new Response(new Uint8Array([79, 103, 103, 83, 1, 2, 3]), { status: 200, headers: { 'content-type': 'audio/ogg' } }) : new Response('no', { status: 404 });
+  }
+  if (String(url) === 'https://api.openai.com/v1/audio/transcriptions') {
+    const form = init.body as FormData;
+    const modelo = String(form.get('model'));
+    modelosAudio.push(modelo);
+    if (sinModeloNuevo && modelo !== 'whisper-1') return new Response(JSON.stringify({ error: { message: 'model not found' } }), { status: 404 });
+    const archivo = form.get('file') as File;
+    assert.equal(archivo.name, 'nota.ogg');
+    assert.ok(archivo.size > 0);
+    const texto = Object.values(audios).shift() ?? '';
+    return new Response(JSON.stringify({ text: texto }), { status: 200 });
+  }
   if (!String(url).startsWith('https://api.openai.com/')) return fetchReal(url, init);
   if (fallar > 0) {
     fallar--;
@@ -573,6 +592,35 @@ const vacio = await chat(L2, '59170000056', 'Nadie');
 assert.equal((await responderConversacion(await config(), vacio.conv)).ok, false);
 await pg.query(`update siguelo_ia set modo = $2, espera_min_seg = $3, espera_max_seg = $4 where empresa_id = $1`, [empresa, antesIA.modo, antesIA.espera_min_seg, antesIA.espera_max_seg]);
 paso('"Responder con IA": responde al momento aunque sola no lo hubiera hecho (para aprobar, mensaje viejo, ya escribió una persona)');
+
+// ---------- Notas de voz: la IA las pasa a texto y las responde ----------
+const vale = await chat(L1, '59170000061', 'Vale');
+audios['nota1.ogg'] = 'Hola, ¿hasta qué hora atienden hoy? 😊';
+sinModeloNuevo = true;
+await pg.query(`insert into mensajes (conversacion_id, remitente, tipo, contenido, media_url, creado_en) values ($1, 'cliente', 'audio', '', 'https://media.prueba/nota1.ogg', $2)`, [vale.conv, iso(reloj.ahora)]);
+avanzar(MIN);
+responder = (l) => (/\[nota de voz\] Hola, ¿hasta qué hora atienden hoy\? 😊/.test(l.usuario) ? { resumen: 'Pregunta el horario', puede_responder: true, respuesta: 'Hola Vale, hoy atendemos de 8 a 19 😊' } : { resumen: 'Mandó un audio', puede_responder: false });
+await leerPendientes(await config());
+await salida();
+assert.equal(enviados.filter((e) => e.jid.startsWith('59170000061')).at(-1)?.texto, 'Hola Vale, hoy atendemos de 8 a 19 😊', 'responde lo que dijo en el audio');
+assert.equal((await uno(`select contenido from mensajes where conversacion_id = $1 and tipo = 'audio'`, [vale.conv])).contenido, 'Hola, ¿hasta qué hora atienden hoy? 😊', 'la transcripción queda en el chat');
+assert.deepEqual(modelosAudio.slice(-2), ['gpt-4o-mini-transcribe', 'whisper-1'], 'si la cuenta no tiene el modelo nuevo, usa whisper-1');
+// Ya transcrito no se vuelve a mandar a OpenAI; si no se puede escuchar, la IA le pide que lo escriba.
+const transcripcionesAntes = modelosAudio.length;
+sinModeloNuevo = false;
+await pg.query(`insert into mensajes (conversacion_id, remitente, tipo, contenido, media_url, creado_en) values ($1, 'cliente', 'audio', '', 'https://media.prueba/perdido.ogg', $2)`, [vale.conv, iso(reloj.ahora)]);
+avanzar(MIN);
+responder = (l) => {
+  assert.match(l.usuario, /\[nota de voz\] Hola, ¿hasta qué hora/);
+  assert.match(l.usuario, /\[nota de voz que no se pudo escuchar\]/);
+  return { resumen: 'Audio que no se escucha', puede_responder: true, respuesta: 'Perdona, no pude escuchar tu audio, ¿me lo escribes? 🙏' };
+};
+await leerPendientes(await config());
+await salida();
+assert.equal(modelosAudio.length, transcripcionesAntes, 'el audio ya transcrito no se transcribe otra vez (y el que no se pudo bajar no llega a OpenAI)');
+assert.match((await uno(`select texto from siguelo_registro where contacto_id = $1 and tipo = 'ia_error' order by creado_en desc limit 1`, [vale.contacto.id])).texto, /no se pudo escuchar una nota de voz/);
+assert.equal(enviados.filter((e) => e.jid.startsWith('59170000061')).at(-1)?.texto, 'Perdona, no pude escuchar tu audio, ¿me lo escribes? 🙏');
+paso('notas de voz: la IA las pasa a texto, las responde y la transcripción queda en el chat');
 
 const uso = await uno(`select sum(consultas)::int c, sum(entrada)::int e from siguelo_ia_uso`);
 console.log(`\n${ok} pasos OK · ${uso.c} consultas a la IA (${uso.e} tokens de entrada) · mensajes:`);
