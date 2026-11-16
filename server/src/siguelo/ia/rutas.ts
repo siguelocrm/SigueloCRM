@@ -10,6 +10,8 @@ import { estadoSeguimiento } from '../estadoSeguimiento.js';
 import { aplicarAcciones, conversar } from './asistente.js';
 import { conectarClub, olvidarClub } from '../club/club.js';
 import type { IaRow } from '../tipos.js';
+import { conNumero } from '../usuarios/proteger.js';
+import { responderAhora } from '../index.js';
 
 // Lo de la IA que pasa por el servidor: la clave de OpenAI (la página la manda
 // una vez y nunca la vuelve a leer), probar la conexión y probar un mensaje.
@@ -53,6 +55,18 @@ iaRouter.post('/siguelo/ia/modelos', soloAdmin, async (req, res) => {
   const r = await listarModelos(clave);
   if (!r.ok) return res.status(400).json({ error: r.mensaje });
   res.json({ ok: true, modelos: r.modelos });
+});
+
+// El botón "Responder con IA" de la bandeja: cualquiera que atienda ese número puede pedirlo.
+iaRouter.post('/siguelo/ia/responder', ...conNumero((req) => req.body?.linea_id), async (req, res) => {
+  const empresaId = req.usuarioAutenticado!.empresa_id;
+  const conversacionId = String(req.body?.conversacion_id ?? '');
+  const lineaId = String(req.body?.linea_id ?? '');
+  if (!conversacionId || !lineaId) return res.status(400).json({ error: 'Falta la conversación.' });
+  const { data: cv } = await db.from('conversaciones').select('linea_id').eq('id', conversacionId).maybeSingle();
+  if (!cv || cv.linea_id !== lineaId) return res.status(404).json({ error: 'No se encontró esa conversación.' });
+  const r = await responderAhora(empresaId, conversacionId);
+  res.json(r);
 });
 
 // Qué haría la IA con un mensaje de un cliente inventado, sin tocar a nadie.

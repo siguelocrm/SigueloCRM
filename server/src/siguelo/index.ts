@@ -2,8 +2,8 @@ import { db } from './db.js';
 import { procesarCola } from './cola.js';
 import { revisarEmpresa } from './motor.js';
 import { limpiarRegistroViejo } from './registro.js';
-import { empresasConIA } from './ia/config.js';
-import { leerPendientes } from './ia/lector.js';
+import { configDeEmpresa, empresasConIA } from './ia/config.js';
+import { leerPendientes, responderConversacion } from './ia/lector.js';
 import { procesarSalida } from './ia/salida.js';
 import { revisarPagos } from './pagos/inscripcion.js';
 import { revisarRedes } from './redes/redes.js';
@@ -124,6 +124,23 @@ async function responderRapido(lineaId: string): Promise<void> {
     await conCandadoEsperando(conCandadoSalida, () => procesarSalida(c));
     await dormir(i === 0 ? 800 : 1_500);
   }
+}
+// El botón "Responder con IA" de la bandeja: lee ese chat ahora (con el mismo candado, así no
+// responde dos veces) y lo que decidió sale en seguida.
+export async function responderAhora(empresaId: string, conversacionId: string): Promise<{ ok: boolean; mensaje: string }> {
+  const c = await configDeEmpresa(empresaId);
+  if (!c) return { ok: false, mensaje: 'Falta la clave de OpenAI (IA → Ajustes).' };
+  let r: { ok: boolean; mensaje: string } = { ok: false, mensaje: 'La IA está ocupada leyendo otros chats: inténtalo de nuevo en unos segundos.' };
+  await conCandadoEsperando(conCandadoLector, async () => {
+    r = await responderConversacion(c, conversacionId);
+  });
+  if (r.ok) {
+    for (let i = 0; i < 6; i++) {
+      await conCandadoEsperando(conCandadoSalida, () => procesarSalida(c));
+      await dormir(i === 0 ? 600 : 1_200);
+    }
+  }
+  return r;
 }
 alLlegarMensaje((lineaId) => {
   clearTimeout(esperando.get(lineaId));

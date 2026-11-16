@@ -3,6 +3,7 @@ import { Bot, CalendarClock, Plus, Image as ImageIcon, FileText, File, Mic, Send
 import { supabase } from '../../lib/supabaseClient';
 import { BLUE, BORDE, TEAL, TEXTO_SECUNDARIO } from '../../lib/tema';
 import ProgramarMensaje from './ProgramarMensaje';
+import ResponderIA from './ResponderIA';
 import { useContacto } from './hooks/useContacto';
 import { useToast } from '../../components/ui';
 import type { Conversacion, Mensaje, RespuestaAutomatica, RespuestaRapida, TipoMensaje, Usuario } from '../../lib/tipos';
@@ -516,12 +517,15 @@ export default function Compositor({ mensajes, seleccionada, usuario, respuestas
           )}
         </div>
       )}
-      <div className="inline-flex rounded-[10px] p-0.5 mb-2" role="group" aria-label="Tipo de mensaje" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-2 min-w-0">
+      <div className="inline-flex shrink-0 rounded-[10px] p-0.5" role="group" aria-label="Tipo de mensaje" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--line)' }}>
         {([['responder', 'Responder'], ['nota', 'Nota interna']] as const).map(([id, texto]) => (
           <button key={id} onClick={() => setModo(id)} aria-pressed={modo === id} className="rounded-lg px-3 py-[3px] text-[13px] inline-flex items-center gap-1.5" style={{ backgroundColor: modo === id ? 'var(--surface)' : 'transparent', color: modo === id ? 'var(--fg)' : 'var(--fg-2)', fontWeight: modo === id ? 600 : 400 }}>
             {id === 'nota' && <StickyNote size={13} />}{texto}
           </button>
         ))}
+      </div>
+        {!esNota && <ResponderIA seleccionada={seleccionada} mensajes={mensajes} contactoId={contacto?.id ?? null} />}
       </div>
       {adjunto && !esNota && (
         <div className="flex items-center gap-2.5 rounded-xl p-2 mb-2" style={{ backgroundColor: 'var(--surface-2)', border: `1px solid ${BORDE}` }}>

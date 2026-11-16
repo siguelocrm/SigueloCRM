@@ -9,14 +9,14 @@ import { redirigidos } from './hooks.mjs';
 process.env.SUPABASE_URL = 'http://127.0.0.1:9';
 process.env.SUPABASE_SERVICE_KEY = 'prueba';
 const R = new URL('../server/src/siguelo/', import.meta.url).href;
-const { leerPendientes } = await import(R + 'ia/lector.ts');
+const { leerPendientes, responderConversacion } = await import(R + 'ia/lector.ts');
 const { procesarSalida } = await import(R + 'ia/salida.ts');
 const { olvidarCache, empresasConIA } = await import(R + 'ia/config.ts');
 const { olvidarNegocios } = await import(R + 'negocios.ts');
 assert.ok(redirigidos.includes('db') && redirigidos.includes('sesiones'));
 
 // ---------- OpenAI falsa ----------
-type Llamada = { sistema: string; usuario: string };
+type Llamada = { sistema: string; usuario: string; extra?: string };
 const llamadas: Llamada[] = [];
 let responder: (l: Llamada) => any = () => ({ resumen: 'x' });
 let fallar = 0;
@@ -30,7 +30,7 @@ globalThis.fetch = (async (url: string, init: any) => {
   // Ningún medio emoji (OpenAI responde 400 "failed to parse JSON value").
   if (/\\ud[89ab][0-9a-f]{2}(?!\\ud[c-f])|(?<!\\ud[89ab][0-9a-f]{2})\\ud[c-f][0-9a-f]{2}/i.test(init.body)) throw new Error('medio emoji enviado a OpenAI');
   const cuerpo = JSON.parse(init.body);
-  const l = { sistema: cuerpo.messages[0].content, usuario: cuerpo.messages[1].content };
+  const l = { sistema: cuerpo.messages[0].content, usuario: cuerpo.messages[1].content, extra: cuerpo.messages.slice(2).map((m: any) => m.content).join('\n') };
   llamadas.push(l);
   return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(responder(l)) } }], usage: { prompt_tokens: 1000, completion_tokens: 100 } }), { status: 200 });
 }) as typeof fetch;
@@ -545,6 +545,34 @@ assert.equal((await uno(`select count(*)::int n from siguelo_aprendido`)).n, apr
 assert.match(enviados.filter((e) => e.jid.startsWith('59178888888')).at(-1)!.texto, new RegExp(`✅ R${codHumano}: le respondí a \\*Sole\\*`), 'la confirmación va al número que respondió');
 await pg.query(`update siguelo_negocios set avisos_telefono = null where id = $1`, [nQuilla]);
 paso('cada negocio puede tener su número de avisos; todo aviso trae código y solo las preguntas se aprenden');
+
+// ---------- Botón "Responder con IA" de la bandeja: responde sí o sí, al momento ----------
+const antesIA = await uno(`select modo, espera_min_seg, espera_max_seg from siguelo_ia where empresa_id = $1`, [empresa]);
+await pg.query(`update siguelo_ia set modo = 'borrador', espera_min_seg = 120, espera_max_seg = 120 where empresa_id = $1`, [empresa]);
+const leo = await chat(L2, '59170000055', 'Leo');
+await escribe(leo.conv, 'Hola, ¿tienen frenos para moto?');
+avanzar(3 * 60 * MIN);
+await escribe(leo.conv, 'Ahorita te confirmo', 'agente', usuario);
+avanzar(MIN);
+responder = (l) => (/pidió que le respondas AHORA/.test(l.extra || '') ? { resumen: 'Pregunta por frenos', puede_responder: true, respuesta: 'Sí, Leo, tenemos frenos para moto 👍' } : { resumen: 'Pregunta por frenos', puede_responder: false });
+const forzada = await responderConversacion(await config(), leo.conv);
+assert.equal(forzada.ok, true, forzada.mensaje);
+assert.match(forzada.mensaje, /^respondiendo: "Sí, Leo, tenemos frenos/);
+await salida();
+assert.equal(enviados.filter((e) => e.jid.startsWith('59170000055')).at(-1)?.texto, 'Sí, Leo, tenemos frenos para moto 👍', 'sale al momento aunque esté "para aprobar", el mensaje sea de hace 3 h y una persona haya escrito después');
+assert.match((await uno(`select texto from siguelo_registro where contacto_id = $1 and tipo = 'ia' order by creado_en desc limit 1`, [leo.contacto.id])).texto, /a pedido/);
+// Si no sabe, manda el "déjame consultarlo" y te avisa; sin mensajes del cliente no hay a qué responder.
+await escribe(leo.conv, '¿Y hacen envíos a Oruro?');
+avanzar(MIN);
+responder = () => ({ resumen: 'Pregunta por envíos', puede_responder: false, necesita_al_dueno: true, motivo: 'Pregunta si hacen envíos a Oruro' });
+const noSabe = await responderConversacion(await config(), leo.conv);
+assert.equal(noSabe.ok, true, noSabe.mensaje);
+await salida();
+assert.match(enviados.filter((e) => e.jid.startsWith('59170000055')).at(-1)?.texto ?? '', /consult/i, 'manda el "déjame consultarlo"');
+const vacio = await chat(L2, '59170000056', 'Nadie');
+assert.equal((await responderConversacion(await config(), vacio.conv)).ok, false);
+await pg.query(`update siguelo_ia set modo = $2, espera_min_seg = $3, espera_max_seg = $4 where empresa_id = $1`, [empresa, antesIA.modo, antesIA.espera_min_seg, antesIA.espera_max_seg]);
+paso('"Responder con IA": responde al momento aunque sola no lo hubiera hecho (para aprobar, mensaje viejo, ya escribió una persona)');
 
 const uso = await uno(`select sum(consultas)::int c, sum(entrada)::int e from siguelo_ia_uso`);
 console.log(`\n${ok} pasos OK · ${uso.c} consultas a la IA (${uso.e} tokens de entrada) · mensajes:`);

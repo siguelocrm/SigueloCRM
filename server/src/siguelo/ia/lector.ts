@@ -15,7 +15,7 @@ import { desempaquetar, empaquetar, linkDeMapa } from './ubicacion.js';
 import { crearPregunta, leerDueno } from './dueno.js';
 import { fueEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import type { CursoRow, EtapaVentaRow, IaRow, LecturaRow, NegocioRow, PorLeerRow, SalidaRow, TipoAviso } from '../tipos.js';
-import { cortar } from '../textos.js';
+import { cortar, recortarTexto } from '../textos.js';
 
 // La IA lee cada conversación cuando el cliente termina de escribir y, con la
 // ficha del negocio de ese número: mueve de etapa, anota lo que necesita que
@@ -139,6 +139,8 @@ type Contexto = {
   ultimaPersona: number;
   // Lo último que escribió el cliente (para la pregunta que te llega por WhatsApp).
   preguntaCliente: string;
+  // Lo pidió una persona con el botón "Responder con IA" de la bandeja: responde sí o sí, al momento.
+  forzado: boolean;
 };
 
 async function encolarAviso(x: Contexto, tipo: TipoAviso, motivo: string): Promise<boolean> {
@@ -187,20 +189,23 @@ const textoDeUbicacion = (contenido: string) => {
 // Arma lo que se le manda al cliente: la respuesta, las respuestas rápidas, el link del grupo y el pase.
 async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> {
   const { c } = x;
-  if (c.ia.modo === 'apagado') return '';
-  if (r.no_quiere_mas) return 'no le respondió: no quiere más mensajes';
-  if (x.lectura.sin_respuestas) return 'no le respondió: apagaste la IA en este chat';
-  const etapa = x.etapas.find((e) => e.id === x.contacto?.etapa_id);
-  if (etapa?.tipo === 'perdida') return `no le respondió: está en "${etapa.nombre}"`;
-  // Solo si el cliente fue el último en escribir, y hace poco.
-  if (!x.clienteUltimo) return 'no le respondió: ya le contestó una persona después de su último mensaje';
-  if (Date.now() - ms(x.fila.ultimo_cliente) > NO_RESPONDER_VIEJOS_MS) return 'no le respondió: su mensaje es de hace más de 2 horas';
+  // Con el botón "Responder con IA" lo pidió una persona: ninguno de estos frenos aplica.
+  if (!x.forzado) {
+    if (c.ia.modo === 'apagado') return '';
+    if (r.no_quiere_mas) return 'no le respondió: no quiere más mensajes';
+    if (x.lectura.sin_respuestas) return 'no le respondió: apagaste la IA en este chat';
+    const etapa = x.etapas.find((e) => e.id === x.contacto?.etapa_id);
+    if (etapa?.tipo === 'perdida') return `no le respondió: está en "${etapa.nombre}"`;
+    // Solo si el cliente fue el último en escribir, y hace poco.
+    if (!x.clienteUltimo) return 'no le respondió: ya le contestó una persona después de su último mensaje';
+    if (Date.now() - ms(x.fila.ultimo_cliente) > NO_RESPONDER_VIEJOS_MS) return 'no le respondió: su mensaje es de hace más de 2 horas';
+  }
 
   let texto = r.puede_responder ? r.respuesta : '';
   let espera = false;
   // Si la IA dice que no puede responder, es lo mismo que "no sabe": va el "déjame consultarlo" y te avisa.
   const noSabe = r.necesita_al_dueno || r.no_pudo;
-  if (!texto && noSabe && c.ia.si_no_sabe === 'espera' && c.ia.texto_espera.trim() && Date.now() - ms(x.lectura.espera_enviada) > ESPERA_REPETIR_MS) {
+  if (!texto && noSabe && c.ia.texto_espera.trim() && (x.forzado || (c.ia.si_no_sabe === 'espera' && Date.now() - ms(x.lectura.espera_enviada) > ESPERA_REPETIR_MS))) {
     texto = c.ia.texto_espera.trim();
     espera = true;
   }
@@ -221,7 +226,7 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
   }
   if (texto && c.ia.firma.trim() && !texto.includes(c.ia.firma.trim())) texto += `\n${c.ia.firma.trim()}`;
 
-  const motivo = await motivoSinAuto(c, x.fila.conversacion_id, x.ultimaPersona);
+  const motivo = x.forzado ? '' : await motivoSinAuto(c, x.fila.conversacion_id, x.ultimaPersona);
   const estado: SalidaRow['estado'] = motivo ? 'borrador' : 'pendiente';
 
   // Lo que la IA iba a mandar antes y todavía no salió queda reemplazado.
@@ -234,7 +239,8 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
 
   const min = Math.min(c.ia.espera_min_seg, c.ia.espera_max_seg);
   const max = Math.max(c.ia.espera_min_seg, c.ia.espera_max_seg);
-  const vence = new Date(ajustar(Date.now() + (min + Math.random() * (max - min)) * 1000, { zona: c.zona, desde: c.ia.desde, hasta: c.ia.hasta })).toISOString();
+  // A pedido: sale ya (sin la espera "humana" ni el horario de la IA).
+  const vence = x.forzado ? new Date().toISOString() : new Date(ajustar(Date.now() + (min + Math.random() * (max - min)) * 1000, { zona: c.zona, desde: c.ia.desde, hasta: c.ia.hasta })).toISOString();
   const lote = randomUUID();
   const base = {
     empresa_id: c.ia.empresa_id,
@@ -247,6 +253,8 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
     motivo: motivo && motivo !== 'modo para aprobar' ? motivo : null,
     lote,
     base_cliente: x.fila.ultimo_cliente,
+    // A pedido sale aunque el cliente o una persona escriban mientras tanto.
+    ...(x.forzado ? { aprobado: true } : {}),
   };
   const filas: Partial<SalidaRow>[] = [];
   if (texto) filas.push({ ...base, origen: 'respuesta', tipo: 'texto', contenido: texto, orden: 0, referencia: espera ? 'espera' : null });
@@ -295,7 +303,7 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
     if (!guardadas) return `no le respondió: no se pudo guardar la respuesta (${error.message})`;
   }
   if (espera && estado === 'pendiente') x.lectura.espera_enviada = new Date().toISOString();
-  const que = [texto && `"${texto.slice(0, 80)}${texto.length > 80 ? '…' : ''}"`, ...respuestas.map((rr) => `"${rr.titulo}"`), grupo && `link de "${grupo.nombre}"`, curso && `QR de "${curso.nombre}"`, bot && `activa "${bot.nombre}" del bot`, mapa && `ubicación de ${mapa.nombre}`, otro && `pase a ${otro.nombre}`]
+  const que = [texto && `"${recortarTexto(texto, 80)}"`, ...respuestas.map((rr) => `"${rr.titulo}"`), grupo && `link de "${grupo.nombre}"`, curso && `QR de "${curso.nombre}"`, bot && `activa "${bot.nombre}" del bot`, mapa && `ubicación de ${mapa.nombre}`, otro && `pase a ${otro.nombre}`]
     .filter(Boolean)
     .join(' + ');
   return estado === 'pendiente' ? `respondiendo: ${que}` : `respuesta lista para que la apruebes${base.motivo ? ` (${base.motivo})` : ''}: ${que}`;
@@ -341,8 +349,9 @@ async function aplicar(x: Contexto, r: ResultadoIA): Promise<string[]> {
   return hechos;
 }
 
-// Lee una conversación. Devuelve false si falló la IA.
-async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
+// Lee una conversación. ok: false si falló la IA; hecho: lo que hizo (o por qué no respondió).
+type Leido = { ok: boolean; hecho: string };
+async function leer(c: Config, fila: PorLeerRow, forzado = false): Promise<Leido> {
   const empresaId = c.ia.empresa_id;
   const { data: previa } = await db.from('siguelo_ia_lecturas').select('*').eq('conversacion_id', fila.conversacion_id).maybeSingle();
   const lectura: LecturaRow = previa ?? {
@@ -371,10 +380,10 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
   const negocio = await negocioDeLinea(fila.linea_id);
   const quienEs = `+${fila.telefono.split('@')[0]}`;
   // Cuando no responde, queda anotado por qué (se ve en IA → Resumen).
-  const sinResponder = async (motivo: string) => {
+  const sinResponder = async (motivo: string): Promise<Leido> => {
     await guardar(leido);
     await registrar(empresaId, fila.contacto_id, 'ia', `IA no le respondió a ${quienEs}: ${motivo}.`);
-    return true;
+    return { ok: true, hecho: `no le respondió: ${motivo}` };
   };
   // Sin ficha de negocio no hay con qué responder; tampoco a tu número personal.
   // Tu número personal: no se le responde, pero lo que escribes puede ser la respuesta a una pregunta (R12).
@@ -382,17 +391,19 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
   if (numerosTuyos.some((n) => esNumeroPersonal(fila.telefono, n))) {
     await leerDueno(c, fila.conversacion_id, fila.linea_id, lectura.leido_hasta, digitos(fila.telefono.split('@')[0])).catch((err) => console.error('IA: no se pudo leer tu respuesta:', (err as Error).message));
     await guardar(leido);
-    return true;
+    return { ok: true, hecho: 'es tu número de avisos: a ese la IA no le responde' };
   }
   if (!negocio) {
     const { data: l } = await db.from('lineas_whatsapp').select('nombre').eq('id', fila.linea_id).maybeSingle();
     return sinResponder(`el número "${l?.nombre ?? '?'}" no está en ningún negocio (Administrar → Negocios → elige sus números)`);
   }
-  if (!negocio.ia_activa) return sinResponder(`en el negocio "${negocio.nombre}" está apagado "La IA responde en los números de este negocio"`);
-  // Si está mandando un comprobante o sus datos de inscripción (Fase 5), de eso se encarga pagos/;
-  // si un flujo del bot espera su respuesta, contesta el bot.
-  if (await pagoEnCurso(fila.conversacion_id)) return sinResponder('tiene un pago o inscripción en curso (de eso se encargan los pagos)');
-  if (await flujoEsperando(fila.conversacion_id)) return sinResponder('un flujo del bot está esperando su respuesta (contesta el bot)');
+  if (!forzado) {
+    if (!negocio.ia_activa) return sinResponder(`en el negocio "${negocio.nombre}" está apagado "La IA responde en los números de este negocio"`);
+    // Si está mandando un comprobante o sus datos de inscripción (Fase 5), de eso se encarga pagos/;
+    // si un flujo del bot espera su respuesta, contesta el bot.
+    if (await pagoEnCurso(fila.conversacion_id)) return sinResponder('tiene un pago o inscripción en curso (de eso se encargan los pagos)');
+    if (await flujoEsperando(fila.conversacion_id)) return sinResponder('un flujo del bot está esperando su respuesta (contesta el bot)');
+  }
 
   const [{ data: contacto }, { data: mensajes }, enviadas] = await Promise.all([
     fila.contacto_id ? db.from('contactos').select('id, nombre, etapa_id, etapa_actualizada_en').eq('id', fila.contacto_id).maybeSingle() : Promise.resolve({ data: null }),
@@ -448,9 +459,14 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
     aula,
     aprendido: textoAprendido(aprendido),
   };
-  const conRespuesta = c.ia.modo !== 'apagado';
+  const conRespuesta = forzado || c.ia.modo !== 'apagado';
   const { mensajes: prompt, ids: mapa } = armarMensajes(datos, conRespuesta);
+  if (forzado) prompt.push({ role: 'system', content: PEDIDO_FORZADO });
   const res = await llamar(c, prompt);
+  if (!res.ok && forzado) {
+    await registrar(empresaId, fila.contacto_id, 'ia_error', `IA: no se pudo leer a ${nombre}: ${res.mensaje}`);
+    return { ok: false, hecho: res.mensaje };
+  }
   if (!res.ok) {
     const fallos = lectura.fallos + 1;
     // Tras 3 fallos seguidos se deja (el próximo mensaje del cliente lo vuelve a intentar).
@@ -461,7 +477,7 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
       ...(rendirse ? { leido_hasta: fila.ultimo_cliente } : {}),
     });
     await registrar(empresaId, fila.contacto_id, 'ia_error', `IA: no se pudo leer a ${nombre}: ${res.mensaje}`);
-    return false;
+    return { ok: false, hecho: res.mensaje };
   }
   const r = validarResultado(res.json, mapa, conRespuesta);
   const x: Contexto = {
@@ -488,11 +504,30 @@ async function leer(c: Config, fila: PorLeerRow): Promise<boolean> {
       return cortar(ultimos.join(' / '), 500);
     })(),
     ultimaPersona,
+    forzado,
   };
   const hechos = await aplicar(x, r);
   await guardar({ ...leido, resumen: r.resumen || lectura.resumen, interes: r.interes || lectura.interes, atencion: lectura.atencion, avisado: lectura.avisado, espera_enviada: lectura.espera_enviada });
-  await registrar(empresaId, fila.contacto_id, 'ia', `IA leyó a ${nombre} (${negocio.nombre}): ${r.resumen || 'sin resumen'}${hechos.length ? ` · ${hechos.join(' · ')}` : ''}`);
-  return true;
+  await registrar(empresaId, fila.contacto_id, 'ia', `IA leyó a ${nombre} (${negocio.nombre})${forzado ? ' a pedido (botón "Responder con IA")' : ''}: ${r.resumen || 'sin resumen'}${hechos.length ? ` · ${hechos.join(' · ')}` : ''}`);
+  const respuesta = hechos.find((h) => h.startsWith('respondiendo') || h.startsWith('respuesta lista') || h.startsWith('no le respondió'));
+  return { ok: true, hecho: respuesta || hechos.join(' · ') || r.resumen || 'la IA leyó el chat' };
+}
+
+// Lo que se le agrega a la IA cuando una persona pulsa "Responder con IA".
+const PEDIDO_FORZADO = `IMPORTANTE: una persona del equipo pidió que le respondas AHORA a este cliente, aunque el último mensaje sea de hace rato, sea corto o ya se le haya escrito después. Responde a lo que el cliente necesita según la conversación ("puede_responder": true), con texto y/o la respuesta rápida, ubicación, grupo, QR o regla del bot que corresponda. Si escribió algo corto ("ok", "gracias", un emoji), contéstale con amabilidad y ofrécele ayuda o el siguiente paso. Solo si de verdad falta un dato de la ficha, "necesita_al_dueno": true.`;
+
+// El botón "Responder con IA" de la bandeja: lee esa conversación ahora y responde sí o sí.
+export async function responderConversacion(c: Config, conversacionId: string): Promise<{ ok: boolean; mensaje: string }> {
+  const { data: cv } = await db.from('conversaciones').select('id, linea_id, contacto_telefono').eq('id', conversacionId).maybeSingle();
+  if (!cv) return { ok: false, mensaje: 'No se encontró esa conversación.' };
+  const [{ data: contacto }, { data: ultimo }] = await Promise.all([
+    db.from('contactos').select('id').eq('empresa_id', c.ia.empresa_id).eq('telefono', cv.contacto_telefono).maybeSingle(),
+    db.from('mensajes').select('creado_en').eq('conversacion_id', cv.id).eq('remitente', 'cliente').order('creado_en', { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  if (!ultimo) return { ok: false, mensaje: 'Este cliente todavía no escribió nada: no hay a qué responderle.' };
+  const r = await leer(c, { conversacion_id: cv.id, linea_id: cv.linea_id, telefono: cv.contacto_telefono, contacto_id: contacto?.id ?? null, ultimo_cliente: ultimo.creado_en }, true);
+  if (!r.ok) return { ok: false, mensaje: `La IA no pudo leer el chat: ${r.hecho}` };
+  return { ok: r.hecho.startsWith('respondiendo'), mensaje: r.hecho };
 }
 
 // Una vuelta: lee las conversaciones que tienen mensajes nuevos del cliente.
@@ -500,7 +535,7 @@ export async function leerPendientes(c: Config, maximo = 5, quietoSeg = QUIETO_S
   const { data, error } = await db.rpc('siguelo_ia_por_leer', { p_empresa: c.ia.empresa_id, p_quieto_seg: quietoSeg });
   if (error) return;
   for (const fila of (data || []).slice(0, maximo)) {
-    const ok = await leer(c, fila);
+    const { ok } = await leer(c, fila);
     if (!ok) break; // si OpenAI falla, no insiste con los demás en esta vuelta
   }
 }

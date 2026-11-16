@@ -186,6 +186,10 @@ npm test
   (`siguelo_ia_por_leer`), llama a OpenAI (`openai.ts`, JSON) con la ficha (`contexto.ts`) y decide; `salida.ts` envía lo que
   quedó en `siguelo_ia_salida` (o espera aprobación si es "borrador"). También manda el QR de un curso (origen `qr`).
   La clave está en `siguelo_ia_clave` (sin permisos para la página; solo la escribe el servidor por `/siguelo/ia/clave`).
+  **Responder con IA** (bandeja, `ResponderIA.tsx` → `/siguelo/ia/responder` → `responderAhora` en `index.ts` →
+  `responderConversacion` en `lector.ts`): lee ese chat a pedido, sin los frenos (modo, horario, espera, mensaje viejo,
+  ya escribió una persona, flujo o pago en curso), y lo que decide sale al momento (`aprobado`). Al lado se ve por qué no
+  respondió sola (último registro `ia`/`ia_error` del contacto). Antes de ir a OpenAI se quitan los medios emojis.
 - **Pagos** (`pagos/`): cada 10 s, `inscripcion.ts` toma las fotos/PDF nuevas de clientes en números con cursos
   (`siguelo_pagos_por_leer`), las manda a la IA con visión, y `comprobante.ts` decide sin IA (monto, destinatario, fecha,
   transacción repetida, señales de edición). Confirmado → documento en la ficha, oportunidad ganada, etapa ganada, pide los
@@ -262,6 +266,8 @@ npm test
   general, primero pregunta qué le interesa; cada opción en su línea.
 
 ### Pendientes conocidos e ideas
+- La IA no escucha audios ni ve fotos del cliente (salvo comprobantes): un audio llega como "[audio]" y suele quedar
+  sin respuesta ("no vio nada que contestar"). Idea: transcribir audios con OpenAI antes de leer.
 - El selector de etapa dentro del chat (curso: `HiloMensajes`/`PanelContacto`) lista etapas de todos los embudos.
 - Dashboard y Reportes no separan por embudo.
 - El seguimiento es uno por cliente (por el número de su chat principal).

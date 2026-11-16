@@ -9,6 +9,7 @@ import { marcarEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js
 import { enviarPasos } from '../../whatsapp/bot-automatico.js';
 import { iniciarFlujo } from '../../whatsapp/flujo.js';
 import type { IaRow, SalidaRow } from '../tipos.js';
+import { recortarTexto } from '../textos.js';
 
 // Envía lo que decidió la IA (lector.ts): sus respuestas, las respuestas
 // rápidas, el link de un grupo, el pase a otra sucursal y los avisos a tu
@@ -129,7 +130,7 @@ async function enviarAlCliente(c: Config, it: SalidaRow): Promise<void> {
     }
     if (it.origen === 'respuesta' || it.origen === 'pase') {
       const que = it.origen === 'pase' ? 'le escribió por el pase' : 'le respondió';
-      await registrar(c.ia.empresa_id, it.contacto_id, 'ia', `IA ${que} a +${it.telefono.split('@')[0]}: "${it.contenido.slice(0, 120)}"`);
+      await registrar(c.ia.empresa_id, it.contacto_id, 'ia', `IA ${que} a +${it.telefono.split('@')[0]}: "${recortarTexto(it.contenido, 120)}"`);
     }
   } catch (err) {
     const motivo = (err as Error).message.slice(0, 200);

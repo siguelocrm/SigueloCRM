@@ -117,6 +117,7 @@ const tablas: Record<string, Fila[]> = {
   siguelo_registro: [
     { id: 'r1', tipo: 'enviado', texto: 'Sin nombre: salió "Primer Contacto · Recordatorio 1".', creado_en: iso(ahora - 2 * H) },
     { id: 'r2', tipo: 'respondio', texto: 'Bruno: Respondió: atender. Sus recordatorios esperan hasta que le escribas.', creado_en: iso(ahora - 90 * 60000) },
+    { id: 'r4', contacto_id: 'c9', tipo: 'ia', texto: 'IA leyó a Leo (Club Quillacollo): Mandó un audio · no le respondió: la IA no vio nada que contestar (Mandó un audio).', creado_en: iso(ahora - 4 * 60000) },
     { id: 'r3', tipo: 'reactivacion', texto: 'Ana Rojas: Le escribiste: empieza su reactivación por si no responde.', creado_en: iso(ahora - H) },
   ],
   siguelo_aula_info: [{ empresa_id: E, conectado: true, cuenta: 'whatsapp', enlace: 'https://infinity-chess-aula.pages.dev', planes: [{ id: 'pl1', nombre: 'Mensual 8 clases', texto: 'Mensual 8 clases: Bs 200 · 30 días · 8 clases · grupo Martes y jueves (martes y jueves · 19:00 a 20:00 hora de Bolivia)' }, { id: 'pl2', nombre: 'Sábados', texto: 'Sábados: Bs 120 · 30 días · clases sin límite · grupo Sábados (sábado · 10:00 a 11:30 hora de Bolivia)' }], error: null }],
