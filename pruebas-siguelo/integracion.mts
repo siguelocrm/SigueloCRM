@@ -474,6 +474,33 @@ assert.ok(estConcretado.etapas.find((e: any) => e.nombre === 'Inscrito')?.concre
 await pg.query(`update siguelo_etapas set sin_seguimiento = false where etapa_id = $1`, [negociacion.id]);
 paso('los que ya concretaron (Inscrito, o una etapa marcada "Sin seguimiento") no reciben recordatorios ni reactivaciones');
 
+// ---------- La cola no se atasca: los que esperan a propósito no tapan a los demás ----------
+// 70 recordatorios de clientes que respondieron (esperan hasta que les escribas) delante de uno que sí toca.
+const hace1dia = iso(reloj.ahora - DIA);
+for (let i = 0; i < 70; i++) {
+  const tel = `5917100${String(i).padStart(4, '0')}`;
+  const cid = (await uno(`insert into contactos (empresa_id, telefono, nombre) values ($1, $2, 'Espera') returning id`, [empresa, tel])).id;
+  await pg.query(`insert into siguelo_seguimientos (contacto_id, empresa_id, respondio) values ($1, $2, true)`, [cid, empresa]);
+  const conv = await chat(tel, 'Espera', reloj.ahora - DIA);
+  await pg.query(
+    `insert into siguelo_cola (empresa_id, contacto_id, conversacion_id, linea_id, telefono, tipo, paso, token, nombre, variantes, vence, estado) values ($1, $2, $6, $3, $4, 'rec', 0, 'x', 'Recordatorio', '{hola}', $5, 'pendiente')`,
+    [empresa, cid, lineaId, tel, hace1dia, conv],
+  );
+}
+const ultimo = (await uno(`insert into contactos (empresa_id, telefono, nombre) values ($1, '59172999999', 'Último') returning id`, [empresa])).id;
+await pg.query(`insert into siguelo_seguimientos (contacto_id, empresa_id) values ($1, $2)`, [ultimo, empresa]);
+const convUltimo = await chat('59172999999', 'Último', reloj.ahora - DIA);
+await pg.query(
+  `insert into siguelo_cola (empresa_id, contacto_id, conversacion_id, linea_id, telefono, tipo, paso, token, nombre, variantes, vence, estado) values ($1, $2, $5, $3, '59172999999', 'react', 0, 'otro', 'Reactivación', '{hola}', $4, 'pendiente')`,
+  [empresa, ultimo, lineaId, iso(reloj.ahora - MIN), convUltimo],
+);
+en(reloj.ahora + 5 * MIN);
+await cola();
+const delUltimo = await uno(`select estado, motivo from siguelo_cola where contacto_id = $1`, [ultimo]);
+assert.notEqual(delUltimo.estado, 'pendiente', `la cola llegó al que sí tocaba (${delUltimo.motivo})`);
+assert.equal((await uno(`select count(*)::int n from siguelo_cola where estado = 'pendiente' and nombre = 'Recordatorio' and token = 'x'`)).n, 70, 'los que esperan siguen esperando');
+paso('la cola no se atasca: los recordatorios que esperan (respondió o en pausa) no tapan a los que sí tocan');
+
 console.log(`\n${ok} pasos OK · mensajes "enviados":`);
 for (const e of enviados) console.log('  →', e.jid, JSON.stringify(e.texto));
 const reg = (await pg.query<any>(`select texto from siguelo_registro order by creado_en`)).rows.map((r: any) => r.texto);

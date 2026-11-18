@@ -9,6 +9,7 @@ import { revisarPagos } from './pagos/inscripcion.js';
 import { revisarRedes } from './redes/redes.js';
 import type { AjustesRow } from './tipos.js';
 import { cuentasBloqueadas } from './agencia/bloqueo.js';
+import { enFranja } from './horario.js';
 import { desactivarVencidos } from './usuarios/accesos.js';
 import { alDespertarMasivos, procesarMasivos, reanudarAlArrancar } from './masivos/masivos.js';
 import { alLlegarMensaje } from './eventos.js';
@@ -20,8 +21,10 @@ import { alLlegarMensaje } from './eventos.js';
 // Cada cuánto se revisa sin que pase nada. Lo urgente (un mensaje que llega, una respuesta de la IA)
 // se hace al momento por eventos; estas vueltas son de respaldo. Antes eran cada 5 a 10 segundos y
 // superaban los límites del plan gratis de Supabase (registros y datos transferidos).
-const MOTOR_CADA_MS = 3 * 60_000;
-const COLA_CADA_MS = 30_000;
+// El seguimiento: cada minuto dentro del horario de envío (o de las citas); fuera, cada 5 minutos.
+const MOTOR_CADA_MS = 60_000;
+const MOTOR_FUERA_DE_HORARIO_MS = 5 * 60_000;
+const COLA_CADA_MS = 20_000;
 const AJUSTES_VALIDOS_MS = 60_000;
 const LECTOR_RESPALDO_MS = 2 * 60_000;
 const SALIDA_CADA_MS = 20_000;
@@ -71,9 +74,19 @@ async function ajustesActivos(forzar = false): Promise<AjustesRow[]> {
   return ajustes;
 }
 
+const ultimaVueltaMotor = new Map<string, number>();
 async function vueltaDelMotor(): Promise<void> {
   const bloqueadas = await cuentasBloqueadas();
-  for (const aj of await ajustesActivos(true)) if (!bloqueadas.has(aj.empresa_id)) await revisarEmpresa(aj);
+  const ahora = Date.now();
+  for (const aj of await ajustesActivos(true)) {
+    if (bloqueadas.has(aj.empresa_id)) continue;
+    const enHorario =
+      enFranja(ahora, { zona: aj.zona_horaria, desde: aj.hora_inicio, hasta: aj.hora_fin }) ||
+      enFranja(ahora, { zona: aj.zona_horaria, desde: aj.citas?.desde || '07:00', hasta: aj.citas?.hasta || '21:00' });
+    if (!enHorario && ahora - (ultimaVueltaMotor.get(aj.empresa_id) ?? 0) < MOTOR_FUERA_DE_HORARIO_MS - 5_000) continue;
+    ultimaVueltaMotor.set(aj.empresa_id, ahora);
+    await revisarEmpresa(aj);
+  }
   await limpiarRegistroViejo();
   // Lo que el motor dejó en la cola sale sin esperar la próxima vuelta.
   await vueltaDeLaCola();

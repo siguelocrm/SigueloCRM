@@ -21,7 +21,12 @@ const nombreDe = (a: Pick<ActividadRow, 'nombre' | 'telefono'>) => a.nombre?.tri
 // Las conversaciones recientes que todavía no tienen ficha de contacto la
 // reciben (igual que hace la Bandeja al abrirse), así un cliente nuevo entra
 // al embudo aunque nadie tenga el CRM abierto.
+// Solo los chats con movimiento desde la vuelta anterior (antes traía hasta 1000 chats de los últimos
+// 3 días en cada vuelta: mucho tráfico con Supabase). La primera vez, los últimos 3 días.
+const ultimaFicha = new Map<string, number>();
 async function asegurarContactos(empresaId: string): Promise<void> {
+  const desde = ultimaFicha.get(empresaId) ?? Date.now() - 3 * DIA;
+  ultimaFicha.set(empresaId, Date.now());
   const { data: lineas } = await db.from('lineas_whatsapp').select('id').eq('empresa_id', empresaId);
   const ids = (lineas || []).map((l) => l.id);
   if (!ids.length) return;
@@ -29,7 +34,7 @@ async function asegurarContactos(empresaId: string): Promise<void> {
     .from('conversaciones')
     .select('contacto_telefono, contacto_nombre')
     .in('linea_id', ids)
-    .gte('ultima_actividad', new Date(Date.now() - 3 * DIA).toISOString())
+    .gte('ultima_actividad', new Date(desde - 2 * 60_000).toISOString())
     .limit(1000);
   if (!chats?.length) return;
   const filas = new Map<string, { empresa_id: string; telefono: string; nombre: string | null }>();

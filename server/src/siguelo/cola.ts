@@ -295,7 +295,7 @@ export async function procesarCola(aj: AjustesRow): Promise<void> {
   if (!enHorario && !enFranja(ahora, franjaCitas)) return;
   const fecha = fechaDe(ahora, franja.zona);
 
-  const { data: vencidos } = await db
+  const { data: todos } = await db
     .from('siguelo_cola')
     .select('*')
     .eq('empresa_id', aj.empresa_id)
@@ -303,8 +303,21 @@ export async function procesarCola(aj: AjustesRow): Promise<void> {
     .lte('vence', new Date(ahora).toISOString())
     .order('vence')
     .order('creado_en')
-    .limit(50);
-  if (!vencidos?.length) return;
+    .limit(500);
+  if (!todos?.length) return;
+  // Los que esperan a propósito (recordatorios de quien respondió, contactos en pausa) quedan pendientes,
+  // pero no pueden tapar a los demás: antes, con 50 de esos al frente, ese día no salía nada.
+  const ids = [...new Set(todos.map((x) => x.contacto_id))];
+  const esperan = new Set<string>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data: segs } = await db.from('siguelo_seguimientos').select('contacto_id, respondio, pausado').in('contacto_id', ids.slice(i, i + 200));
+    for (const s of segs || []) {
+      if (s.pausado) esperan.add(`p:${s.contacto_id}`);
+      if (s.respondio) esperan.add(`r:${s.contacto_id}`);
+    }
+  }
+  const vencidos = todos.filter((x) => !esperan.has(`p:${x.contacto_id}`) && !(x.tipo === 'rec' && esperan.has(`r:${x.contacto_id}`))).slice(0, 60);
+  if (!vencidos.length) return;
   // Las citas primero: tienen hora fija.
   vencidos.sort((a, b) => Number(b.tipo === 'cita') - Number(a.tipo === 'cita'));
 

@@ -226,9 +226,12 @@ npm test
 - **Consumo de Supabase (plan gratis):** cada consulta deja un registro (límite 1 GB de "Log Ingestion" al mes) y
   cuenta para el "Egress" (5 GB). Por eso las vueltas son de respaldo y lentas: salida 20 s (una consulta para todas las
   cuentas), lector 2 min, pagos 1 min (solo cuentas con algo en curso; todas cada 10 min), masivos 5 s solo si hay uno en
-  marcha (si no, 1 min), cola 30 s, motor 3 min, redes 3 min, programados 1 min; caché de la IA, fichas y bloqueos 2 min.
+  marcha (si no, 1 min), cola 20 s, motor 1 min en horario de envío (5 min fuera), redes 3 min, programados 1 min; caché de la IA, fichas y bloqueos 2 min.
   Lo urgente va por eventos: al llegar un mensaje, `responderRapido` lee, envía y revisa pagos. No volver a bajar estos
   tiempos sin mirar el uso en Supabase → Usage.
+- **Cola del seguimiento:** toma hasta 500 vencidos y deja de lado los que esperan a propósito (recordatorios de quien
+  respondió, contactos en pausa) antes de los 60 que procesa: antes 50 de esos tapaban todo. `asegurarContactos` solo trae
+  chats con movimiento desde la vuelta anterior. Diagnóstico con datos reales: `docs/diagnosticos/seguimiento.sql`.
 - **Respuestas rápidas con varios mensajes** (sección 44, `respuestas_rapidas.partes`): la IA y el chat mandan el primero
   y los que siguen en orden. El asistente también ve números, respuestas rápidas (y en qué sucursales), bot y extras de
   cada negocio.
