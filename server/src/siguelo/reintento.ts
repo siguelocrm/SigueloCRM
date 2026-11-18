@@ -20,16 +20,25 @@ export async function esperarSesionActiva(lineaId: string, excluir?: object) {
   }
 }
 
+// Cuánto se espera a WhatsApp antes de darlo por caído (las pruebas lo acortan).
+export const limites = { envioMs: 90_000, consultaMs: 20_000 };
+
+// Una promesa con tiempo máximo: si WhatsApp no responde, falla como "Timed Out" (se trata como conexión caída).
+export function conLimite<T>(p: Promise<T>, ms: number, que: string): Promise<T> {
+  let t: NodeJS.Timeout | undefined;
+  return Promise.race([p, new Promise<T>((_, no) => (t = setTimeout(() => no(new Error(`Timed Out: ${que}`)), ms)))]).finally(() => clearTimeout(t));
+}
+
 type Sock = { sendMessage: (jid: string, contenido: never) => Promise<{ key?: { id?: string | null } } | undefined> };
 
 // Manda por esa línea; si la conexión se había caído, espera la nueva y reintenta una vez.
 export async function enviarConReintento<C>(lineaId: string, sock: unknown, jid: string, contenido: C): Promise<{ key?: { id?: string | null } } | undefined> {
   try {
-    return await (sock as Sock).sendMessage(jid, contenido as never);
+    return await conLimite((sock as Sock).sendMessage(jid, contenido as never), limites.envioMs, 'WhatsApp no respondió al enviar');
   } catch (err) {
     if (!esConexionCaida(err)) throw err;
     const nueva = await esperarSesionActiva(lineaId, sock as object);
     if (!nueva) throw err;
-    return (nueva.sock as unknown as Sock).sendMessage(jid, contenido as never);
+    return conLimite((nueva.sock as unknown as Sock).sendMessage(jid, contenido as never), limites.envioMs, 'WhatsApp no respondió al enviar');
   }
 }

@@ -34,18 +34,27 @@ const REDES_CADA_MS = 3 * 60_000;
 
 // El motor y la cola nunca corren a la vez: así la cola no envía algo que el
 // motor está por cancelar, y el motor ve siempre los envíos ya anotados.
-let ocupado = false;
-async function conCandado(tarea: () => Promise<void>): Promise<void> {
-  if (ocupado) return;
-  ocupado = true;
-  try {
-    await tarea();
-  } catch (err) {
-    console.error('Error en el seguimiento automático:', (err as Error).message);
-  } finally {
-    ocupado = false;
-  }
+// Un candado que se libera solo si la tarea se traba (por ejemplo, esperando a WhatsApp una
+// respuesta que nunca llega): antes quedaba tomado para siempre y no salía nada más (masivos,
+// seguimiento) hasta reiniciar el servidor.
+const TRABADO_MS = 10 * 60_000;
+function candadoConVigia(nombre: string): (tarea: () => Promise<void>) => Promise<void> {
+  let desde: number | null = null;
+  return async (tarea) => {
+    if (desde !== null && Date.now() - desde < TRABADO_MS) return;
+    if (desde !== null) console.error(`⚠️ ${nombre} estuvo trabado más de ${TRABADO_MS / 60_000} minutos: se libera y sigue.`);
+    const yo = Date.now();
+    desde = yo;
+    try {
+      await tarea();
+    } catch (err) {
+      console.error(`Error en ${nombre}:`, (err as Error).message);
+    } finally {
+      if (desde === yo) desde = null;
+    }
+  };
 }
+const conCandado = candadoConVigia('el seguimiento automático');
 
 let cache: { leido: number; ajustes: AjustesRow[] } = { leido: 0, ajustes: [] };
 let avisoFaltaSql = false;
@@ -99,20 +108,7 @@ async function vueltaDeLaCola(): Promise<void> {
 
 // La IA (Fase 3) lleva sus propios candados: una lectura puede tardar varios
 // segundos (espera a OpenAI) y no debe frenar al seguimiento ni a sus envíos.
-function candado(nombre: string): (tarea: () => Promise<void>) => Promise<void> {
-  let enUso = false;
-  return async (tarea) => {
-    if (enUso) return;
-    enUso = true;
-    try {
-      await tarea();
-    } catch (err) {
-      console.error(`Error en ${nombre}:`, (err as Error).message);
-    } finally {
-      enUso = false;
-    }
-  };
-}
+const candado = (nombre: string) => candadoConVigia(nombre);
 const conCandadoLector = candado('la lectura de la IA');
 const conCandadoSalida = candado('los envíos de la IA');
 const conCandadoPagos = candado('los pagos');

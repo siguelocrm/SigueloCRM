@@ -223,5 +223,23 @@ await pg.query(`update siguelo_masivos set estado = 'cancelado' where id = $1`, 
 globalThis.fetch = fetchReal;
 paso('"que la IA adapte el mensaje": fiel al original, con los datos del cliente; si no hay nada, sale igual');
 
+// ---------- WhatsApp no responde: el envío no se traba para siempre ----------
+const { limites } = await import(R + 'reintento.ts');
+limites.envioMs = 150;
+_reiniciarRitmo();
+const antesColgado = enviados.length;
+const mc = await crear('Colgado', [{ telefono: '59174000001', nombre: 'Lía', contacto_id: null }]);
+linea.cuelga = true;
+await vueltas(2, 61_000);
+const colgado = await uno(`select estado from siguelo_masivo_envios where masivo_id = $1`, [mc]);
+assert.equal(colgado.estado, 'pendiente', 'no queda trabado en "enviando": vuelve a la fila');
+assert.equal((await masivo(mc)).estado, 'enviando', 'el masivo sigue (no se pausa)');
+linea.cuelga = false;
+await vueltas(3, 61_000);
+assert.equal(enviados.length, antesColgado + 1, 'cuando WhatsApp responde, sale');
+assert.equal((await uno(`select estado from siguelo_masivo_envios where masivo_id = $1`, [mc])).estado, 'enviado');
+limites.envioMs = 90_000;
+paso('si WhatsApp no responde, el envío no se traba: vuelve a la fila y sale después');
+
 console.log(`\n${ok} pasos OK · mensajes "enviados":`);
 for (const e of enviados) console.log(`  → ${e.jid} ${JSON.stringify(e.texto)}`);

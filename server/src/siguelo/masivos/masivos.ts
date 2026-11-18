@@ -7,7 +7,7 @@ import { obtenerSesion } from '../../whatsapp/sesiones.js';
 import { marcarEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import type { FiltroMasivo, MasivoEnvioRow, MasivoRow } from '../tipos.js';
 import { adaptarParaCliente } from './adaptar.js';
-import { enviarConReintento, esConexionCaida } from '../reintento.js';
+import { conLimite, enviarConReintento, esConexionCaida, limites } from '../reintento.js';
 import { cuentasBloqueadas } from '../agencia/bloqueo.js';
 
 // Mensajes masivos (SígueloCRM): un mensaje a muchos contactos desde un número,
@@ -164,7 +164,7 @@ async function tieneWhatsapp(sock: unknown, telefono: string): Promise<boolean> 
   const s = sock as { onWhatsApp?: (...jids: string[]) => Promise<{ exists: unknown }[] | undefined> };
   if (typeof s.onWhatsApp !== 'function') return true;
   try {
-    const r = await s.onWhatsApp(`${telefono}@s.whatsapp.net`);
+    const r = await conLimite(s.onWhatsApp(`${telefono}@s.whatsapp.net`), limites.consultaMs, 'WhatsApp no respondió si el número existe');
     if (!Array.isArray(r)) return true;
     return r.length > 0 && !!r[0].exists;
   } catch {

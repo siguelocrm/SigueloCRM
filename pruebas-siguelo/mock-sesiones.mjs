@@ -10,6 +10,8 @@ const sock = (lineaId) => ({
   async sendMessage(jid, contenido) {
     // falla: un error real (número bloqueado...). caidas: cuántas veces más se "cae la conexión" (se recupera sola).
     if (linea.falla) throw new Error(typeof linea.falla === 'string' ? linea.falla : 'Error de envío (falso)');
+    // cuelga: WhatsApp no responde nunca (la promesa no termina).
+    if (linea.cuelga) return new Promise(() => {});
     if (linea.caidas > 0) {
       linea.caidas--;
       throw new Error('Connection Closed');

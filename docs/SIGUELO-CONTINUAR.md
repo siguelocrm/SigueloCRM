@@ -235,6 +235,9 @@ npm test
 - **"Connection Closed" al enviar** (`siguelo/reintento.ts`): WhatsApp corta la conexión un momento y se reconecta solo. Cola,
   citas, salida de la IA, avisos, masivos, "stop" y programados usan `enviarConReintento` (espera la conexión nueva y
   reintenta una vez); si no vuelve, el mensaje vuelve a pendiente y no cuenta para la pausa automática.
+  Cada envío tiene tiempo máximo (`limites.envioMs`, 90 s; `onWhatsApp` 20 s): si WhatsApp no responde, falla como
+  "Timed Out". Los candados de las tareas (`candadoConVigia` en index.ts) se liberan solos a los 10 minutos: antes una
+  promesa colgada dejaba trabados los masivos o el seguimiento hasta reiniciar el servidor.
 - **Respuestas rápidas con varios mensajes** (sección 44, `respuestas_rapidas.partes`): la IA y el chat mandan el primero
   y los que siguen en orden. El asistente también ve números, respuestas rápidas (y en qué sucursales), bot y extras de
   cada negocio.
