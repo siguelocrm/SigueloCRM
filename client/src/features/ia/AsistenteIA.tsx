@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, MessageCircleQuestion, Send, Trash2, Wand2 } from 'lucide-react';
+import { BarChart3, Check, MessageCircleQuestion, Send, Trash2, Wand2 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import { llamarBackend } from '../../lib/backend';
 import { BORDE, TEXTO_PRIMARIO, TEXTO_SECUNDARIO, TEXTO_TERCIARIO } from '../../lib/tema';
@@ -16,7 +16,17 @@ type Mensaje = {
   creado_en: string;
 };
 
+// Preguntas sobre tus datos (por sede y por período): la IA los cuenta en la base antes de responder.
+const SOBRE_DATOS = [
+  '¿Cuántas personas escribieron esta semana en cada sede?',
+  '¿Qué cursos son los que más están pidiendo este mes?',
+  '¿Cuántos dijeron que van a asistir esta semana?',
+  '¿En la sede de Cercado a cuántas personas les mandaste los horarios?',
+  '¿Cuántos respondieron a los seguimientos y a los masivos?',
+];
+
 const SUGERENCIAS = [
+  ...SOBRE_DATOS.slice(0, 2),
   '¿Cómo funciona el seguimiento y cómo lo tengo configurado?',
   'Pon las reactivaciones de 1, 3, 5 y 8 horas y los recordatorios al día 1, 3 y 5',
   'Escríbeme los textos de los recordatorios con la información de mi negocio',
@@ -83,7 +93,7 @@ export default function AsistenteIA({ hayClave, onCambios }: { hayClave: boolean
     <Tarjeta className="flex flex-col max-w-3xl w-full" style={{ height: 'min(70vh, 680px)' }}>
       <div className="flex items-center gap-2 px-4 py-2.5" style={{ borderBottom: `1px solid ${BORDE}` }}>
         <Wand2 size={16} color="var(--accent)" />
-        <span className="flex-1 text-[13px]" style={{ color: TEXTO_SECUNDARIO }}>Pregúntale cómo funciona algo o pídele cambios con tus palabras. Nada cambia hasta que pulses "Aplicar".</span>
+        <span className="flex-1 text-[13px]" style={{ color: TEXTO_SECUNDARIO }}>Pregúntale por tus datos (por sede y por período), cómo funciona algo, o pídele cambios con tus palabras. Nada cambia hasta que pulses "Aplicar".</span>
         {mensajes.length > 0 && <button onClick={borrar} aria-label="Borrar la conversación" title="Borrar la conversación" className="p-1.5 rounded-md" style={{ color: TEXTO_TERCIARIO }}><Trash2 size={15} /></button>}
       </div>
 
@@ -119,11 +129,19 @@ export default function AsistenteIA({ hayClave, onCambios }: { hayClave: boolean
             )}
           </div>
         ))}
-        {pensando && <span className="self-start text-[12.5px] italic" style={{ color: TEXTO_TERCIARIO }}>Pensando…</span>}
+        {pensando && <span className="self-start text-[12.5px] italic" style={{ color: TEXTO_TERCIARIO }}>Pensando… (si es sobre tus datos, los está contando)</span>}
         <div ref={final} />
       </div>
 
-      <div className="flex gap-2 p-3" style={{ borderTop: `1px solid ${BORDE}` }}>
+      {mensajes.length > 0 && (
+        <div className="flex gap-1.5 px-3 pt-2 overflow-x-auto" style={{ borderTop: `1px solid ${BORDE}` }}>
+          <span className="flex items-center gap-1 text-[11.5px] font-semibold shrink-0" style={{ color: TEXTO_TERCIARIO }}><BarChart3 size={13} /> Tus datos:</span>
+          {SOBRE_DATOS.map((s) => (
+            <button key={s} onClick={() => enviar(s)} disabled={pensando} className="shrink-0 text-[12px] px-2.5 py-1 rounded-full whitespace-nowrap" style={{ border: `1px solid ${BORDE}`, color: TEXTO_SECUNDARIO }}>{s}</button>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2 p-3" style={{ borderTop: mensajes.length > 0 ? 'none' : `1px solid ${BORDE}` }}>
         <textarea
           value={texto}
           onChange={(e) => setTexto(e.target.value)}

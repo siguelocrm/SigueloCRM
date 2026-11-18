@@ -216,6 +216,10 @@ npm test
   (`siguelo_citas`, nota "Reunión virtual…"), la actividad en `tareas` del dueño principal, manda el link y te avisa; si ya
   tenía una, la cambia. Los recordatorios son los de Seguimiento → Citas (el botón de la ficha pone 24 h, 1 h y 15 min y
   enciende el seguimiento).
+- **Preguntas sobre tus datos** (IA → Asistente, `ia/datos.ts`, sección 43): el asistente puede devolver `consultas`
+  (resumen / buscar / etapa, con negocio = sede y período); el servidor las cuenta con `siguelo_datos_resumen`,
+  `siguelo_datos_buscar` y `siguelo_datos_etapa` (solo service_role, por los números de esa sede, en personas distintas)
+  y una segunda llamada responde con los resultados. Índice nuevo en `mensajes (conversacion_id, creado_en)`.
 - **Pagos** (`pagos/`): cada 10 s, `inscripcion.ts` toma las fotos/PDF nuevas de clientes en números con cursos
   (`siguelo_pagos_por_leer`), las manda a la IA con visión, y `comprobante.ts` decide sin IA (monto, destinatario, fecha,
   transacción repetida, señales de edición). Confirmado → documento en la ficha, oportunidad ganada, etapa ganada, pide los

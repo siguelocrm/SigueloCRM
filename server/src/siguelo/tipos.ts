@@ -614,6 +614,9 @@ export type SigueloDatabase = {
       siguelo_ia_por_leer: { Args: { p_empresa: string; p_quieto_seg: number }; Returns: PorLeerRow[] };
       siguelo_pagos_por_leer: { Args: { p_empresa: string }; Returns: PagoPorLeerRow[] };
       siguelo_redes_codigo: { Args: Record<string, never>; Returns: number };
+      siguelo_datos_resumen: { Args: { p_empresa: string; p_lineas: string[]; p_desde: string; p_hasta: string }; Returns: Record<string, unknown> };
+      siguelo_datos_buscar: { Args: { p_empresa: string; p_lineas: string[]; p_desde: string; p_hasta: string; p_remitente: string | null; p_palabras: string[] }; Returns: Record<string, unknown> };
+      siguelo_datos_etapa: { Args: { p_empresa: string; p_lineas: string[]; p_etapa: string; p_desde: string; p_hasta: string }; Returns: Record<string, unknown> };
     };
   };
 };

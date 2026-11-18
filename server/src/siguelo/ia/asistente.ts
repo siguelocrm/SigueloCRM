@@ -5,6 +5,7 @@ import { llamar, olvidarCache } from './config.js';
 import { REGLA_ESTILO, describirEstilo } from './contexto.js';
 import type { Adaptar, AjustesRow, EtapaConfigRow, IaRow, MensajeAsistenteRow, NegocioRow, PalabrasEtapa, Secuencia } from '../tipos.js';
 import { recortarTexto } from '../textos.js';
+import { CONSULTAS, EXPLICACION_RESULTADOS, consultarDatos } from './datos.js';
 
 // El asistente: le escribes en la pantalla IA, te explica cómo funciona todo y
 // cómo está configurado, y te propone cambios ("pon las reactivaciones a 1, 3,
@@ -315,7 +316,7 @@ export async function conversar(c: Config, usuarioId: string | null, texto: stri
   if (errorUsuario) return { ok: false, mensaje: `No se pudo guardar el mensaje: ${errorUsuario.message}. ¿Pegaste la última versión de database/siguelo.sql?` };
   const estado = await leerEstado(c);
 
-  const sistema = `Eres el asistente de SígueloCRM, un CRM de WhatsApp. Hablas con el dueño del negocio, que no es programador: respóndele en español, con "tú", claro y en pocas palabras, paso a paso si hace falta. Le explicas cómo funciona el CRM, cómo está configurado y por qué pasó algo (usa el registro), y cuando te pide cambiar algo le preparas los cambios.
+  const sistema = `Eres el asistente de SígueloCRM, un CRM de WhatsApp. Hablas con el dueño del negocio, que no es programador: respóndele en español, con "tú", claro y en pocas palabras, paso a paso si hace falta. Le explicas cómo funciona el CRM, cómo está configurado y por qué pasó algo (usa el registro), le respondes preguntas sobre sus datos (cuántos escribieron, qué piden más, por sede...) consultándolos, y cuando te pide cambiar algo le preparas los cambios.
 
 ${MANUAL}
 
@@ -323,7 +324,9 @@ ${estado.texto}
 
 ${ESQUEMA}
 
-Devuelve SOLO este JSON: {"respuesta": "lo que le dices al dueño", "acciones": [ ... ]}
+${CONSULTAS}
+
+Devuelve SOLO este JSON: {"respuesta": "lo que le dices al dueño", "acciones": [ ... ], "consultas": [ ... ]}
 Reglas:
 - Si solo pregunta, "acciones": []. Si pide un cambio, prepara las acciones y en "respuesta" explícale en palabras simples qué va a cambiar y que pulse "Aplicar" para hacerlo.
 - Si algo no está claro (qué etapa, qué negocio), pregúntale antes de proponer el cambio.
@@ -337,7 +340,17 @@ Reglas:
         ? m.texto
         : `${m.texto}${m.acciones?.length ? `\n[Propuse: ${m.acciones.map((x) => String(x.descripcion)).join('; ')} — ${m.aplicado_en ? 'el dueño lo aplicó' : 'sin aplicar'}]` : ''}`,
   }));
-  const r = await llamar(c, [{ role: 'system', content: sistema }, ...historia, { role: 'user', content: texto }]);
+  const conversacion = [{ role: 'system' as const, content: sistema }, ...historia, { role: 'user' as const, content: texto }];
+  let r = await llamar(c, conversacion);
+  // Pidió datos: se cuentan en la base y responde con los resultados (una sola vuelta más).
+  if (r.ok && Array.isArray(r.json.consultas) && r.json.consultas.length) {
+    const datos = await consultarDatos({ empresaId, zona: c.zona, negocios: estado.negocios, etapas: estado.etapas }, r.json.consultas);
+    r = await llamar(c, [
+      ...conversacion,
+      { role: 'assistant', content: JSON.stringify({ respuesta: '', acciones: [], consultas: r.json.consultas }) },
+      { role: 'user', content: `RESULTADOS DE TUS CONSULTAS (del sistema, no del dueño):\n${datos.texto}\n\n${EXPLICACION_RESULTADOS}\n\nAhora respóndele al dueño con estos datos. Devuelve el JSON con "respuesta" (y "acciones" si además pidió un cambio); no pidas más consultas.` },
+    ]);
+  }
   if (!r.ok) {
     await db.from('siguelo_asistente').insert({ empresa_id: empresaId, rol: 'asistente', texto: `No pude consultar a la IA: ${r.mensaje}` });
     return { ok: false, mensaje: r.mensaje };

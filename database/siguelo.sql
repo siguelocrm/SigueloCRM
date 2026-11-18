@@ -1775,3 +1775,161 @@ create trigger siguelo_limite_negocios before insert on siguelo_negocios
 -- {"activa": true, "franjas": [{"dias": [1,2,3,4,5], "desde": "09:00", "hasta": "12:00"}],
 --  "duracion_min": 30, "anticipacion_horas": 2, "dias_adelante": 7, "enlace": "https://meet.google.com/..."}
 alter table siguelo_negocios add column if not exists reuniones jsonb;
+
+-- ---------- 43. Pregúntale a la IA por tus datos (IA → Asistente) ----------
+-- Para que contar sea rápido (también acelera la lectura de cada chat).
+create index if not exists siguelo_mensajes_conv_fecha_idx on mensajes (conversacion_id, creado_en);
+create index if not exists siguelo_ia_salida_linea_idx on siguelo_ia_salida (linea_id, estado, cerrado_en);
+
+-- Resumen de un período en esos números (una sede = los números de su negocio). Todo en personas distintas.
+create or replace function siguelo_datos_resumen(p_empresa uuid, p_lineas uuid[], p_desde timestamptz, p_hasta timestamptz)
+returns jsonb language sql stable security definer set search_path = public as $$
+  with conv as (
+    select cv.id, cv.contacto_telefono from conversaciones cv
+    join lineas_whatsapp l on l.id = cv.linea_id and l.empresa_id = p_empresa
+    where cv.linea_id = any (p_lineas)
+  ),
+  msj as (
+    select m.conversacion_id, m.remitente, m.agente_id, m.creado_en from mensajes m
+    where m.conversacion_id in (select id from conv) and m.creado_en >= p_desde and m.creado_en < p_hasta
+  ),
+  activos as (select distinct conversacion_id from msj where remitente = 'cliente'),
+  primeros as (
+    select m.conversacion_id, min(m.creado_en) as primero from mensajes m
+    where m.conversacion_id in (select conversacion_id from activos) and m.remitente = 'cliente'
+    group by m.conversacion_id
+  ),
+  salida as (
+    select s.origen, s.referencia, s.conversacion_id, s.cerrado_en from siguelo_ia_salida s
+    where s.empresa_id = p_empresa and s.linea_id = any (p_lineas) and s.estado = 'enviado' and s.cerrado_en >= p_desde and s.cerrado_en < p_hasta
+  ),
+  cola as (
+    select c.conversacion_id, min(c.cerrado_en) as enviado from siguelo_cola c
+    where c.empresa_id = p_empresa and c.linea_id = any (p_lineas) and c.estado = 'enviado' and c.cerrado_en >= p_desde and c.cerrado_en < p_hasta
+    group by c.conversacion_id
+  ),
+  masivo as (
+    select cv.id as conversacion_id, min(e.enviado_en) as enviado from siguelo_masivo_envios e
+    join siguelo_masivos ma on ma.id = e.masivo_id and ma.linea_id = any (p_lineas)
+    join conversaciones cv on cv.linea_id = ma.linea_id and cv.contacto_telefono = e.telefono
+    where e.empresa_id = p_empresa and e.estado = 'enviado' and e.enviado_en >= p_desde and e.enviado_en < p_hasta
+    group by cv.id
+  )
+  select jsonb_build_object(
+    'escribieron', (select count(*) from activos),
+    'nuevos', (select count(*) from primeros where primero >= p_desde),
+    'les_escribimos', (select count(distinct conversacion_id) from msj where remitente = 'agente'),
+    'equipo_escribio', (select count(distinct conversacion_id) from msj where remitente = 'agente' and agente_id is not null),
+    'ia_respondio', (select count(distinct conversacion_id) from salida where origen in ('respuesta', 'respuesta_rapida', 'qr', 'grupo', 'bot')),
+    'respondieron_a_un_mensaje_nuestro', (
+      select count(distinct a.conversacion_id) from msj a
+      where a.remitente = 'agente' and exists (select 1 from msj b where b.conversacion_id = a.conversacion_id and b.remitente = 'cliente' and b.creado_en > a.creado_en)
+    ),
+    'seguimiento', jsonb_build_object(
+      'personas', (select count(*) from cola),
+      'respondieron', (select count(*) from cola c where exists (select 1 from msj b where b.conversacion_id = c.conversacion_id and b.remitente = 'cliente' and b.creado_en > c.enviado))
+    ),
+    'masivos', jsonb_build_object(
+      'personas', (select count(*) from masivo),
+      'respondieron', (select count(*) from masivo c where exists (select 1 from msj b where b.conversacion_id = c.conversacion_id and b.remitente = 'cliente' and b.creado_en > c.enviado))
+    ),
+    'respuestas_rapidas', coalesce((
+      select jsonb_agg(jsonb_build_object('titulo', titulo, 'personas', personas) order by personas desc) from (
+        select coalesce(r.titulo, '(borrada)') as titulo, count(distinct s.conversacion_id) as personas
+        from salida s left join respuestas_rapidas r on r.id::text = s.referencia
+        where s.origen = 'respuesta_rapida' group by 1 order by 2 desc limit 25
+      ) x
+    ), '[]'::jsonb),
+    'qr_enviados', coalesce((
+      select jsonb_agg(jsonb_build_object('curso', curso, 'personas', personas) order by personas desc) from (
+        select coalesce(k.nombre, '(borrado)') as curso, count(distinct s.conversacion_id) as personas
+        from salida s left join siguelo_cursos k on k.id::text = s.referencia
+        where s.origen = 'qr' group by 1
+      ) x
+    ), '[]'::jsonb),
+    'pagos', coalesce((
+      select jsonb_agg(jsonb_build_object('curso', curso, 'pagos', pagos, 'monto', monto) order by pagos desc) from (
+        select coalesce(k.nombre, '(sin curso)') as curso, count(*) as pagos, coalesce(sum(p.monto), 0) as monto
+        from siguelo_pagos p left join siguelo_cursos k on k.id = p.curso_id
+        where p.empresa_id = p_empresa and p.linea_id = any (p_lineas) and p.estado in ('datos', 'inscrito', 'reservado')
+          and p.creado_en >= p_desde and p.creado_en < p_hasta
+        group by 1
+      ) x
+    ), '[]'::jsonb),
+    'intereses', coalesce((
+      select jsonb_agg(jsonb_build_object('interes', interes, 'personas', personas) order by personas desc) from (
+        select lower(trim(l.interes)) as interes, count(*) as personas from siguelo_ia_lecturas l
+        where l.conversacion_id in (select conversacion_id from activos) and coalesce(trim(l.interes), '') <> ''
+        group by 1 order by 2 desc limit 25
+      ) x
+    ), '[]'::jsonb),
+    'etapas_hoy', coalesce((
+      select jsonb_agg(jsonb_build_object('etapa', etapa, 'personas', personas) order by orden) from (
+        select e.nombre as etapa, e.orden, count(distinct c.id) as personas from contactos c
+        join etapas_venta e on e.id = c.etapa_id
+        where c.empresa_id = p_empresa and c.telefono in (select contacto_telefono from conv where id in (select conversacion_id from activos))
+        group by e.nombre, e.orden
+      ) x
+    ), '[]'::jsonb),
+    'citas_agendadas', (
+      select count(*) from siguelo_citas ci join contactos c on c.id = ci.contacto_id
+      where ci.empresa_id = p_empresa and ci.estado = 'agendada' and ci.creado_en >= p_desde and ci.creado_en < p_hasta
+        and c.telefono in (select contacto_telefono from conv)
+    )
+  );
+$$;
+
+-- Personas a las que les escribimos (o que escribieron) algo con esas palabras, con ejemplos.
+create or replace function siguelo_datos_buscar(p_empresa uuid, p_lineas uuid[], p_desde timestamptz, p_hasta timestamptz, p_remitente text, p_palabras text[])
+returns jsonb language sql stable security definer set search_path = public as $$
+  with conv as (
+    select cv.id, cv.contacto_telefono, cv.contacto_nombre from conversaciones cv
+    join lineas_whatsapp l on l.id = cv.linea_id and l.empresa_id = p_empresa
+    where cv.linea_id = any (p_lineas)
+  ),
+  hallados as (
+    select m.conversacion_id, m.contenido, m.creado_en, m.remitente from mensajes m
+    where m.conversacion_id in (select id from conv) and m.creado_en >= p_desde and m.creado_en < p_hasta
+      and (p_remitente is null or m.remitente::text = p_remitente)
+      and exists (select 1 from unnest(p_palabras) w where coalesce(m.contenido, '') ilike '%' || w || '%')
+  ),
+  uno_por_persona as (
+    select distinct on (h.conversacion_id) h.conversacion_id, h.contenido, h.creado_en, h.remitente from hallados h order by h.conversacion_id, h.creado_en desc
+  )
+  select jsonb_build_object(
+    'personas', (select count(*) from uno_por_persona),
+    'mensajes', (select count(*) from hallados),
+    'ejemplos', coalesce((
+      select jsonb_agg(jsonb_build_object('nombre', coalesce(ct.nombre, cv.contacto_nombre), 'telefono', cv.contacto_telefono, 'quien', u.remitente, 'texto', left(u.contenido, 160), 'cuando', u.creado_en) order by u.creado_en desc)
+      from (select * from uno_por_persona order by creado_en desc limit 15) u
+      join conv cv on cv.id = u.conversacion_id
+      left join contactos ct on ct.empresa_id = p_empresa and ct.telefono = cv.contacto_telefono
+    ), '[]'::jsonb)
+  );
+$$;
+
+-- Los que están en una etapa (de esos números), cuántos entraron en el período y algunos nombres.
+create or replace function siguelo_datos_etapa(p_empresa uuid, p_lineas uuid[], p_etapa uuid, p_desde timestamptz, p_hasta timestamptz)
+returns jsonb language sql stable security definer set search_path = public as $$
+  with tels as (
+    select distinct cv.contacto_telefono from conversaciones cv
+    join lineas_whatsapp l on l.id = cv.linea_id and l.empresa_id = p_empresa
+    where cv.linea_id = any (p_lineas)
+  ),
+  en as (
+    select c.id, c.nombre, c.telefono, c.etapa_actualizada_en from contactos c
+    where c.empresa_id = p_empresa and c.etapa_id = p_etapa and c.telefono in (select contacto_telefono from tels)
+  )
+  select jsonb_build_object(
+    'personas', (select count(*) from en),
+    'entraron_en_el_periodo', (select count(*) from en where etapa_actualizada_en >= p_desde and etapa_actualizada_en < p_hasta),
+    'ejemplos', coalesce((select jsonb_agg(jsonb_build_object('nombre', nombre, 'telefono', telefono, 'desde', etapa_actualizada_en) order by etapa_actualizada_en desc) from (select * from en order by etapa_actualizada_en desc nulls last limit 20) x), '[]'::jsonb)
+  );
+$$;
+
+revoke execute on function siguelo_datos_resumen(uuid, uuid[], timestamptz, timestamptz) from public, anon, authenticated;
+revoke execute on function siguelo_datos_buscar(uuid, uuid[], timestamptz, timestamptz, text, text[]) from public, anon, authenticated;
+revoke execute on function siguelo_datos_etapa(uuid, uuid[], uuid, timestamptz, timestamptz) from public, anon, authenticated;
+grant execute on function siguelo_datos_resumen(uuid, uuid[], timestamptz, timestamptz) to service_role;
+grant execute on function siguelo_datos_buscar(uuid, uuid[], timestamptz, timestamptz, text, text[]) to service_role;
+grant execute on function siguelo_datos_etapa(uuid, uuid[], uuid, timestamptz, timestamptz) to service_role;
