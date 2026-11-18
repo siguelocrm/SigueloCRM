@@ -20,12 +20,14 @@ const describir = (s: Secuencia | undefined) => (activa(s) ? s!.pasos.map((p) =>
 const fecha = (iso: string, zona: string) => new Intl.DateTimeFormat('es', { timeZone: zona, weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso));
 
 export async function estadoSeguimiento(empresaId: string): Promise<EstadoSeguimiento> {
-  const [{ data: aj }, { data: etapas }, { data: cfgs }, { data: deEmbudo }] = await Promise.all([
+  const [{ data: aj }, { data: etapas }, { data: cfgs }, { data: deEmbudo }, { data: negocios }] = await Promise.all([
     db.from('siguelo_ajustes').select('*').eq('empresa_id', empresaId).maybeSingle(),
     db.from('etapas_venta').select('id, nombre, tipo, orden').eq('empresa_id', empresaId).order('orden'),
     db.from('siguelo_etapas').select('*').eq('empresa_id', empresaId),
     db.from('siguelo_etapa_embudo').select('etapa_id, embudo_id'),
+    db.from('siguelo_negocios').select('id, nombre').eq('empresa_id', empresaId),
   ]);
+  const nombreNegocio = new Map((negocios || []).map((n) => [n.id, n.nombre] as const));
   const zona = aj?.zona_horaria || 'America/La_Paz';
   const general: Revision[] = [];
   if (!aj?.activo) general.push({ ok: false, titulo: 'El seguimiento está apagado', detalle: 'Actívalo en la pestaña Ajustes ("Activar el seguimiento").' });
@@ -57,16 +59,24 @@ export async function estadoSeguimiento(empresaId: string): Promise<EstadoSeguim
       .find((c) => c && (activa(c.recordatorios) || activa(c.reactivacion)));
     const rec = activa(propia?.recordatorios) ? propia!.recordatorios : base?.recordatorios;
     const react = activa(propia?.reactivacion) ? propia!.reactivacion : base?.reactivacion;
+    // Los textos propios de cada negocio (sucursal) en esta etapa.
+    const deNegocios = (cfgs || []).filter((c: EtapaConfigRow) => c.negocio_id && c.etapa_id === e.id && !c.sin_seguimiento);
+    const enNegocios = (cual: 'recordatorios' | 'reactivacion') =>
+      deNegocios
+        .filter((c: EtapaConfigRow) => activa(c[cual]))
+        .map((c: EtapaConfigRow) => `${nombreNegocio.get(c.negocio_id!) ?? 'un negocio'}: ${describir(c[cual])}`)
+        .join(' · ');
+    const conNegocios = (general: string, propios: string, nada: string) => [general, propios && `${general ? 'y ' : ''}${propios}`].filter(Boolean).join(' ') || nada;
     resumen.push({
       nombre: e.nombre,
       tipo: e.tipo,
-      recordatorios: describir(rec) || 'ninguno',
-      reactivacion: describir(react) || 'ninguna',
+      recordatorios: conNegocios(describir(rec), enNegocios('recordatorios'), 'ninguno'),
+      reactivacion: conNegocios(describir(react), enNegocios('reactivacion'), 'ninguna'),
       respaldo: (!activa(propia?.recordatorios) && activa(base?.recordatorios)) || (!activa(propia?.reactivacion) && activa(base?.reactivacion)),
     });
   }
   if (!resumen.some((r) => r.recordatorios !== 'ninguno' || r.reactivacion !== 'ninguna')) {
-    general.push({ ok: false, titulo: 'Ninguna etapa tiene mensajes de seguimiento', detalle: 'En "Mensajes por etapa", activa los recordatorios y la reactivación de "Primer Contacto" con sus mensajes (las demás etapas los usan si no tienen propios).' });
+    general.push({ ok: false, titulo: 'Ninguna etapa tiene mensajes de seguimiento', detalle: 'En "Mensajes por etapa", activa los recordatorios y la reactivación de "Primer Contacto" con sus mensajes (las demás etapas los usan si no tienen propios). Puedes hacerlo para todos los negocios o con textos propios de cada uno.' });
   }
 
   // Los chats con mensajes del cliente en las últimas 48 h.

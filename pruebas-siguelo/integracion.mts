@@ -550,6 +550,19 @@ assert.ok((await uno(`select count(*)::int n from siguelo_cola where estado = 'p
 await pg.query(`update siguelo_cola set estado = 'cancelado' where token = 'viejo' and estado = 'pendiente'`);
 paso('cada número con su propia cola: uno con muchos pendientes no atrasa a los demás');
 
+// ---------- "¿Por qué no se programa?" cuenta los textos propios de cada sucursal ----------
+const soloSucursales = (await uno(`insert into empresas (nombre) values ('Solo sucursales') returning id`)).id;
+const primeraEtapa = (await uno(`select id from etapas_venta where empresa_id = $1 and tipo = 'normal' order by orden limit 1`, [soloSucursales])).id;
+const sucursal = (await uno(`insert into siguelo_negocios (empresa_id, nombre) values ($1, 'Club Cercado') returning id`, [soloSucursales])).id;
+await pg.query(`insert into siguelo_ajustes (empresa_id, activo) values ($1, true)`, [soloSucursales]);
+await pg.query(`insert into siguelo_etapas (etapa_id, empresa_id, negocio_id, reactivacion) values ($1, $2, $3, $4::jsonb)`, [
+  primeraEtapa, soloSucursales, sucursal, JSON.stringify({ activa: true, modo: 'origen', pasos: [{ horas: 1, variantes: ['¿Pudiste verlo?'] }, { horas: 3, variantes: ['¿Seguimos?'] }] }),
+]);
+const estSuc = await estadoSeguimiento(soloSucursales);
+assert.ok(!estSuc.general.some((g: any) => /Ninguna etapa tiene mensajes/.test(g.titulo)), 'con textos propios de una sucursal no dice que no hay mensajes');
+assert.match(estSuc.etapas[0].reactivacion, /Club Cercado: 1 h, 3 h/);
+paso('"¿Por qué no se programa?" cuenta los textos propios de cada sucursal');
+
 console.log(`\n${ok} pasos OK · mensajes "enviados":`);
 for (const e of enviados) console.log('  →', e.jid, JSON.stringify(e.texto));
 const reg = (await pg.query<any>(`select texto from siguelo_registro order by creado_en`)).rows.map((r: any) => r.texto);
