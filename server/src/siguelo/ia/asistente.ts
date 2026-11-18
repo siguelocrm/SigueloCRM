@@ -309,7 +309,7 @@ function validar(a: Record<string, unknown>, e: Estado): Accion | string {
 
 // ---------- Conversar ----------
 
-export async function conversar(c: Config, usuarioId: string | null, texto: string): Promise<{ ok: true; mensaje: MensajeAsistenteRow } | { ok: false; mensaje: string }> {
+export async function conversar(c: Config, usuarioId: string | null, texto: string, canal: 'crm' | 'whatsapp' = 'crm'): Promise<{ ok: true; mensaje: MensajeAsistenteRow } | { ok: false; mensaje: string }> {
   const empresaId = c.ia.empresa_id;
   const { data: anteriores } = await db.from('siguelo_asistente').select('*').eq('empresa_id', empresaId).order('creado_en', { ascending: false }).limit(HISTORIA);
   const { error: errorUsuario } = await db.from('siguelo_asistente').insert({ empresa_id: empresaId, usuario_id: usuarioId, rol: 'usuario', texto });
@@ -331,7 +331,12 @@ Reglas:
 - Si solo pregunta, "acciones": []. Si pide un cambio, prepara las acciones y en "respuesta" explícale en palabras simples qué va a cambiar y que pulse "Aplicar" para hacerlo.
 - Si algo no está claro (qué etapa, qué negocio), pregúntale antes de proponer el cambio.
 - Si algo no se puede hacer desde aquí (subir el QR, conectar un número, crear etapas o campos), dile en qué pantalla se hace.
-- No inventes datos del negocio: usa los que están arriba.`;
+- No inventes datos del negocio: usa los que están arriba.${
+    canal === 'whatsapp'
+      ? `
+- Te escribe por WhatsApp desde su celular: respuesta corta (como mucho 12 líneas), sin tablas ni títulos, un dato por línea (con un guion o un emoji); para resaltar usa *asteriscos*. Si pide un cambio de configuración, prepáralo igual en "acciones" y dile que lo aplique en el CRM (IA → Asistente).`
+      : ''
+  }`;
 
   const historia = (anteriores || []).reverse().map((m) => ({
     role: m.rol === 'usuario' ? ('user' as const) : ('assistant' as const),

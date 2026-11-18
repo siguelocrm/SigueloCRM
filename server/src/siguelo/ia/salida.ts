@@ -217,7 +217,11 @@ async function enviarAvisos(c: Config, primero: SalidaRow): Promise<void> {
   const sesion = salida;
   const lote = pendientes.slice(0, MAX_POR_AVISO);
   const resto = pendientes.length - lote.length;
-  const texto = ['🔔 *SígueloCRM*', ...lote.map((x) => x.contenido), resto ? `…y ${resto} más en la pantalla IA del CRM.` : ''].filter(Boolean).join('\n');
+  // Las respuestas del asistente (lo que le preguntaste por WhatsApp) van tal cual, sin el encabezado de avisos.
+  const soloAsistente = lote.every((x) => x.referencia === 'asistente');
+  const texto = soloAsistente
+    ? lote.map((x) => x.contenido).join('\n\n')
+    : ['🔔 *SígueloCRM*', ...lote.map((x) => x.contenido), resto ? `…y ${resto} más en la pantalla IA del CRM.` : ''].filter(Boolean).join('\n');
   const ids = lote.map((x) => x.id);
   const loteId = randomUUID();
   try {

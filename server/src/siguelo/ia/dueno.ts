@@ -7,6 +7,7 @@ import { negociosDeEmpresa, numeroAviso, telefonoAvisosDe } from '../negocios.js
 import type { IaRow } from '../tipos.js';
 import { recortarTexto } from '../textos.js';
 import { transcribirAudios } from './audios.js';
+import { conversar } from './asistente.js';
 
 // Lo que la IA no sabe te lo pregunta por WhatsApp con un código ("R12"). Cuando
 // le respondes "R12 tu respuesta" (o solo tu respuesta, si hay una sola pregunta
@@ -57,10 +58,16 @@ async function confirmar(c: Config, lineaId: string, texto: string, telDueno: st
   await db.from('siguelo_ia_salida').insert({ empresa_id: c.ia.empresa_id, linea_id: lineaId, telefono: tel, origen: 'aviso', referencia: 'respuesta', contenido: `• ${texto}`, vence: new Date().toISOString() });
 }
 
+// ¿Parece una pregunta para el asistente (datos, cuántos, resumen...) y no la respuesta a un cliente?
+const pareceConsulta = (t: string) => /\?|^\s*(cu[aá]nt|qu[eé]\b|cu[aá]l|c[oó]mo|d[aá]me|p[aá]same|mand[aá]me|resumen|datos|reporte|informe|compar)/i.test(t);
+// "ok", "gracias", un emoji: no se responde nada.
+const esAcuse = (t: string) => /^(?:\s*(?:ok|okey|okay|gracias|muchas gracias|mil gracias|listo|ya|dale|perfecto|bien|genial|excelente|super|súper|👍|🙏|👌|✅|😊|🙌|❤️)[\s.,!¡]*)+$/iu.test(t);
+
 // Un mensaje tuyo (desde tu número personal): si responde a una pregunta, se usa.
-async function usarRespuesta(c: Config, lineaDueno: string, texto: string, telDueno: string): Promise<void> {
+// Devuelve true si era para un cliente (con código, o la respuesta a la única pregunta esperando).
+async function usarRespuesta(c: Config, lineaDueno: string, texto: string, telDueno: string): Promise<boolean> {
   const limpio = texto.trim();
-  if (!limpio) return;
+  if (!limpio) return true;
   const cod = /^\s*R\s?(\d{1,6})\b[\s:.,-]*([\s\S]+)$/i.exec(limpio);
   let p: { id: string; codigo: number; conversacion_id: string | null; contacto_id: string | null; linea_id: string; negocio_id: string | null; telefono: string; nombre: string | null; pregunta: string; aprender?: boolean } | null = null;
   let respuesta = '';
@@ -83,15 +90,17 @@ async function usarRespuesta(c: Config, lineaDueno: string, texto: string, telDu
     if (deEsteNumero.length === 1 && !redes?.length && limpio.length > 2) {
       p = deEsteNumero[0];
       respuesta = limpio;
-    } else if (deEsteNumero.length > 1) {
+    } else if (deEsteNumero.length > 1 && !pareceConsulta(limpio) && !esAcuse(limpio)) {
       await confirmar(c, lineaDueno, `Tengo ${deEsteNumero.length} preguntas esperando: respóndeme con el código, por ejemplo *R${deEsteNumero[0].codigo} tu respuesta*.`, telDueno);
+      return true;
     }
   }
-  if (!p || !respuesta) return;
+  if (cod && !p) return true; // un código que ya no espera respuesta
+  if (!p || !respuesta) return false;
 
   const { data: negocio } = p.negocio_id ? await db.from('siguelo_negocios').select('nombre').eq('id', p.negocio_id).maybeSingle() : { data: null };
   const mensaje = await redactar(c, negocio?.nombre ?? 'el negocio', p.pregunta, respuesta, !cod);
-  if (!mensaje) return; // sin código y no era la respuesta: no se hace nada
+  if (!mensaje) return false; // sin código y no era la respuesta: puede ser una pregunta para el asistente
   if (p.conversacion_id) {
     await db.from('siguelo_ia_salida').insert({
       empresa_id: c.ia.empresa_id,
@@ -120,6 +129,23 @@ async function usarRespuesta(c: Config, lineaDueno: string, texto: string, telDu
   const quien = p.nombre || `+${p.telefono.split('@')[0]}`;
   await confirmar(c, lineaDueno, `✅ R${p.codigo}: le respondí a *${quien}*: "${recortar(mensaje, 160)}".${errAprende ? '' : ' Lo aprendí para responderle a los demás.'}`, telDueno);
   await registrar(c.ia.empresa_id, p.contacto_id, 'ia', `IA le respondió a ${quien} con lo que dijiste (R${p.codigo}): "${recortar(mensaje, 100)}"${errAprende ? '' : ' · lo aprendió'}.`);
+  return true;
+}
+
+// Lo que le preguntas al asistente desde tu WhatsApp ("¿cuántos escribieron hoy en Cercado?"):
+// responde por el mismo número, con los datos de toda tu cuenta. Solo desde tu número principal
+// (IA → Ajustes → Avisos); el de un encargado de sucursal no ve los datos de las demás.
+async function preguntarAlAsistente(c: Config, lineaDueno: string, texto: string, telDueno: string): Promise<void> {
+  const principal = numeroAviso(c.ia.avisos?.telefono);
+  if (principal.length < 7 || principal.slice(-8) !== numeroAviso(telDueno).slice(-8)) {
+    await confirmar(c, lineaDueno, 'Las preguntas sobre los datos solo se responden al número principal de avisos (IA → Ajustes → Avisos).', telDueno);
+    return;
+  }
+  const r = await conversar(c, null, texto, 'whatsapp');
+  const tel = numeroAviso(telDueno);
+  const contenido = r.ok ? `🤖 ${r.mensaje.texto}${r.mensaje.acciones?.length ? '\n\n(Te dejé los cambios listos en el CRM: IA → Asistente → "Aplicar".)' : ''}` : `🤖 No pude responderte ahora: ${r.mensaje}`;
+  await db.from('siguelo_ia_salida').insert({ empresa_id: c.ia.empresa_id, linea_id: lineaDueno, telefono: tel, origen: 'aviso', referencia: 'asistente', contenido, vence: new Date().toISOString() });
+  await registrar(c.ia.empresa_id, null, 'ia', `Asistente por WhatsApp: "${recortar(texto, 100)}" → "${recortar(r.ok ? r.mensaje.texto : r.mensaje, 120)}"`);
 }
 
 // Los mensajes nuevos de tu número personal en esta conversación.
@@ -134,5 +160,12 @@ export async function leerDueno(c: Config, conversacionId: string, lineaId: stri
     .limit(10);
   // También puedes responder con una nota de voz ("R12, dile que sí hay cupo"): se pasa a texto.
   await transcribirAudios(c.clave, c.ia.empresa_id, null, mensajes || []);
-  for (const m of mensajes || []) if ((m.tipo === 'texto' || m.tipo === 'audio') && m.contenido?.trim()) await usarRespuesta(c, lineaId, String(m.contenido), telDueno);
+  // Lo que no era para un cliente va junto al asistente (por si lo mandaste en varios mensajes).
+  const preguntas: string[] = [];
+  for (const m of mensajes || []) {
+    if ((m.tipo !== 'texto' && m.tipo !== 'audio') || !m.contenido?.trim()) continue;
+    const paraCliente = await usarRespuesta(c, lineaId, String(m.contenido), telDueno);
+    if (!paraCliente && !esAcuse(m.contenido)) preguntas.push(m.contenido.trim());
+  }
+  if (preguntas.length) await preguntarAlAsistente(c, lineaId, preguntas.join('\n'), telDueno).catch((err) => console.error('Asistente por WhatsApp:', (err as Error).message));
 }

@@ -262,7 +262,8 @@ avanzar(MIN);
 const enviadosAntesDueno = enviados.length;
 await leerPendientes(await config());
 // Tu "Hola, soy el dueño" sin código: a lo sumo se revisa si responde una pregunta que esperaba (no la responde).
-assert.ok(llamadas.slice(antesLlamadas).every((l) => /el dueño te dijo qué responderle/.test(l.sistema)), 'ni tu número personal ni un negocio con la IA apagada');
+// Ahora lo que le escribes sin código va al asistente (te responde a ti): nunca se te trata como cliente.
+assert.ok(llamadas.slice(antesLlamadas).every((l) => /el dueño te dijo qué responderle|Eres el asistente de SígueloCRM/.test(l.sistema)), 'ni tu número personal ni un negocio con la IA apagada');
 assert.equal(enviados.length, enviadosAntesDueno, 'un saludo tuyo no se le manda a ningún cliente');
 paso('no lee tu WhatsApp personal ni los negocios donde apagaste la IA');
 
@@ -621,6 +622,44 @@ assert.equal(modelosAudio.length, transcripcionesAntes, 'el audio ya transcrito 
 assert.match((await uno(`select texto from siguelo_registro where contacto_id = $1 and tipo = 'ia_error' order by creado_en desc limit 1`, [vale.contacto.id])).texto, /no se pudo escuchar una nota de voz/);
 assert.equal(enviados.filter((e) => e.jid.startsWith('59170000061')).at(-1)?.texto, 'Perdona, no pude escuchar tu audio, ¿me lo escribes? 🙏');
 paso('notas de voz: la IA las pasa a texto, las responde y la transcripción queda en el chat');
+
+// ---------- Desde tu WhatsApp le preguntas al asistente por tus datos (a cualquier número) ----------
+let vistoAsistente = '';
+responder = (l) => {
+  if (!/Eres el asistente de SígueloCRM/.test(l.sistema)) return { resumen: 'x' };
+  vistoAsistente = l.sistema;
+  if (/RESULTADOS DE TUS CONSULTAS/.test(l.extra || '')) {
+    const res = JSON.parse((l.extra || '').split('\n').find((x) => x.startsWith('[')) || '[]');
+    return { respuesta: `Esta semana escribieron *${res[0].resultado.escribieron}* personas en todas las sedes.`, acciones: [] };
+  }
+  return { respuesta: '', acciones: [], consultas: [{ tipo: 'resumen', negocio: null }] };
+};
+const antesDatos = enviados.length;
+await escribe(yo.conv, '¿Cuántas personas escribieron esta semana en todas las sedes?');
+avanzar(MIN);
+await leerPendientes(await config());
+await salida();
+const alDueno = enviados.slice(antesDatos).filter((e) => e.jid.startsWith('59179999999'));
+assert.equal(alDueno.length, 1, 'una sola respuesta');
+assert.match(alDueno[0].texto, /^🤖 Esta semana escribieron \*\d+\* personas en todas las sedes\.$/);
+assert.equal(alDueno[0].linea, L1, 'te responde por el mismo número al que le escribiste (Quillacollo)');
+assert.match(vistoAsistente, /Te escribe por WhatsApp desde su celular/);
+const antesGracias = enviados.length;
+await escribe(yo.conv, 'Gracias 👍');
+avanzar(MIN);
+await leerPendientes(await config());
+await salida();
+assert.equal(enviados.length, antesGracias, 'a un "gracias" no le responde');
+// El número de avisos de un encargado de sucursal no ve los datos de todas.
+await pg.query(`update siguelo_negocios set avisos_telefono = '59178888888' where id = $1`, [nQuilla]);
+olvidarNegocios();
+await escribe(encargado.conv, '¿Cuántos escribieron hoy en todas las sedes?');
+avanzar(MIN);
+await leerPendientes(await config());
+await salida();
+assert.match(enviados.filter((e) => e.jid.startsWith('59178888888')).at(-1)!.texto, /solo se responden al número principal de avisos/);
+await pg.query(`update siguelo_negocios set avisos_telefono = null where id = $1`, [nQuilla]);
+paso('desde tu WhatsApp le preguntas al asistente por tus datos (a cualquier número) y te responde ahí; solo a tu número principal');
 
 const uso = await uno(`select sum(consultas)::int c, sum(entrada)::int e from siguelo_ia_uso`);
 console.log(`\n${ok} pasos OK · ${uso.c} consultas a la IA (${uso.e} tokens de entrada) · mensajes:`);

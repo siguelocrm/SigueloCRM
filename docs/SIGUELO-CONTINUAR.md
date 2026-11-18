@@ -220,6 +220,9 @@ npm test
   (resumen / buscar / etapa, con negocio = sede y período); el servidor las cuenta con `siguelo_datos_resumen`,
   `siguelo_datos_buscar` y `siguelo_datos_etapa` (solo service_role, por los números de esa sede, en personas distintas)
   y una segunda llamada responde con los resultados. Índice nuevo en `mensajes (conversacion_id, creado_en)`.
+  También por WhatsApp: lo que escribes desde tu número principal de avisos (a cualquier número del CRM) y no es la
+  respuesta a un cliente (`usarRespuesta` devuelve false) va a `conversar(..., 'whatsapp')` y la respuesta te llega por ese
+  número (aviso `referencia: 'asistente'`, sin encabezado). "ok/gracias" no se responden; el número de un encargado no ve datos.
 - **Pagos** (`pagos/`): cada 10 s, `inscripcion.ts` toma las fotos/PDF nuevas de clientes en números con cursos
   (`siguelo_pagos_por_leer`), las manda a la IA con visión, y `comprobante.ts` decide sin IA (monto, destinatario, fecha,
   transacción repetida, señales de edición). Confirmado → documento en la ficha, oportunidad ganada, etapa ganada, pide los
