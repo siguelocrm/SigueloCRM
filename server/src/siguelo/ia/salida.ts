@@ -48,7 +48,7 @@ async function vigente(it: SalidaRow): Promise<string> {
     .select('remitente, agente_id, creado_en')
     .eq('conversacion_id', it.conversacion_id)
     .gt('creado_en', desde)
-    .limit(30);
+    .limit(100); // uno por número en cada vuelta: con 100 a la vista, un número con muchos no tapa a los demás
   if ((despues || []).some((m) => m.remitente === 'cliente')) return 'El cliente escribió otra vez (la IA vuelve a leer)';
   if ((despues || []).some((m) => m.remitente === 'agente' && m.agente_id && ms(m.creado_en) > ms(it.creado_en))) return 'Le escribió una persona';
   return '';

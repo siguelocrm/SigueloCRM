@@ -25,6 +25,8 @@ import { alLlegarMensaje } from './eventos.js';
 const MOTOR_CADA_MS = 60_000;
 const MOTOR_FUERA_DE_HORARIO_MS = 5 * 60_000;
 const COLA_CADA_MS = 20_000;
+// Con mensajes esperando, la cola vuelve apenas un número termina su pausa (nunca antes de 3 s).
+const COLA_MINIMO_MS = 3_000;
 const AJUSTES_VALIDOS_MS = 60_000;
 const LECTOR_RESPALDO_MS = 2 * 60_000;
 const SALIDA_CADA_MS = 20_000;
@@ -101,9 +103,16 @@ async function vueltaDelMotor(): Promise<void> {
   await vueltaDeLaCola();
 }
 
-async function vueltaDeLaCola(): Promise<void> {
+// Devuelve en cuántos ms conviene la próxima vuelta (cuando el primer número con pendientes termine su pausa).
+async function vueltaDeLaCola(): Promise<number> {
   const bloqueadas = await cuentasBloqueadas();
-  for (const aj of await ajustesActivos()) if (!bloqueadas.has(aj.empresa_id)) await procesarCola(aj);
+  let proxima = COLA_CADA_MS;
+  for (const aj of await ajustesActivos()) {
+    if (bloqueadas.has(aj.empresa_id)) continue;
+    const t = await procesarCola(aj);
+    if (t !== null) proxima = Math.min(proxima, t);
+  }
+  return Math.max(COLA_MINIMO_MS, proxima);
 }
 
 // La IA (Fase 3) lleva sus propios candados: una lectura puede tardar varios
@@ -249,5 +258,13 @@ export function iniciarSeguimiento(): void {
 
   setTimeout(() => conCandado(vueltaDelMotor), 10_000);
   setInterval(() => conCandado(vueltaDelMotor), MOTOR_CADA_MS);
-  setInterval(() => conCandado(vueltaDeLaCola), COLA_CADA_MS);
+  // La cola se programa sola: rápido mientras hay mensajes que ya tocan, cada 20 s si no.
+  const cola = async () => {
+    let espera = COLA_MINIMO_MS; // si el motor estaba ocupado, se reintenta pronto
+    await conCandado(async () => {
+      espera = await vueltaDeLaCola();
+    });
+    setTimeout(cola, espera);
+  };
+  setTimeout(cola, 15_000);
 }

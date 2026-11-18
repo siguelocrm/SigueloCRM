@@ -21,6 +21,7 @@ import type { AjustesRow, ColaRow, EstadoCola, SeguimientoRow } from './tipos.js
 // envía por las líneas de WhatsApp del CRM.
 
 const ERRORES_PARA_PAUSAR = 3;
+const PAUSA_POR_ERRORES_MS = 30 * MIN;
 
 type EstadoLinea = {
   // Este número no envía nada antes de este instante (pausa al azar entre mensajes).
@@ -230,9 +231,11 @@ async function intentar(item: ColaRow, aj: AjustesRow, franja: Franja, ahora: nu
     e.erroresSeguidos++;
     e.proximo = Date.now() + azarMs(aj);
     if (e.erroresSeguidos >= ERRORES_PARA_PAUSAR) {
+      // Solo ese número descansa un rato; los demás siguen con lo suyo.
       e.erroresSeguidos = 0;
-      await db.from('siguelo_ajustes').update({ pausado: true, motivo_pausa: `${ERRORES_PARA_PAUSAR} errores de envío seguidos en un número` }).eq('empresa_id', aj.empresa_id);
-      await registrar(aj.empresa_id, null, 'pausa', `Se pausó todo después de ${ERRORES_PARA_PAUSAR} errores de envío seguidos en un número. Revisa la línea en Conexiones y quita la pausa en Seguimiento → Ajustes.`);
+      e.proximo = Date.now() + PAUSA_POR_ERRORES_MS;
+      const { data: l } = await db.from('lineas_whatsapp').select('nombre').eq('id', item.linea_id).maybeSingle();
+      await registrar(aj.empresa_id, null, 'pausa', `El número "${l?.nombre ?? '?'}" tuvo ${ERRORES_PARA_PAUSAR} errores de envío seguidos: su seguimiento descansa ${PAUSA_POR_ERRORES_MS / 60_000} minutos (los demás números siguen). Revisa ese número en Conexiones.`);
     }
     return 'error';
   }
@@ -297,29 +300,65 @@ async function intentarCita(item: ColaRow, aj: AjustesRow, franja: Franja, ahora
   }
 }
 
-// Una vuelta de la cola: cada número manda como mucho un mensaje.
-export async function procesarCola(aj: AjustesRow): Promise<void> {
-  if (aj.pausado) return;
+// Una vuelta de la cola: cada número manda como mucho un mensaje, con su propia pausa.
+// Devuelve en cuántos ms conviene la próxima vuelta (si quedan mensajes que ya tocan), o null.
+const POR_LINEA = 8;
+export async function procesarCola(aj: AjustesRow): Promise<number | null> {
+  if (aj.pausado) return null;
   const ahora = Date.now();
   const franja: Franja = { zona: aj.zona_horaria, desde: aj.hora_inicio, hasta: aj.hora_fin };
   // Los mensajes de las citas tienen su propia franja (por ejemplo 7:00 a 21:00).
   const franjaCitas: Franja = { zona: aj.zona_horaria, desde: aj.citas?.desde || '07:00', hasta: aj.citas?.hasta || '21:00' };
   const enHorario = enFranja(ahora, franja);
-  if (!enHorario && !enFranja(ahora, franjaCitas)) return;
+  if (!enHorario && !enFranja(ahora, franjaCitas)) return null;
   const fecha = fechaDe(ahora, franja.zona);
 
+  const vencidos = await siguientes(aj.empresa_id, ahora);
+  if (!vencidos.length) return null;
+
+  const listas = new Set<string>(); // números que ya terminaron esta vuelta
+  const enPausa = new Set<string>(); // números con mensajes listos que solo esperan su pausa
+  const usados = new Map<string, number>();
+  for (const item of vencidos) {
+    const linea = item.linea_id;
+    const e = estadoLinea(aj, linea);
+    const esCita = item.tipo === 'cita';
+    if (listas.has(linea)) continue;
+    if (ahora < e.proximo) {
+      enPausa.add(linea);
+      continue;
+    }
+    if (esCita ? !enFranja(ahora, franjaCitas) : !enHorario || !arranco(e, ahora, franja, fecha)) continue;
+    if (!usados.has(linea)) usados.set(linea, await enviadosHoy(aj.empresa_id, linea, fecha));
+    const r = esCita ? await intentarCita(item, aj, franjaCitas, ahora) : await intentar(item, aj, franja, ahora, usados.get(linea)!);
+    // Envió (o falló): ese número tiene su pausa y quizá más mensajes. En el máximo del día, no se apura.
+    if (r === 'enviado' || r === 'error') enPausa.add(linea);
+    if (r !== 'sigue') listas.add(linea);
+  }
+  // La próxima vuelta: cuando el primer número con mensajes listos termine su pausa.
+  const proximos = [...enPausa].map((l) => estadoLinea(aj, l).proximo);
+  return proximos.length ? Math.max(0, Math.min(...proximos) - Date.now()) : null;
+}
+
+// Los próximos que ya tocan, hasta POR_LINEA de cada número (sección 45 del SQL). Sin esa sección:
+// los 500 más viejos de toda la cuenta, sin los que esperan a propósito.
+async function siguientes(empresaId: string, ahora: number): Promise<ColaRow[]> {
+  const { data, error } = await db.rpc('siguelo_cola_siguientes', { p_empresa: empresaId, p_ahora: new Date(ahora).toISOString(), p_por_linea: POR_LINEA });
+  if (!error) {
+    const filas = (data || []) as ColaRow[];
+    // Las citas primero (tienen hora fija), después el más viejo.
+    return filas.sort((a, b) => Number(b.tipo === 'cita') - Number(a.tipo === 'cita') || C.ms(a.vence) - C.ms(b.vence));
+  }
   const { data: todos } = await db
     .from('siguelo_cola')
     .select('*')
-    .eq('empresa_id', aj.empresa_id)
+    .eq('empresa_id', empresaId)
     .eq('estado', 'pendiente')
     .lte('vence', new Date(ahora).toISOString())
     .order('vence')
     .order('creado_en')
     .limit(500);
-  if (!todos?.length) return;
-  // Los que esperan a propósito (recordatorios de quien respondió, contactos en pausa) quedan pendientes,
-  // pero no pueden tapar a los demás: antes, con 50 de esos al frente, ese día no salía nada.
+  if (!todos?.length) return [];
   const ids = [...new Set(todos.map((x) => x.contacto_id))];
   const esperan = new Set<string>();
   for (let i = 0; i < ids.length; i += 200) {
@@ -329,21 +368,13 @@ export async function procesarCola(aj: AjustesRow): Promise<void> {
       if (s.respondio) esperan.add(`r:${s.contacto_id}`);
     }
   }
-  const vencidos = todos.filter((x) => !esperan.has(`p:${x.contacto_id}`) && !(x.tipo === 'rec' && esperan.has(`r:${x.contacto_id}`))).slice(0, 60);
-  if (!vencidos.length) return;
-  // Las citas primero: tienen hora fija.
-  vencidos.sort((a, b) => Number(b.tipo === 'cita') - Number(a.tipo === 'cita'));
-
-  const listas = new Set<string>(); // números que ya terminaron esta vuelta
-  const usados = new Map<string, number>();
-  for (const item of vencidos) {
-    const linea = item.linea_id;
-    const e = estadoLinea(aj, linea);
-    const esCita = item.tipo === 'cita';
-    if (listas.has(linea) || ahora < e.proximo) continue;
-    if (esCita ? !enFranja(ahora, franjaCitas) : !enHorario || !arranco(e, ahora, franja, fecha)) continue;
-    if (!usados.has(linea)) usados.set(linea, await enviadosHoy(aj.empresa_id, linea, fecha));
-    const r = esCita ? await intentarCita(item, aj, franjaCitas, ahora) : await intentar(item, aj, franja, ahora, usados.get(linea)!);
-    if (r !== 'sigue') listas.add(linea);
-  }
+  const porLinea = new Map<string, number>();
+  return todos
+    .filter((x) => !esperan.has(`p:${x.contacto_id}`) && !(x.tipo === 'rec' && esperan.has(`r:${x.contacto_id}`)))
+    .filter((x) => {
+      const n = (porLinea.get(x.linea_id) ?? 0) + 1;
+      porLinea.set(x.linea_id, n);
+      return n <= POR_LINEA;
+    })
+    .sort((a, b) => Number(b.tipo === 'cita') - Number(a.tipo === 'cita'));
 }

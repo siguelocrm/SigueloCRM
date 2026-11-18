@@ -229,6 +229,10 @@ npm test
   marcha (si no, 1 min), cola 20 s, motor 1 min en horario de envío (5 min fuera), redes 3 min, programados 1 min; caché de la IA, fichas y bloqueos 2 min.
   Lo urgente va por eventos: al llegar un mensaje, `responderRapido` lee, envía y revisa pagos. No volver a bajar estos
   tiempos sin mirar el uso en Supabase → Usage.
+- **Cola por número** (sección 45, `siguelo_cola_siguientes`): trae los próximos 8 de CADA número (citas primero, sin los que
+  esperan a propósito), así uno con muchos pendientes no atrasa a los demás. La cola se programa sola: vuelve cuando el
+  primer número con mensajes listos termina su pausa (mín. 3 s), o cada 20 s. 3 errores seguidos pausan solo ese número
+  30 minutos (antes pausaban todo el seguimiento).
 - **Cola del seguimiento:** toma hasta 500 vencidos y deja de lado los que esperan a propósito (recordatorios de quien
   respondió, contactos en pausa) antes de los 60 que procesa: antes 50 de esos tapaban todo. `asegurarContactos` solo trae
   chats con movimiento desde la vuelta anterior. Diagnóstico con datos reales: `docs/diagnosticos/seguimiento.sql`.

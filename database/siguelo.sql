@@ -1938,3 +1938,23 @@ grant execute on function siguelo_datos_etapa(uuid, uuid[], uuid, timestamptz, t
 -- Después del primer mensaje (texto, o archivo con su texto) pueden ir más, en orden, como en un flujo:
 -- [{"tipo": "texto" | "imagen" | "pdf" | "audio", "contenido": "texto", "media_url": "https://…" o null}]
 alter table respuestas_rapidas add column if not exists partes jsonb not null default '[]'::jsonb;
+
+-- ---------- 45. La cola del seguimiento, por número ----------
+-- Los próximos mensajes que ya tocan, hasta p_por_linea DE CADA número (las citas primero), sin los
+-- que esperan a propósito (recordatorios de quien respondió, contactos en pausa). Así un número con
+-- muchos pendientes no tapa a los demás: cada uno avanza con su propia pausa.
+create or replace function siguelo_cola_siguientes(p_empresa uuid, p_ahora timestamptz, p_por_linea integer)
+returns setof siguelo_cola
+language sql stable security definer set search_path = public as $$
+  select (x.q).* from (
+    select q, row_number() over (partition by q.linea_id order by (q.tipo = 'cita') desc, q.vence, q.creado_en) as n
+    from siguelo_cola q
+    left join siguelo_seguimientos s on s.contacto_id = q.contacto_id
+    where q.empresa_id = p_empresa and q.estado = 'pendiente' and q.vence <= p_ahora
+      and not coalesce(s.pausado, false)
+      and not (q.tipo = 'rec' and coalesce(s.respondio, false))
+  ) x
+  where x.n <= p_por_linea;
+$$;
+revoke execute on function siguelo_cola_siguientes(uuid, timestamptz, integer) from public, anon, authenticated;
+grant execute on function siguelo_cola_siguientes(uuid, timestamptz, integer) to service_role;

@@ -524,6 +524,32 @@ assert.notEqual(delUltimo.estado, 'pendiente', `la cola llegó al que sí tocaba
 assert.equal((await uno(`select count(*)::int n from siguelo_cola where estado = 'pendiente' and nombre = 'Recordatorio' and token = 'x'`)).n, 70, 'los que esperan siguen esperando');
 paso('la cola no se atasca: los recordatorios que esperan (respondió o en pausa) no tapan a los que sí tocan');
 
+// ---------- Cada número con su propia cola: uno con muchos pendientes no atrasa a los demás ----------
+const L3 = (await uno(`insert into lineas_whatsapp (empresa_id, nombre, numero, estado) values ($1, 'Cercado', '593', 'activo') returning id`, [empresa])).id;
+const masViejo = iso(reloj.ahora - 2 * DIA);
+for (let i = 0; i < 40; i++) {
+  const tel = `5917300${String(i).padStart(4, '0')}`;
+  const cid = (await uno(`insert into contactos (empresa_id, telefono, nombre) values ($1, $2, 'Quilla') returning id`, [empresa, tel])).id;
+  await pg.query(`insert into siguelo_seguimientos (contacto_id, empresa_id) values ($1, $2)`, [cid, empresa]);
+  const conv = await chat(tel, 'Quilla', reloj.ahora - 2 * DIA);
+  await pg.query(
+    `insert into siguelo_cola (empresa_id, contacto_id, conversacion_id, linea_id, telefono, tipo, paso, token, nombre, variantes, vence, estado) values ($1, $2, $3, $4, $5, 'react', 0, 'viejo', 'Reactivación', '{hola}', $6, 'pendiente')`,
+    [empresa, cid, conv, lineaId, tel, masViejo],
+  );
+}
+const cer = (await uno(`insert into contactos (empresa_id, telefono, nombre) values ($1, '59173999999', 'De Cercado') returning id`, [empresa])).id;
+await pg.query(`insert into siguelo_seguimientos (contacto_id, empresa_id) values ($1, $2)`, [cer, empresa]);
+const convCer = (await uno(`insert into conversaciones (linea_id, contacto_telefono, contacto_nombre, estado) values ($1, '59173999999', 'De Cercado', 'abierto') returning id`, [L3])).id;
+await pg.query(
+  `insert into siguelo_cola (empresa_id, contacto_id, conversacion_id, linea_id, telefono, tipo, paso, token, nombre, variantes, vence, estado) values ($1, $2, $3, $4, '59173999999', 'react', 0, 'otro', 'Reactivación', '{hola}', $5, 'pendiente')`,
+  [empresa, cer, convCer, L3, iso(reloj.ahora - MIN)],
+);
+await cola();
+assert.notEqual((await uno(`select estado from siguelo_cola where contacto_id = $1`, [cer])).estado, 'pendiente', 'el de Cercado sale en la misma vuelta, sin esperar a los 40 de otro número');
+assert.ok((await uno(`select count(*)::int n from siguelo_cola where estado = 'pendiente' and token = 'viejo'`)).n > 25, 'el otro número avanza a su ritmo (de a pocos por vuelta)');
+await pg.query(`update siguelo_cola set estado = 'cancelado' where token = 'viejo' and estado = 'pendiente'`);
+paso('cada número con su propia cola: uno con muchos pendientes no atrasa a los demás');
+
 console.log(`\n${ok} pasos OK · mensajes "enviados":`);
 for (const e of enviados) console.log('  →', e.jid, JSON.stringify(e.texto));
 const reg = (await pg.query<any>(`select texto from siguelo_registro order by creado_en`)).rows.map((r: any) => r.texto);
