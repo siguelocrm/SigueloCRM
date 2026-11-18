@@ -315,7 +315,15 @@ async function enviarUno(m: MasivoRow, ahora: number): Promise<void> {
     console.error(`📣 Masivo "${m.nombre}": no se pudo enviar a +${siguiente.telefono}: ${motivo}`);
     if (++est.erroresSeguidos >= ERRORES_PARA_PAUSAR) {
       est.erroresSeguidos = 0;
-      await actualizarMasivo(m, { estado: 'pausado', motivo: `Se pausó solo: ${ERRORES_PARA_PAUSAR} errores de envío seguidos. Revisa el número en Conexiones y pulsa "Reanudar".` });
+      // Con el error exacto (y qué hacer), para que no haya que buscarlo.
+      const limitado = /rate|overlimit|429|too many|spam|ban|restrict/i.test(motivo);
+      const sesionCerrada = /logged out|401|unauthori|conflict|replaced/i.test(motivo);
+      const consejo = limitado
+        ? 'WhatsApp está limitando los envíos de este número: espera unas horas antes de reanudar y baja el máximo por día.'
+        : sesionCerrada
+          ? 'Se cerró la sesión de WhatsApp de este número: vuelve a conectarlo en Conexiones (QR) y pulsa "Reanudar".'
+          : 'Revisa el número en Conexiones y pulsa "Reanudar".';
+      await actualizarMasivo(m, { estado: 'pausado', motivo: `Se pausó solo: ${ERRORES_PARA_PAUSAR} errores de envío seguidos (el último: "${motivo.slice(0, 120)}"). ${consejo}` });
     }
   }
   est.proximo = Date.now() + azar(m);
