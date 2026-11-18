@@ -128,6 +128,42 @@ async function leerEstado(c: Config): Promise<Estado> {
   });
   const paraRevisar = pagos.filter((p) => p.estado === 'revisar').length;
 
+  // Lo demás de la configuración: números, respuestas rápidas, bot (para preguntas como
+  // "¿está configurada la respuesta de horarios en todas las sucursales?").
+  const nombreNegocio = new Map((negociosR.data || []).map((n) => [n.id, n.nombre] as const));
+  const [lineasR, asignadasR, rapidasR, rapidaNegR, reglasR, reglaNegR, cuandoR] = await Promise.all([
+    db.from('lineas_whatsapp').select('id, nombre, numero, estado').eq('empresa_id', empresaId),
+    db.from('siguelo_lineas').select('linea_id, negocio_id').eq('empresa_id', empresaId),
+    // Con '*': sin la sección 44 del SQL todavía no existe "partes".
+    db.from('respuestas_rapidas').select('*').eq('empresa_id', empresaId).order('titulo'),
+    db.from('siguelo_respuesta_negocio').select('respuesta_id, negocio_id'),
+    db.from('respuestas_automaticas').select('id, nombre, palabra_clave, activo, tipo').eq('empresa_id', empresaId),
+    db.from('siguelo_bot_negocio').select('regla_id, negocio_id'),
+    db.from('siguelo_cuando_ia').select('item_id, tipo, cuando').eq('empresa_id', empresaId),
+  ]);
+  const cuandoDe = new Map((cuandoR.data || []).filter((x) => x.cuando?.trim()).map((x) => [`${x.tipo}:${x.item_id}`, x.cuando.trim()] as const));
+  const negociosDe = (pares: { negocio_id: string }[]) => {
+    const nombres = pares.map((x) => nombreNegocio.get(x.negocio_id)).filter((x): x is string => !!x);
+    return nombres.length ? `solo ${listaY(nombres)}` : 'todos los negocios';
+  };
+  const lineasNumeros = (lineasR.data || []).map((l) => {
+    const neg = (asignadasR.data || []).find((a) => a.linea_id === l.id);
+    return `- "${l.nombre}"${l.numero ? ` (+${l.numero})` : ''}: ${l.estado === 'activo' ? 'conectado' : l.estado === 'conectando' ? 'conectando' : 'DESCONECTADO'}; negocio: ${neg ? nombreNegocio.get(neg.negocio_id) ?? '?' : 'ninguno (la IA no responde ahí)'}`;
+  });
+  const lineasRapidas = (rapidasR.error ? [] : rapidasR.data || []).map((r) => {
+    const partes = Array.isArray(r.partes) ? r.partes.length : 0;
+    const cuando = cuandoDe.get(`respuesta:${r.id}`);
+    return `- "${r.titulo}"${r.atajo ? ` (/${r.atajo})` : ''}: ${r.tipo}${partes ? ` + ${partes} ${partes === 1 ? 'mensaje más' : 'mensajes más'}` : ''}; para ${negociosDe((rapidaNegR.data || []).filter((x) => x.respuesta_id === r.id))}; ${cuando ? `la IA la manda cuando: "${recortar(cuando, 120)}"` : 'la IA la elige sola si sirve'}; "${recortar(r.contenido || '(solo adjunto)', 90)}"`;
+  });
+  const lineasBot = (reglasR.data || []).map((r) => {
+    const cuando = cuandoDe.get(`bot:${r.id}`);
+    return `- "${r.nombre || r.palabra_clave}" (${r.tipo === 'flujo' ? 'flujo' : 'regla'}, palabra "${r.palabra_clave}"): ${r.activo ? 'activa' : 'APAGADA'}; en ${negociosDe((reglaNegR.data || []).filter((x) => x.regla_id === r.id))}${cuando ? `; la IA la activa cuando: "${recortar(cuando, 120)}"` : ''}`;
+  });
+  const extrasNegocio = [...negocios.entries()].map(([k, n]) => {
+    const r = n.reuniones;
+    return `- ${k} "${n.nombre}": números: ${listaY((asignadasR.data || []).filter((a) => a.negocio_id === n.id).map((a) => (lineasR.data || []).find((l) => l.id === a.linea_id)?.nombre ?? '?')) || 'ninguno'}; ubicación en el mapa: ${n.ubicacion?.trim() ? 'sí' : 'no'}; avisos a: ${n.avisos_telefono || 'el número general'}; grupos: ${(n.grupos || []).map((g) => `"${g.nombre}"`).join(', ') || 'ninguno'}; reuniones: ${r?.activa ? `sí (${r.duracion_min} min${r.enlace ? ', con link' : ', SIN link'})` : 'no'}`;
+  });
+
   const texto = `ESTADO ACTUAL (${fecha(new Date(ahora).toISOString())}, zona ${c.zona}):
 
 SEGUIMIENTO: ${!aj ? 'todavía no se configuró' : `${aj.activo ? (aj.pausado ? `en pausa (${aj.motivo_pausa || 'a mano'})` : 'activo') : 'apagado'}; horario ${aj.hora_inicio} a ${aj.hora_fin}; máximo ${aj.maximo_diario} por día por número; pausa entre envíos ${aj.pausa_min_seg}–${aj.pausa_max_seg} s; mínimo ${aj.min_entre_misma_persona_min} min entre dos mensajes automáticos a la misma persona; no recuerda a quien escribió hace menos de ${aj.no_recordar_si_escribio_horas} h; stop: ${aj.stop?.activo ? JSON.stringify(aj.stop.palabras) : 'apagado'}; la IA adapta los mensajes: ${aj.adaptar?.activo ? `sí (recordatorios: ${aj.adaptar.recordatorios ? 'sí' : 'no'}, reactivaciones: ${aj.adaptar.reactivaciones ? 'sí' : 'no'})${aj.adaptar.instrucciones ? `, instrucciones: "${recortar(aj.adaptar.instrucciones, 300)}"` : ''}` : 'no'}`}
@@ -142,6 +178,18 @@ ${lineasNegocio.join('\n') || '(sin negocios: todos los números trabajan igual)
 IA: ${ia.activa ? 'activa' : 'apagada'}; clave de OpenAI ${ia.clave_final ? 'guardada' : 'sin guardar'}; modo ${ia.modo}; modelo ${ia.modelo}; estilo: ${describirEstilo(ia.estilo)}; firma "${ia.firma}"; instrucciones "${recortar(ia.instrucciones, 400)}"; responde de ${ia.desde} a ${ia.hasta}; máximo ${ia.max_respuestas_dia} respuestas por día y ${ia.max_por_cliente_dia} por cliente; avisos a tu WhatsApp: ${ia.avisos?.activo ? `sí, al ${ia.avisos.telefono}` : 'no'}.
 
 CURSOS (inscripción con pago): ${lineasCurso.length ? `\n${lineasCurso.join('\n')}` : 'ninguno'}${paraRevisar ? `\nComprobantes para revisar este mes: ${paraRevisar}` : ''}
+
+NÚMEROS DE WHATSAPP:
+${lineasNumeros.join('\n') || '(ninguno)'}
+
+MÁS DE CADA NEGOCIO:
+${extrasNegocio.join('\n') || '(sin negocios)'}
+
+RESPUESTAS RÁPIDAS (título, tipo, para qué negocios, cuándo la usa la IA):
+${lineasRapidas.join('\n') || '(ninguna)'}
+
+BOT Y FLUJOS:
+${lineasBot.join('\n') || '(ninguno)'}
 
 LO ÚLTIMO QUE PASÓ (registro del seguimiento, la IA y los pagos; lo más nuevo primero):
 ${(registroR.data || []).map((r) => `- [${fecha(r.creado_en)}] ${recortar(r.texto, 200)}`).join('\n') || '(nada todavía)'}`;

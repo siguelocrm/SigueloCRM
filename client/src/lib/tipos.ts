@@ -218,6 +218,14 @@ export interface RespuestaRapida {
   creado_por: string;
   creado_en: string;
   usuarios?: { nombre: string } | null;
+  // Los mensajes que siguen al primero (como en un flujo), en orden.
+  partes?: ParteRespuesta[];
+}
+
+export interface ParteRespuesta {
+  tipo: TipoMensaje;
+  contenido: string;
+  media_url: string | null;
 }
 
 // Un paso de una respuesta automática: se mandan en orden, uno detrás de

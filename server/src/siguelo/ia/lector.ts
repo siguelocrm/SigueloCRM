@@ -47,7 +47,8 @@ const formatear = (iso: string, zona: string) =>
 // Respuestas rápidas del negocio (las de todos y las suyas) que este cliente todavía no recibió.
 async function respuestasDisponibles(empresaId: string, negocioId: string, yaEnviadas: Set<string>) {
   const [{ data: respuestas }, { data: asignadas }, cuando] = await Promise.all([
-    db.from('respuestas_rapidas').select('id, empresa_id, titulo, atajo, contenido, tipo, media_url').eq('empresa_id', empresaId).order('titulo'),
+    // Con '*': "partes" (los mensajes que siguen) existe recién con la sección 44 del SQL.
+    db.from('respuestas_rapidas').select('*').eq('empresa_id', empresaId).order('titulo'),
     db.from('siguelo_respuesta_negocio').select('respuesta_id, negocio_id'),
     cuandoDe(empresaId, 'respuesta'),
   ]);
@@ -57,6 +58,10 @@ async function respuestasDisponibles(empresaId: string, negocioId: string, yaEnv
     .filter((r) => !yaEnviadas.has(r.id) && (!de.get(r.id)?.length || de.get(r.id)!.includes(negocioId)))
     .map((r) => ({ ...r, cuando: cuando.get(r.id) || '' }));
 }
+
+// Lo que dice una respuesta rápida, con los mensajes que siguen (para que la IA sepa qué manda).
+const contenidoCompleto = (r: { contenido: string; partes?: { tipo: string; contenido: string }[] }) =>
+  [r.contenido, ...(Array.isArray(r.partes) ? r.partes.map((p) => (p.tipo !== 'texto' ? `[${p.tipo}] ${p.contenido || ''}` : p.contenido).trim()) : [])].filter(Boolean).join(' / ');
 
 // "Cuándo la usa la IA" de cada respuesta rápida o regla del bot (sin la última versión del SQL, ninguno).
 async function cuandoDe(empresaId: string, tipo: 'respuesta' | 'bot'): Promise<Map<string, string>> {
@@ -275,9 +280,14 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
   };
   const filas: Partial<SalidaRow>[] = [];
   if (texto) filas.push({ ...base, origen: 'respuesta', tipo: 'texto', contenido: texto, orden: 0, referencia: espera ? 'espera' : null });
+  const tipoDe = (t: string) => (['texto', 'imagen', 'pdf', 'documento', 'audio'].includes(t) ? t : 'texto') as SalidaRow['tipo'];
   for (const rr of respuestas) {
-    const tipo = (['texto', 'imagen', 'pdf', 'documento', 'audio'].includes(rr.tipo) ? rr.tipo : 'texto') as SalidaRow['tipo'];
-    filas.push({ ...base, origen: 'respuesta_rapida', referencia: rr.id, tipo, contenido: rr.contenido, media_url: rr.media_url, orden: filas.length });
+    // El primer mensaje y los que siguen, en orden (todos cuentan como esa respuesta rápida).
+    const mensajes = [{ tipo: rr.tipo, contenido: rr.contenido, media_url: rr.media_url }, ...(Array.isArray(rr.partes) ? rr.partes : [])];
+    for (const m of mensajes) {
+      if (!m.media_url && !String(m.contenido || '').trim()) continue;
+      filas.push({ ...base, origen: 'respuesta_rapida', referencia: rr.id, tipo: m.media_url ? tipoDe(m.tipo) : 'texto', contenido: m.contenido || '', media_url: m.media_url, orden: filas.length });
+    }
   }
   if (grupo) filas.push({ ...base, origen: 'grupo', referencia: grupo.id, contenido: `Aquí tienes el link para unirte a "${grupo.nombre}":\n${grupo.link}`, orden: filas.length });
   if (curso) filas.push({ ...base, origen: 'qr', referencia: curso.id, tipo: 'imagen', media_url: curso.qr_url, contenido: `QR para pagar ${curso.nombre}: ${formatoMonto(curso.precio, curso.moneda)}`, orden: filas.length });
@@ -513,7 +523,7 @@ async function leer(c: Config, fila: PorLeerRow, forzado = false): Promise<Leido
     etapaActual: contacto?.etapa_id ?? null,
     nombreCliente: contacto?.nombre || '',
     conversacion,
-    respuestasRapidas: respuestas.map((r) => ({ id: r.id, titulo: r.titulo, tipo: r.tipo, contenido: r.contenido, cuando: r.cuando })),
+    respuestasRapidas: respuestas.map((r) => ({ id: r.id, titulo: r.titulo, tipo: r.tipo, contenido: contenidoCompleto(r), cuando: r.cuando })),
     otrosNegocios: otros,
     grupos: (negocio.grupos || []).filter((g) => g.link && !enviadas.has(g.id)),
     cursos: await conPlanes(cursos),
@@ -634,7 +644,7 @@ export async function probarMensaje(c: Config, negocioId: string, texto: string)
       { quien: 'cliente', texto: 'Hola, quiero información', cuando: formatear(new Date(Date.now() - 10 * MIN).toISOString(), c.zona) },
       { quien: 'cliente', texto, cuando: formatear(ahora, c.zona) },
     ],
-    respuestasRapidas: respuestas.map((r) => ({ id: r.id, titulo: r.titulo, tipo: r.tipo, contenido: r.contenido, cuando: r.cuando })),
+    respuestasRapidas: respuestas.map((r) => ({ id: r.id, titulo: r.titulo, tipo: r.tipo, contenido: contenidoCompleto(r), cuando: r.cuando })),
     otrosNegocios: otros,
     grupos: (negocio.grupos || []).filter((g) => g.link),
     cursos: cursosCortos(cursos),

@@ -546,7 +546,7 @@ export type SigueloDatabase = {
       siguelo_ia_uso: Tabla<{ empresa_id: string; fecha: string; consultas: number; entrada: number; salida: number }>;
       siguelo_etapa_embudo: Tabla<{ etapa_id: string; embudo_id: string }>;
       siguelo_respuesta_negocio: Tabla<{ respuesta_id: string; negocio_id: string }>;
-      respuestas_rapidas: Tabla<{ id: string; empresa_id: string; titulo: string; atajo: string | null; contenido: string; tipo: string; media_url: string | null }>;
+      respuestas_rapidas: Tabla<{ id: string; empresa_id: string; titulo: string; atajo: string | null; contenido: string; tipo: string; media_url: string | null; partes?: ParteRespuesta[] }>;
       notas: Tabla<{ id: string; contacto_id: string; autor_id: string | null; texto: string; creado_en: string }>;
       mensajes: Tabla<{
         id: string;
@@ -676,3 +676,6 @@ export type VentaRow = {
   creado_por: string | null;
   creado_en: string;
 };
+
+// Los mensajes que siguen al primero en una respuesta rápida (sección 44): texto, o archivo con su texto.
+export type ParteRespuesta = { tipo: 'texto' | 'imagen' | 'pdf' | 'documento' | 'audio'; contenido: string; media_url: string | null };

@@ -3,7 +3,7 @@ import { db } from '../db.js';
 // Cuentas en pausa o vencidas (sección 41 de siguelo.sql): nadie de esa cuenta entra y su IA,
 // seguimiento y masivos se detienen. No se borra nada; al renovar sigue todo como estaba.
 
-const VALIDO_MS = 20_000;
+const VALIDO_MS = 2 * 60_000;
 let cache = { leido: 0, bloqueadas: new Set<string>() };
 
 export async function cuentasBloqueadas(): Promise<Set<string>> {

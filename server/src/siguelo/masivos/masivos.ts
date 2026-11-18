@@ -315,7 +315,15 @@ async function enviarUno(m: MasivoRow, ahora: number): Promise<void> {
 }
 
 // Una vuelta: cada número manda como mucho un mensaje (el masivo más antiguo primero).
-export async function procesarMasivos(): Promise<void> {
+// Para empezar (o seguir) un envío al momento, sin esperar la vuelta de cada minuto.
+let despertar: () => void = () => undefined;
+export const alDespertarMasivos = (fn: () => void) => {
+  despertar = fn;
+};
+export const despertarMasivos = () => setTimeout(() => despertar(), 500);
+
+// Una vuelta. Devuelve true si hay envíos en marcha (entonces la próxima vuelta es en 5 s).
+export async function procesarMasivos(): Promise<boolean> {
   const ahora = Date.now();
   const { data, error } = await db
     .from('siguelo_masivos')
@@ -324,7 +332,7 @@ export async function procesarMasivos(): Promise<void> {
     .lte('inicia_en', new Date(ahora).toISOString())
     .order('creado_en')
     .limit(100);
-  if (error || !data?.length) return;
+  if (error || !data?.length) return false;
   const usadas = new Set<string>();
   const bloqueadas = await cuentasBloqueadas();
   for (const m of data) {
@@ -335,6 +343,7 @@ export async function procesarMasivos(): Promise<void> {
     usadas.add(m.linea_id);
     await enviarUno(m, ahora);
   }
+  return true;
 }
 
 // Arma la lista de destinatarios de un masivo al empezar. Devuelve false si no queda nada que enviar.

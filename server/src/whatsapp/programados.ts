@@ -4,7 +4,7 @@ import { obtenerSesion } from './sesiones.js';
 import { marcarEnviadoPorCRM } from './mensajes-enviados-por-crm.js';
 import { construirContenidoWA } from './contenido.js';
 
-const CADA_MS = 20_000;
+const CADA_MS = 60_000;
 // Si la línea está desconectada a la hora de enviar, se reintenta en cada
 // vuelta hasta este límite; pasado ese tiempo se marca como error.
 const TOLERANCIA_LINEA_CAIDA_MS = 15 * 60 * 1000;

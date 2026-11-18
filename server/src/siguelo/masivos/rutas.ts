@@ -7,7 +7,7 @@ import { accesoDe, veLinea } from '../usuarios/accesos.js';
 import { obtenerSesion } from '../../whatsapp/sesiones.js';
 import { marcarEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import type { FiltroMasivo, MasivoRow } from '../tipos.js';
-import { MAX_DESTINATARIOS, armarDestinatarios, contenidoMasivo, interesesComunes, limpiarTelefono } from './masivos.js';
+import { MAX_DESTINATARIOS, armarDestinatarios, contenidoMasivo, despertarMasivos, interesesComunes, limpiarTelefono } from './masivos.js';
 
 // Mensajes masivos: contar a quiénes les llega, crear, pausar, reanudar,
 // cancelar y mandarte una prueba. Solo dueños y gerentes, y solo desde
@@ -138,7 +138,10 @@ masivosRouter.post('/siguelo/masivos', soloAdmin, async (req, res) => {
   if (sinSeccion40) insertado = await db.from('siguelo_masivos').insert(fila).select('id').single();
   const { data: masivo, error } = insertado;
   if (error || !masivo) return res.status(500).json({ error: `No se pudo guardar: ${error?.message}. ¿Pegaste la última versión de database/siguelo.sql?` });
-  if (alEmpezar && !sinSeccion40) return res.json({ ok: true, id: masivo.id, total: destinatarios.length, alEmpezar: true });
+  if (alEmpezar && !sinSeccion40) {
+    despertarMasivos();
+    return res.json({ ok: true, id: masivo.id, total: destinatarios.length, alEmpezar: true });
+  }
   // El orden se mezcla al azar: así no les llega a todos en el orden de la lista.
   const mezclados = [...destinatarios].sort(() => Math.random() - 0.5);
   for (let i = 0; i < mezclados.length; i += 500) {
@@ -150,6 +153,7 @@ masivosRouter.post('/siguelo/masivos', soloAdmin, async (req, res) => {
       return res.status(500).json({ error: `No se pudo guardar la lista: ${e.message}` });
     }
   }
+  despertarMasivos();
   res.json({ ok: true, id: masivo.id, total: destinatarios.length });
 });
 
@@ -175,6 +179,7 @@ masivosRouter.post('/siguelo/masivos/:id/accion', soloAdmin, async (req, res) =>
   } else {
     return res.status(400).json({ error: 'Acción no válida.' });
   }
+  if (accion === 'reanudar') despertarMasivos();
   res.json({ ok: true });
 });
 

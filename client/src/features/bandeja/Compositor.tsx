@@ -387,7 +387,37 @@ export default function Compositor({ mensajes, seleccionada, usuario, respuestas
     }
   };
 
+  // Una respuesta rápida con varios mensajes: salen todos, en orden.
+  const enviarRespuestaCompleta = async (r: RespuestaRapida) => {
+    setBorrador('');
+    setMostrarRespuestas(false);
+    setSubiendoArchivo(true);
+    setErrorEnvio('');
+    const mensajes = [{ tipo: r.tipo, contenido: r.contenido, media_url: r.media_url }, ...(r.partes || [])].filter((m) => m.media_url || m.contenido?.trim());
+    try {
+      for (const m of mensajes) {
+        const conArchivo = !!m.media_url && m.tipo !== 'texto';
+        const resp = await fetch(`${backendUrl}/enviar`, {
+          method: 'POST',
+          headers: await conSesion({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ telefono: seleccionada.contacto_telefono, tipo: conArchivo ? m.tipo : 'texto', texto: m.contenido || undefined, media_url: conArchivo ? m.media_url : undefined, agente_id: usuario.id, linea_id: seleccionada.linea_id }),
+        });
+        if (!resp.ok) throw new Error(await mensajeErrorEnvio(resp, 'No se pudo enviar uno de los mensajes.'));
+      }
+      await supabase.from('conversaciones').update({ ultima_actividad: new Date().toISOString() }).eq('id', seleccionada.id);
+    } catch (err) {
+      console.error(err);
+      setErrorEnvio(err instanceof Error ? err.message : 'No se pudo enviar la respuesta.');
+    } finally {
+      setSubiendoArchivo(false);
+    }
+  };
+
   const usarSugerencia = (r: RespuestaRapida) => {
+    if (r.partes?.length) {
+      enviarRespuestaCompleta(r);
+      return;
+    }
     if (r.tipo !== 'texto') {
       enviarRespuestaConAdjunto(r);
       return;
@@ -395,6 +425,10 @@ export default function Compositor({ mensajes, seleccionada, usuario, respuestas
     setBorrador(r.contenido);
   };
   const insertarRespuesta = (r: RespuestaRapida) => {
+    if (r.partes?.length) {
+      enviarRespuestaCompleta(r);
+      return;
+    }
     if (r.tipo !== 'texto') {
       enviarRespuestaConAdjunto(r);
       return;
@@ -449,6 +483,7 @@ export default function Compositor({ mensajes, seleccionada, usuario, respuestas
               <div className="text-[11px] font-medium" style={{ color: 'var(--fg)' }}>
                 {r.titulo}
                 {r.tipo !== 'texto' && <span className="ml-1" style={{ color: TEAL }}>({r.tipo})</span>}
+                {!!r.partes?.length && <span className="ml-1" style={{ color: TEAL }}>(+{r.partes.length} {r.partes.length === 1 ? 'mensaje' : 'mensajes'})</span>}
               </div>
               <div className="text-[10px] truncate" style={{ color: 'var(--fg-3)' }}>{r.contenido || '(sin texto)'}</div>
             </button>

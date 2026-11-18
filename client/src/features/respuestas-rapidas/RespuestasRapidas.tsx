@@ -5,6 +5,7 @@ import { useAuth } from '../../lib/AuthContext';
 import { formatoWhatsApp } from '../bandeja/utils';
 import { Boton, Chip, EncabezadoPagina, EstadoVacio, useToast } from '../../components/ui';
 import type { RespuestaRapida, TipoMensaje } from '../../lib/tipos';
+import PartesRespuesta, { type BorradorParte } from './PartesRespuesta';
 
 type TipoAdjunto = Exclude<TipoMensaje, 'texto'>;
 type Filtro = 'todas' | 'texto' | TipoAdjunto;
@@ -47,6 +48,7 @@ export default function RespuestasRapidas() {
   const [archivo, setArchivo] = useState<File | null>(null);
   const [tipoArchivo, setTipoArchivo] = useState<TipoAdjunto | null>(null);
   const [quitarExistente, setQuitarExistente] = useState(false);
+  const [partes, setPartes] = useState<BorradorParte[]>([]);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
 
@@ -88,13 +90,14 @@ export default function RespuestasRapidas() {
   };
 
   const abrirNueva = () => {
-    setTitulo(''); setAtajo(''); setContenido(''); setError(''); setQuitarExistente(false);
+    setTitulo(''); setAtajo(''); setContenido(''); setError(''); setQuitarExistente(false); setPartes([]);
     limpiarArchivo();
     setEditor('nueva');
   };
 
   const abrirEdicion = (r: RespuestaRapida) => {
     setTitulo(r.titulo); setAtajo(r.atajo || ''); setContenido(r.contenido || ''); setError(''); setQuitarExistente(false);
+    setPartes((r.partes || []).map((p) => ({ ...p })));
     limpiarArchivo();
     setEditor(r);
   };
@@ -118,6 +121,8 @@ export default function RespuestasRapidas() {
     if (atajoLimpio && respuestas.some((r) => r.atajo === atajoLimpio && r.id !== editando?.id)) {
       return setError(`El atajo /${atajoLimpio} ya lo usa otra respuesta.`);
     }
+    const vacia = partes.findIndex((p) => !p.contenido.trim() && !p.archivo && !p.media_url);
+    if (vacia >= 0) return setError(`El mensaje ${vacia + 2} está vacío: escribe algo, adjunta un archivo o quítalo.`);
 
     setGuardando(true);
     try {
@@ -131,7 +136,27 @@ export default function RespuestasRapidas() {
         mediaUrl = supabase.storage.from('media').getPublicUrl(ruta).data.publicUrl;
         tipo = tipoArchivo;
       }
-      const datos = { titulo: titulo.trim(), atajo: atajoLimpio || null, contenido: contenido || '', tipo, media_url: mediaUrl };
+      // Los mensajes que siguen: se suben sus archivos nuevos.
+      const listas = [];
+      for (const [i, p] of partes.entries()) {
+        let url = p.media_url;
+        if (p.archivo) {
+          const ruta = `${usuario!.empresa_id}/respuestas-rapidas/${Date.now()}-${i}.${p.archivo.name.split('.').pop()}`;
+          const { error: e } = await supabase.storage.from('media').upload(ruta, p.archivo);
+          if (e) throw e;
+          url = supabase.storage.from('media').getPublicUrl(ruta).data.publicUrl;
+        }
+        listas.push({ tipo: url ? p.tipo : 'texto', contenido: p.contenido, media_url: url });
+      }
+      const datos = {
+        titulo: titulo.trim(),
+        atajo: atajoLimpio || null,
+        contenido: contenido || '',
+        tipo,
+        media_url: mediaUrl,
+        // Sin la sección 44 del SQL la columna no existe: solo se manda si se usa.
+        ...(listas.length || editando?.partes?.length ? { partes: listas } : {}),
+      };
       const { error: errorBD } = editando
         ? await supabase.from('respuestas_rapidas').update(datos).eq('id', editando.id)
         : await supabase.from('respuestas_rapidas').insert({ ...datos, empresa_id: usuario!.empresa_id, creado_por: usuario!.id });
@@ -141,7 +166,8 @@ export default function RespuestasRapidas() {
       cargar();
     } catch (err) {
       console.error(err);
-      setError('No se pudo guardar. Inténtalo de nuevo.');
+      const m = (err as { message?: string })?.message || '';
+      setError(/partes/.test(m) ? 'Para guardar varios mensajes falta pegar la sección 44 de database/siguelo.sql en Supabase.' : 'No se pudo guardar. Inténtalo de nuevo.');
     } finally {
       setGuardando(false);
     }
@@ -186,6 +212,7 @@ export default function RespuestasRapidas() {
       <div className="flex items-center gap-1.5 flex-wrap">
         {r.atajo ? <span className="num text-[12px] font-semibold" style={{ color: 'var(--accent)' }}>/{r.atajo}</span> : <span className="text-[12px]" style={{ color: 'var(--fg-3)' }}>Sin atajo</span>}
         {insigniaTipo(r)}
+        {!!r.partes?.length && <Chip>+{r.partes.length} {r.partes.length === 1 ? 'mensaje' : 'mensajes'}</Chip>}
       </div>
       <div className="text-[13px] leading-snug break-words" style={{ color: 'var(--fg-2)', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', minHeight: '3.9em' }}>
         {r.contenido ? r.contenido.replace(/\s+/g, ' ') : <span style={{ color: 'var(--fg-3)' }}>(solo adjunto)</span>}
@@ -323,6 +350,7 @@ export default function RespuestasRapidas() {
                   </div>
                 </div>
               )}
+              <PartesRespuesta partes={partes} onCambiar={setPartes} />
               {error && <div className="text-[13px]" style={{ color: 'var(--bad)' }}>{error}</div>}
             </div>
 

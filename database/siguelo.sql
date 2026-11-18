@@ -1933,3 +1933,8 @@ revoke execute on function siguelo_datos_etapa(uuid, uuid[], uuid, timestamptz, 
 grant execute on function siguelo_datos_resumen(uuid, uuid[], timestamptz, timestamptz) to service_role;
 grant execute on function siguelo_datos_buscar(uuid, uuid[], timestamptz, timestamptz, text, text[]) to service_role;
 grant execute on function siguelo_datos_etapa(uuid, uuid[], uuid, timestamptz, timestamptz) to service_role;
+
+-- ---------- 44. Respuestas rápidas con varios mensajes ----------
+-- Después del primer mensaje (texto, o archivo con su texto) pueden ir más, en orden, como en un flujo:
+-- [{"tipo": "texto" | "imagen" | "pdf" | "audio", "contenido": "texto", "media_url": "https://…" o null}]
+alter table respuestas_rapidas add column if not exists partes jsonb not null default '[]'::jsonb;

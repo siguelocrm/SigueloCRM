@@ -6,7 +6,8 @@ import type { EtapaVentaRow, NegocioRow } from './tipos.js';
 // cada 30 segundos. Si todavía no se pegó la parte de la Fase 2 de
 // database/siguelo.sql, todo sigue como antes (un solo negocio para todos).
 
-const VALIDO_MS = 30_000;
+// Las fichas se vuelven a leer cada 2 minutos (antes cada 30 s: mucho tráfico con Supabase).
+const VALIDO_MS = 2 * 60_000;
 
 type Datos = {
   leido: number;

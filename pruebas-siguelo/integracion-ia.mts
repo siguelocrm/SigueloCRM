@@ -623,6 +623,24 @@ assert.match((await uno(`select texto from siguelo_registro where contacto_id = 
 assert.equal(enviados.filter((e) => e.jid.startsWith('59170000061')).at(-1)?.texto, 'Perdona, no pude escuchar tu audio, ¿me lo escribes? 🙏');
 paso('notas de voz: la IA las pasa a texto, las responde y la transcripción queda en el chat');
 
+// ---------- Respuesta rápida con varios mensajes (como un flujo): salen todos, en orden ----------
+await uno(`insert into respuestas_rapidas (empresa_id, titulo, contenido, tipo, partes) values ($1, 'Horarios completos', 'Estos son nuestros horarios:', 'texto', $2::jsonb) returning id`, [empresa, JSON.stringify([{ tipo: 'texto', contenido: 'Sábados de 10:00 a 12:00', media_url: null }, { tipo: 'imagen', contenido: 'Mapa de horarios', media_url: 'https://x/horarios.jpg' }])]);
+const nico = await chat(L1, '59170000071', 'Nico');
+await escribe(nico.conv, '¿Qué horarios tienen?');
+avanzar(MIN);
+let vistoRapidas = '';
+responder = (l) => {
+  vistoRapidas = l.sistema;
+  return { resumen: 'Pide horarios', puede_responder: true, respuesta: '¡Hola Nico! Te paso los horarios 👇', respuestas_rapidas: [idDe(l, 'r', '"Horarios completos"')] };
+};
+await leerPendientes(await config());
+await salida();
+assert.match(vistoRapidas, /"Horarios completos".*Estos son nuestros horarios: \/ Sábados de 10:00 a 12:00 \/ \[imagen\] Mapa de horarios/, 'la IA sabe todo lo que dice');
+const aNico = enviados.filter((e) => e.jid.startsWith('59170000071'));
+assert.deepEqual(aNico.map((e) => e.imagen ?? e.texto), ['¡Hola Nico! Te paso los horarios 👇', 'Estos son nuestros horarios:', 'Sábados de 10:00 a 12:00', 'https://x/horarios.jpg']);
+assert.equal(aNico[3].texto, 'Mapa de horarios', 'la imagen con su texto');
+paso('una respuesta rápida con varios mensajes (texto, texto e imagen) sale completa y en orden');
+
 // ---------- Desde tu WhatsApp le preguntas al asistente por tus datos (a cualquier número) ----------
 let vistoAsistente = '';
 responder = (l) => {

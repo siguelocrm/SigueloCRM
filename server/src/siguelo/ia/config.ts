@@ -7,7 +7,8 @@ import { cuentasBloqueadas } from '../agencia/bloqueo.js';
 // Ajustes de la IA, la clave de OpenAI (solo la lee el servidor) y el freno de
 // consultas por día.
 
-const VALIDO_MS = 20_000;
+// Los ajustes de la IA se vuelven a leer cada 2 minutos (o al guardarlos desde el servidor).
+const VALIDO_MS = 2 * 60_000;
 type Config = { ia: IaRow; clave: string; zona: string };
 let cache: { leido: number; porEmpresa: Map<string, Config> } = { leido: 0, porEmpresa: new Map() };
 let avisoFaltaSql = false;

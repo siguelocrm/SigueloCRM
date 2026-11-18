@@ -328,7 +328,7 @@ const rAcademia = (await uno(`insert into respuestas_automaticas (empresa_id, pa
 await pg.query(`insert into siguelo_bot_negocio (regla_id, negocio_id) values ($1, $2)`, [rAcademia, academia]);
 reglas[0].id = rTodos;
 reglas[1].id = rAcademia;
-en(reloj.ahora + MIN);
+en(reloj.ahora + 3 * MIN); // las fichas se vuelven a leer cada 2 minutos
 assert.deepEqual((await reglasDelNumero(reglas, linea2)).map((r: any) => r.id), [rTodos, rAcademia]);
 assert.deepEqual((await reglasDelNumero(reglas, lineaId)).map((r: any) => r.id), [rTodos], 'la Tienda no usa la regla de la Academia');
 paso('el bot solo usa las reglas de todos y las del negocio de cada número');

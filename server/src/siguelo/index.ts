@@ -10,16 +10,24 @@ import { revisarRedes } from './redes/redes.js';
 import type { AjustesRow } from './tipos.js';
 import { cuentasBloqueadas } from './agencia/bloqueo.js';
 import { desactivarVencidos } from './usuarios/accesos.js';
-import { procesarMasivos, reanudarAlArrancar } from './masivos/masivos.js';
+import { alDespertarMasivos, procesarMasivos, reanudarAlArrancar } from './masivos/masivos.js';
 import { alLlegarMensaje } from './eventos.js';
 
 // Seguimiento automático por etapa (SígueloCRM). Se prende desde la pantalla
 // "Seguimiento"; mientras esté apagado no hace nada. Necesita las tablas de
 // database/siguelo.sql.
 
-const MOTOR_CADA_MS = 60_000;
-const COLA_CADA_MS = 5_000;
-const AJUSTES_VALIDOS_MS = 20_000;
+// Cada cuánto se revisa sin que pase nada. Lo urgente (un mensaje que llega, una respuesta de la IA)
+// se hace al momento por eventos; estas vueltas son de respaldo. Antes eran cada 5 a 10 segundos y
+// superaban los límites del plan gratis de Supabase (registros y datos transferidos).
+const MOTOR_CADA_MS = 3 * 60_000;
+const COLA_CADA_MS = 30_000;
+const AJUSTES_VALIDOS_MS = 60_000;
+const LECTOR_RESPALDO_MS = 2 * 60_000;
+const SALIDA_CADA_MS = 20_000;
+const PAGOS_CADA_MS = 60_000;
+const PAGOS_TODOS_MS = 10 * 60_000;
+const REDES_CADA_MS = 3 * 60_000;
 
 // El motor y la cola nunca corren a la vez: así la cola no envía algo que el
 // motor está por cancelar, y el motor ve siempre los envíos ya anotados.
@@ -67,6 +75,8 @@ async function vueltaDelMotor(): Promise<void> {
   const bloqueadas = await cuentasBloqueadas();
   for (const aj of await ajustesActivos(true)) if (!bloqueadas.has(aj.empresa_id)) await revisarEmpresa(aj);
   await limpiarRegistroViejo();
+  // Lo que el motor dejó en la cola sale sin esperar la próxima vuelta.
+  await vueltaDeLaCola();
 }
 
 async function vueltaDeLaCola(): Promise<void> {
@@ -92,6 +102,32 @@ function candado(nombre: string): (tarea: () => Promise<void>) => Promise<void> 
 }
 const conCandadoLector = candado('la lectura de la IA');
 const conCandadoSalida = candado('los envíos de la IA');
+const conCandadoPagos = candado('los pagos');
+const conCandadoRedes = candado('las redes sociales');
+const conCandadoMasivos = candado('los mensajes masivos');
+
+// Una sola consulta para todas las cuentas: ¿quién tiene algo por salir? Solo esas se procesan.
+async function vueltaDeSalida(): Promise<void> {
+  const { data } = await db.from('siguelo_ia_salida').select('empresa_id').eq('estado', 'pendiente').lte('vence', new Date().toISOString()).limit(200);
+  const conAlgo = new Set((data || []).map((x) => x.empresa_id));
+  if (!conAlgo.size) return;
+  for (const c of await empresasConIA()) if (conAlgo.has(c.ia.empresa_id)) await procesarSalida(c);
+}
+
+// Pagos: cada minuto, solo las cuentas con algo en curso (lo que confirmaste o rechazaste, comprobantes
+// por leer de nuevo, datos que esperan, reservas del club); todas, cada 10 minutos (respaldo).
+let pagosTodos = 0;
+async function vueltaDePagos(): Promise<void> {
+  const todas = Date.now() - pagosTodos >= PAGOS_TODOS_MS;
+  let conAlgo: Set<string> | null = null;
+  if (!todas) {
+    const { data, error } = await db.from('siguelo_pagos').select('empresa_id').or('accion.not.is.null,estado.in.(leyendo,datos,reservado)').limit(300);
+    if (error) return;
+    conAlgo = new Set((data || []).map((x) => x.empresa_id));
+    if (!conAlgo.size) return;
+  } else pagosTodos = Date.now();
+  for (const c of await empresasConIA()) if (!conAlgo || conAlgo.has(c.ia.empresa_id)) await revisarPagos(c);
+}
 
 // Respuesta rápida: cuando llega un mensaje de un cliente, la IA lo lee apenas
 // el cliente deja de escribir (2 s sin mensajes nuevos en ese número) y lo que
@@ -127,6 +163,8 @@ async function responderRapido(lineaId: string): Promise<void> {
     await conCandadoEsperando(conCandadoSalida, () => procesarSalida(c));
     await dormir(i === 0 ? 800 : 1_500);
   }
+  // Si era un comprobante o los datos de una inscripción, los pagos lo ven ahora.
+  await conCandadoEsperando(conCandadoPagos, () => revisarPagos(c));
 }
 // El botón "Responder con IA" de la bandeja: lee ese chat ahora (con el mismo candado, así no
 // responde dos veces) y lo que decidió sale en seguida.
@@ -155,29 +193,24 @@ alLlegarMensaje((lineaId) => {
     }, QUIETO_RAPIDO_MS),
   );
 });
-const conCandadoPagos = candado('los pagos');
-const conCandadoRedes = candado('las redes sociales');
-const conCandadoMasivos = candado('los mensajes masivos');
+
 
 export function iniciarIA(): void {
   db.from('siguelo_ia_salida')
     .update({ estado: 'pendiente' })
     .eq('estado', 'enviando')
     .then(() => undefined, () => undefined);
+  // Respaldo: lo que la lectura al momento no alcanzó (reintentos, el servidor recién prendido).
   setInterval(() => conCandadoLector(async () => {
     for (const c of await empresasConIA()) await leerPendientes(c);
-  }), 10_000);
-  setInterval(() => conCandadoSalida(async () => {
-    for (const c of await empresasConIA()) await procesarSalida(c);
-  }), 5_000);
-  // Fase 5: comprobantes de pago e inscripciones.
-  setInterval(() => conCandadoPagos(async () => {
-    for (const c of await empresasConIA()) await revisarPagos(c);
-  }), 10_000);
+  }), LECTOR_RESPALDO_MS);
+  setInterval(() => conCandadoSalida(vueltaDeSalida), SALIDA_CADA_MS);
+  // Fase 5: comprobantes de pago e inscripciones (y al llegar cada mensaje, en responderRapido).
+  setInterval(() => conCandadoPagos(vueltaDePagos), PAGOS_CADA_MS);
   // Comentarios de Facebook e Instagram (cada cuenta se revisa cada 3 minutos).
   setInterval(() => conCandadoRedes(async () => {
     for (const c of await empresasConIA()) await revisarRedes(c);
-  }), 60_000);
+  }), REDES_CADA_MS);
 }
 
 export function iniciarSeguimiento(): void {
@@ -194,7 +227,16 @@ export function iniciarSeguimiento(): void {
 
   // Mensajes masivos: no dependen de que el seguimiento esté prendido.
   reanudarAlArrancar().catch(() => undefined);
-  setInterval(() => conCandadoMasivos(procesarMasivos), 5_000);
+  // Cada 5 s mientras hay un envío en marcha; si no hay ninguno, cada minuto (o al crear uno).
+  const masivos = async () => {
+    let activos = false;
+    await conCandadoMasivos(async () => {
+      activos = await procesarMasivos();
+    });
+    setTimeout(masivos, activos ? 5_000 : 60_000);
+  };
+  alDespertarMasivos(() => conCandadoMasivos(async () => void (await procesarMasivos())));
+  setTimeout(masivos, 5_000);
 
   setTimeout(() => conCandado(vueltaDelMotor), 10_000);
   setInterval(() => conCandado(vueltaDelMotor), MOTOR_CADA_MS);

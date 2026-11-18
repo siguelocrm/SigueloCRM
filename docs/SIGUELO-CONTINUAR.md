@@ -223,6 +223,15 @@ npm test
   También por WhatsApp: lo que escribes desde tu número principal de avisos (a cualquier número del CRM) y no es la
   respuesta a un cliente (`usarRespuesta` devuelve false) va a `conversar(..., 'whatsapp')` y la respuesta te llega por ese
   número (aviso `referencia: 'asistente'`, sin encabezado). "ok/gracias" no se responden; el número de un encargado no ve datos.
+- **Consumo de Supabase (plan gratis):** cada consulta deja un registro (límite 1 GB de "Log Ingestion" al mes) y
+  cuenta para el "Egress" (5 GB). Por eso las vueltas son de respaldo y lentas: salida 20 s (una consulta para todas las
+  cuentas), lector 2 min, pagos 1 min (solo cuentas con algo en curso; todas cada 10 min), masivos 5 s solo si hay uno en
+  marcha (si no, 1 min), cola 30 s, motor 3 min, redes 3 min, programados 1 min; caché de la IA, fichas y bloqueos 2 min.
+  Lo urgente va por eventos: al llegar un mensaje, `responderRapido` lee, envía y revisa pagos. No volver a bajar estos
+  tiempos sin mirar el uso en Supabase → Usage.
+- **Respuestas rápidas con varios mensajes** (sección 44, `respuestas_rapidas.partes`): la IA y el chat mandan el primero
+  y los que siguen en orden. El asistente también ve números, respuestas rápidas (y en qué sucursales), bot y extras de
+  cada negocio.
 - **Pagos** (`pagos/`): cada 10 s, `inscripcion.ts` toma las fotos/PDF nuevas de clientes en números con cursos
   (`siguelo_pagos_por_leer`), las manda a la IA con visión, y `comprobante.ts` decide sin IA (monto, destinatario, fecha,
   transacción repetida, señales de edición). Confirmado → documento en la ficha, oportunidad ganada, etapa ganada, pide los

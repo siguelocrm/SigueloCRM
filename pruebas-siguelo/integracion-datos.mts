@@ -128,6 +128,7 @@ asistente = (ultimo) =>
   ultimo.startsWith('RESULTADOS DE TUS CONSULTAS')
     ? { respuesta: `En Cercado, esta semana: a ${JSON.parse(ultimo.split('\n')[1])[0].resultado.personas} persona le mandamos los horarios.`, acciones: [] }
     : { respuesta: '', acciones: [], consultas: [{ tipo: 'buscar', negocio: 'n2', quien: 'nosotros', palabras: ['horario'] }] };
+await pg.query(`insert into siguelo_respuesta_negocio (respuesta_id, negocio_id) values ($1, $2)`, [horarios, nC.id]);
 const c = await configDeEmpresa(empresa);
 const respuesta = await conversar(c!, null, '¿En la sede de Cercado a cuántas personas les mandaste los horarios?');
 assert.equal(respuesta.ok, true);
@@ -135,6 +136,8 @@ assert.equal((respuesta as any).mensaje.texto, 'En Cercado, esta semana: a 1 per
 assert.match(llamadas[0].sistema, /CONSULTAS DE DATOS/);
 assert.match(llamadas[0].sistema, /n2: "Club Cercado", sucursal Cercado/, 've las sedes con su id');
 assert.equal(llamadas.length, 2, 'una vuelta para pedir los datos y otra para responder');
+assert.match(llamadas[0].sistema, /RESPUESTAS RÁPIDAS[\s\S]*- "Horarios Cercado": texto; para solo Club Cercado/, 've en qué sucursales está cada respuesta rápida');
+assert.match(llamadas[0].sistema, /NÚMEROS DE WHATSAPP:\n- "Quillacollo".*DESCONECTADO; negocio: Club Quillacollo/, 've los números, si están conectados y su negocio');
 paso('el Asistente pide los datos que necesita y responde con los números reales');
 
 console.log(`\n${ok} pasos OK`);
