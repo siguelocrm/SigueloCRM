@@ -69,23 +69,48 @@ export default function ColaSeguimiento({ ajustes }: { ajustes: AjustesSeguimien
   const [ultimoAuto, setUltimoAuto] = useState<Record<string, number>>({});
   const [pausados, setPausados] = useState<Set<string>>(new Set());
   const [cargando, setCargando] = useState(true);
+  // Qué número se mira ('todos' o el id de un número); se recuerda en este navegador.
+  const [filtro, setFiltro] = useState<string>(() => {
+    try {
+      return localStorage.getItem('cola-numero') || 'todos';
+    } catch {
+      return 'todos';
+    }
+  });
+  const [porNumero, setPorNumero] = useState<Record<string, number>>({});
   const zona = ajustes.zona_horaria;
+  const elegir = (id: string) => {
+    setFiltro(id);
+    try {
+      localStorage.setItem('cola-numero', id);
+    } catch {
+      /* sin almacenamiento: no se recuerda */
+    }
+  };
 
   const cargar = useCallback(async () => {
     const campos = 'id, contacto_id, linea_id, tipo, nombre, variantes, vence, fijo, estado, a_mano, texto, motivo, creado_en, cerrado_en, contactos(nombre, telefono)';
-    const [pend, cerr, reg, cont, lin] = await Promise.all([
-      supabase.from('siguelo_cola').select(campos).in('estado', ['pendiente', 'enviando']).order('vence').order('creado_en').limit(300).returns<ItemCola[]>(),
-      supabase.from('siguelo_cola').select(campos).in('estado', ['enviado', 'cancelado', 'error']).order('cerrado_en', { ascending: false }).limit(30).returns<ItemCola[]>(),
+    const deNumero = <T,>(q: T) => (filtro === 'todos' ? q : (q as unknown as { eq: (c: string, v: string) => T }).eq('linea_id', filtro));
+    const [pend, cerr, reg, cont, lin, todos] = await Promise.all([
+      deNumero(supabase.from('siguelo_cola').select(campos).in('estado', ['pendiente', 'enviando'])).order('vence').order('creado_en').limit(300).returns<ItemCola[]>(),
+      deNumero(supabase.from('siguelo_cola').select(campos).in('estado', ['enviado', 'cancelado', 'error'])).order('cerrado_en', { ascending: false }).limit(30).returns<ItemCola[]>(),
       supabase.from('siguelo_registro').select('id, tipo, texto, creado_en').order('creado_en', { ascending: false }).limit(60).returns<RegistroSeguimiento[]>(),
       supabase.from('siguelo_contador').select('linea_id, enviados').eq('fecha', fechaDe(Date.now(), zona)).returns<{ linea_id: string; enviados: number }[]>(),
       supabase.from('lineas_whatsapp').select('id, nombre').order('nombre').returns<{ id: string; nombre: string }[]>(),
+      // Cuántos esperan en cada número (para los botones).
+      supabase.from('siguelo_cola').select('linea_id').in('estado', ['pendiente', 'enviando']).limit(5000).returns<{ linea_id: string }[]>(),
     ]);
+    const cuenta: Record<string, number> = {};
+    for (const x of todos.data || []) cuenta[x.linea_id] = (cuenta[x.linea_id] || 0) + 1;
+    setPorNumero(cuenta);
     const lista = pend.data || [];
     setPendientes(lista);
     setCerrados(cerr.data || []);
     setRegistro(reg.data || []);
     setUsadosHoy(Object.fromEntries((cont.data || []).map((c) => [c.linea_id, c.enviados])));
     setLineas(lin.data || []);
+    // Un número que ya no existe (o de otra cuenta): se vuelve a "Todos".
+    if (filtro !== 'todos' && lin.data && !lin.data.some((l) => l.id === filtro)) elegir('todos');
     const ids = [...new Set(lista.map((i) => i.contacto_id))];
     if (ids.length) {
       const [{ data: segs }, { data: recientes }] = await Promise.all([
@@ -108,7 +133,7 @@ export default function ColaSeguimiento({ ajustes }: { ajustes: AjustesSeguimien
       setPausados(new Set((segs || []).filter((s) => s.pausado).map((s) => s.contacto_id)));
     }
     setCargando(false);
-  }, [zona]);
+  }, [zona, filtro]);
 
   useEffect(() => {
     cargar();
@@ -171,8 +196,33 @@ export default function ColaSeguimiento({ ajustes }: { ajustes: AjustesSeguimien
         <span className="text-[12.5px] flex-1 min-w-[200px]" style={{ color: TEXTO_SECUNDARIO }}>{estadoCola}</span>
       </Tarjeta>
 
+      {varias && (
+        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Ver la cola de un número">
+          {[{ id: 'todos', nombre: 'Todos' }, ...lineas].map((l) => {
+            const activo = filtro === l.id;
+            const n = l.id === 'todos' ? Object.values(porNumero).reduce((a, b) => a + b, 0) : porNumero[l.id] || 0;
+            return (
+              <button
+                key={l.id}
+                role="tab"
+                aria-selected={activo}
+                onClick={() => elegir(l.id)}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-semibold"
+                style={{ backgroundColor: activo ? 'var(--accent-soft)' : 'var(--surface)', color: activo ? 'var(--accent)' : 'var(--fg-2)', border: `1px solid ${activo ? 'var(--accent)' : BORDE}` }}
+              >
+                {l.nombre}
+                <span className="num text-[11.5px] opacity-80">{n}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <section className="flex flex-col gap-2">
-        <h2 className="m-0 flex items-center gap-2 text-[14px] font-semibold" style={{ color: TEXTO_PRIMARIO }}><ListOrdered size={15} /> Por salir</h2>
+        <h2 className="m-0 flex items-center gap-2 text-[14px] font-semibold" style={{ color: TEXTO_PRIMARIO }}>
+          <ListOrdered size={15} /> Por salir{filtro !== 'todos' ? ` · ${nombreLinea(filtro)}` : ''}
+          {pendientes.length >= 300 && <span className="text-[12px] font-normal" style={{ color: TEXTO_TERCIARIO }}>(se muestran los primeros 300)</span>}
+        </h2>
         {cargando ? (
           <div className="text-xs" style={{ color: TEXTO_TERCIARIO }}>Cargando…</div>
         ) : pendientes.length === 0 ? (
@@ -212,7 +262,7 @@ export default function ColaSeguimiento({ ajustes }: { ajustes: AjustesSeguimien
 
       {cerrados.length > 0 && (
         <section className="flex flex-col gap-2">
-          <h2 className="m-0 flex items-center gap-2 text-[14px] font-semibold" style={{ color: TEXTO_PRIMARIO }}><Send size={15} /> Últimos procesados</h2>
+          <h2 className="m-0 flex items-center gap-2 text-[14px] font-semibold" style={{ color: TEXTO_PRIMARIO }}><Send size={15} /> Últimos procesados{filtro !== 'todos' ? ` · ${nombreLinea(filtro)}` : ''}</h2>
           <Tarjeta className="flex flex-col">
             {cerrados.map((item, i) => {
               const est = ESTADO[item.estado];
