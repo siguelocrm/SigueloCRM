@@ -9,6 +9,7 @@ import { marcarEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js
 import { enviarPasos } from '../../whatsapp/bot-automatico.js';
 import { iniciarFlujo } from '../../whatsapp/flujo.js';
 import type { IaRow, SalidaRow } from '../tipos.js';
+import { enviarConReintento, esConexionCaida } from '../reintento.js';
 import { recortarTexto } from '../textos.js';
 
 // Envía lo que decidió la IA (lector.ts): sus respuestas, las respuestas
@@ -108,7 +109,7 @@ async function enviarAlCliente(c: Config, it: SalidaRow): Promise<void> {
     const contenido = lugar
       ? await contenidoUbicacion(lugar.ubicacion, lugar.nombre, lugar.direccion)
       : await construirContenidoWA({ tipo: it.tipo, texto: it.contenido, media_url: it.media_url, mimetype: it.mimetype });
-    const resultado = await sesion.sock.sendMessage(jidDe(it.telefono), contenido);
+    const resultado = await enviarConReintento(it.linea_id, sesion.sock, jidDe(it.telefono), contenido);
     const whatsappId = resultado?.key?.id || null;
     if (whatsappId) marcarEnviadoPorCRM(whatsappId);
     const { data: mensaje } = await db
@@ -133,6 +134,11 @@ async function enviarAlCliente(c: Config, it: SalidaRow): Promise<void> {
       await registrar(c.ia.empresa_id, it.contacto_id, 'ia', `IA ${que} a +${it.telefono.split('@')[0]}: "${recortarTexto(it.contenido, 120)}"`);
     }
   } catch (err) {
+    // La conexión se cayó y no volvió a tiempo: vuelve a la fila (sale cuando la línea se reconecte).
+    if (esConexionCaida(err) && Date.now() - ms(it.vence) < LINEA_CAIDA_MAX_MS) {
+      await db.from('siguelo_ia_salida').update({ estado: 'pendiente' }).eq('id', it.id).eq('estado', 'enviando');
+      return;
+    }
     const motivo = (err as Error).message.slice(0, 200);
     await cerrar([it.id], { estado: 'error', motivo });
     await cancelarLote(it, 'No salió el mensaje anterior de esta respuesta');
@@ -225,10 +231,12 @@ async function enviarAvisos(c: Config, primero: SalidaRow): Promise<void> {
   const ids = lote.map((x) => x.id);
   const loteId = randomUUID();
   try {
-    const resultado = await sesion.sock.sendMessage(jidDe(telefono), { text: texto });
+    const resultado = await enviarConReintento(sesion.lineaId, sesion.sock, jidDe(telefono), { text: texto });
     if (resultado?.key?.id) marcarEnviadoPorCRM(resultado.key.id);
     await cerrar(ids, { estado: 'enviado', lote: loteId, whatsapp_id: resultado?.key?.id || null });
   } catch (err) {
+    // Conexión caída: los avisos vuelven a esperar y salen en la próxima vuelta.
+    if (esConexionCaida(err) && Date.now() - ms(primero.vence) < LINEA_CAIDA_MAX_MS) return;
     await cerrar(ids, { estado: 'error', motivo: (err as Error).message.slice(0, 200) });
     await registrar(c.ia.empresa_id, null, 'ia_error', `Avisos: WhatsApp no pudo mandarte un aviso (${(err as Error).message.slice(0, 120)}).`);
   }

@@ -9,6 +9,7 @@ import { adaptarMensaje } from './ia/adaptar.js';
 import { obtenerSesion } from '../whatsapp/sesiones.js';
 import { construirContenidoWA } from '../whatsapp/contenido.js';
 import { marcarEnviadoPorCRM } from '../whatsapp/mensajes-enviados-por-crm.js';
+import { enviarConReintento, esConexionCaida } from './reintento.js';
 import type { AjustesRow, ColaRow, EstadoCola, SeguimientoRow } from './tipos.js';
 
 // Cola de envío: el más antiguo primero, respetando el horario, una pausa al
@@ -201,7 +202,7 @@ async function intentar(item: ColaRow, aj: AjustesRow, franja: Franja, ahora: nu
 
   try {
     const jid = item.telefono.includes('@') ? item.telefono : `${item.telefono}@s.whatsapp.net`;
-    const resultado = await sesion.sock.sendMessage(jid, await construirContenidoWA({ tipo: 'texto', texto }));
+    const resultado = await enviarConReintento(item.linea_id, sesion.sock, jid, await construirContenidoWA({ tipo: 'texto', texto }));
     const whatsappId = resultado?.key?.id || null;
     if (whatsappId) marcarEnviadoPorCRM(whatsappId);
     const { data: mensaje } = await db
@@ -216,6 +217,13 @@ async function intentar(item: ColaRow, aj: AjustesRow, franja: Franja, ahora: nu
     e.proximo = Date.now() + azarMs(aj);
     return 'enviado';
   } catch (err) {
+    // La conexión se cayó y no volvió a tiempo: vuelve a la cola y sale en la próxima vuelta (no se pierde
+    // ni cuenta como error para la pausa automática).
+    if (esConexionCaida(err)) {
+      await db.from('siguelo_cola').update({ estado: 'pendiente' }).eq('id', item.id).eq('estado', 'enviando');
+      e.proximo = Date.now() + 60_000;
+      return 'error';
+    }
     const motivo = (err as Error).message.slice(0, 200);
     await cerrar(item, 'error', motivo);
     await registrar(aj.empresa_id, item.contacto_id, 'error', `${contacto.nombre || contacto.telefono}: no se pudo enviar "${item.nombre}" (${motivo}).`);
@@ -262,7 +270,7 @@ async function intentarCita(item: ColaRow, aj: AjustesRow, franja: Franja, ahora
   const e = estadoLinea(aj, item.linea_id);
   try {
     const jid = item.telefono.includes('@') ? item.telefono : `${item.telefono}@s.whatsapp.net`;
-    const resultado = await sesion.sock.sendMessage(jid, { text: elegido.texto });
+    const resultado = await enviarConReintento(item.linea_id, sesion.sock, jid, { text: elegido.texto });
     const whatsappId = resultado?.key?.id || null;
     if (whatsappId) marcarEnviadoPorCRM(whatsappId);
     const { data: mensaje } = await db
@@ -276,6 +284,11 @@ async function intentarCita(item: ColaRow, aj: AjustesRow, franja: Franja, ahora
     e.proximo = Date.now() + (5 + Math.random() * 15) * 1000; // después de una cita, una pausa corta
     return 'enviado';
   } catch (err) {
+    if (esConexionCaida(err)) {
+      await db.from('siguelo_cola').update({ estado: 'pendiente' }).eq('id', item.id).eq('estado', 'enviando');
+      e.proximo = Date.now() + 30_000;
+      return 'error';
+    }
     const motivo = (err as Error).message.slice(0, 200);
     await cerrar(item, 'error', motivo);
     await avanzarCita(item, false);

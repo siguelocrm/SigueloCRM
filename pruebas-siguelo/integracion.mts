@@ -214,6 +214,29 @@ assert.equal(conError.estado, 'error');
 assert.equal((await segDe(dora.id)).rec.paso, 1, 'un error salta ese paso');
 paso('un error de envío queda anotado y se salta ese paso');
 
+// La conexión de WhatsApp se cae un momento al enviar ("Connection Closed"): espera la conexión nueva y sale igual.
+(linea as any).falla = false;
+await pg.query(`update siguelo_cola set estado = 'pendiente', motivo = null, cerrado_en = null where id = (select id from siguelo_cola where contacto_id = $1 order by creado_en desc limit 1)`, [dora.id]);
+await pg.query(`update siguelo_seguimientos set rec = jsonb_set(rec, '{paso}', '0') where contacto_id = $1`, [dora.id]);
+const antesCaida = enviados.length;
+(linea as any).caidas = 1;
+en(reloj.ahora + 5 * MIN);
+await cola();
+assert.equal(enviados.length, antesCaida + 1, 'reintentó con la conexión nueva y salió');
+assert.equal((await uno(`select count(*)::int n from siguelo_registro where texto like '%Connection Closed%'`)).n, 0, 'no queda como error');
+// Si la conexión no vuelve a tiempo, el mensaje vuelve a la cola (no se pierde ni cuenta para la pausa).
+const filaCaida = await uno(`select id from siguelo_cola where contacto_id = $1 order by creado_en desc limit 1`, [dora.id]);
+await pg.query(`update siguelo_cola set estado = 'pendiente', cerrado_en = null where id = $1`, [filaCaida.id]);
+await pg.query(`update siguelo_seguimientos set rec = jsonb_set(rec, '{paso}', '0') where contacto_id = $1`, [dora.id]);
+(linea as any).caidas = 2;
+en(reloj.ahora + 5 * MIN);
+await cola();
+assert.equal((await uno(`select estado from siguelo_cola where id = $1`, [filaCaida.id])).estado, 'pendiente', 'vuelve a esperar en la cola');
+assert.equal((await uno(`select pausado from siguelo_ajustes`)).pausado, false, 'no pausa el seguimiento');
+(linea as any).caidas = 0;
+await pg.query(`update siguelo_cola set estado = 'cancelado' where id = $1`, [filaCaida.id]);
+paso('si WhatsApp corta la conexión al enviar, reintenta con la nueva; si no vuelve, el mensaje espera (no se pierde)');
+
 // ---- Tope y pausa por número ----
 (linea as any).falla = false;
 const linea2 = (await uno(`insert into lineas_whatsapp (empresa_id, nombre, numero, estado) values ($1, 'L2', '592', 'activo') returning id`, [empresa])).id;

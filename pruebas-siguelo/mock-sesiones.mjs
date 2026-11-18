@@ -8,7 +8,12 @@ const sock = (lineaId) => ({
     return (linea.sinWhatsapp || []).includes(String(jid).split('@')[0]) ? [] : [{ jid, exists: true }];
   },
   async sendMessage(jid, contenido) {
-    if (linea.falla) throw new Error('Connection Closed (falso)');
+    // falla: un error real (número bloqueado...). caidas: cuántas veces más se "cae la conexión" (se recupera sola).
+    if (linea.falla) throw new Error(typeof linea.falla === 'string' ? linea.falla : 'Error de envío (falso)');
+    if (linea.caidas > 0) {
+      linea.caidas--;
+      throw new Error('Connection Closed');
+    }
     enviados.push({ jid, linea: lineaId, texto: contenido.text ?? contenido.caption, imagen: contenido.image?.url, documento: contenido.document?.url, ubicacion: contenido.location, en: Date.now() });
     return { key: { id: `WID-${++n}` } };
   },

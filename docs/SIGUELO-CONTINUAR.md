@@ -232,6 +232,9 @@ npm test
 - **Cola del seguimiento:** toma hasta 500 vencidos y deja de lado los que esperan a propósito (recordatorios de quien
   respondió, contactos en pausa) antes de los 60 que procesa: antes 50 de esos tapaban todo. `asegurarContactos` solo trae
   chats con movimiento desde la vuelta anterior. Diagnóstico con datos reales: `docs/diagnosticos/seguimiento.sql`.
+- **"Connection Closed" al enviar** (`siguelo/reintento.ts`): WhatsApp corta la conexión un momento y se reconecta solo. Cola,
+  citas, salida de la IA, avisos, masivos, "stop" y programados usan `enviarConReintento` (espera la conexión nueva y
+  reintenta una vez); si no vuelve, el mensaje vuelve a pendiente y no cuenta para la pausa automática.
 - **Respuestas rápidas con varios mensajes** (sección 44, `respuestas_rapidas.partes`): la IA y el chat mandan el primero
   y los que siguen en orden. El asistente también ve números, respuestas rápidas (y en qué sucursales), bot y extras de
   cada negocio.

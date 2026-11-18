@@ -1,5 +1,6 @@
 import { db } from './db.js';
 import { obtenerSesion } from '../whatsapp/sesiones.js';
+import { enviarConReintento } from './reintento.js';
 import { marcarEnviadoPorCRM } from '../whatsapp/mensajes-enviados-por-crm.js';
 
 // Manda un texto suelto ya mismo (por ejemplo la respuesta a "stop") y lo deja
@@ -9,7 +10,7 @@ export async function enviarTexto(lineaId: string, telefono: string, conversacio
   if (!sesion || sesion.estado !== 'activo' || !texto.trim()) return null;
   try {
     const jid = telefono.includes('@') ? telefono : `${telefono}@s.whatsapp.net`;
-    const resultado = await sesion.sock.sendMessage(jid, { text: texto });
+    const resultado = await enviarConReintento(lineaId, sesion.sock, jid, { text: texto });
     const whatsappId = resultado?.key?.id || null;
     if (whatsappId) marcarEnviadoPorCRM(whatsappId);
     const { data } = await db

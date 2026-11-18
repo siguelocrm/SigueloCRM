@@ -2,6 +2,7 @@ import { supabase } from '../supabase/client.js';
 import type { MensajeProgramadoRow } from '../types/dominio.js';
 import { obtenerSesion } from './sesiones.js';
 import { marcarEnviadoPorCRM } from './mensajes-enviados-por-crm.js';
+import { enviarConReintento, esConexionCaida } from '../siguelo/reintento.js';
 import { construirContenidoWA } from './contenido.js';
 
 const CADA_MS = 60_000;
@@ -62,7 +63,7 @@ async function procesarVencidos(): Promise<void> {
       }
 
       const jid = m.telefono.includes('@') ? m.telefono : `${m.telefono}@s.whatsapp.net`;
-      const resultado = await sesion.sock.sendMessage(jid, await construirContenidoWA({ tipo: m.tipo, texto: m.contenido, media_url: m.media_url, mimetype: m.mimetype }));
+      const resultado = await enviarConReintento(m.linea_id, sesion.sock, jid, await construirContenidoWA({ tipo: m.tipo, texto: m.contenido, media_url: m.media_url, mimetype: m.mimetype }));
       if (resultado?.key?.id) marcarEnviadoPorCRM(resultado.key.id);
 
       await supabase.from('mensajes').insert({
@@ -78,6 +79,11 @@ async function procesarVencidos(): Promise<void> {
       console.log(`[${m.linea_id}] ⏰ Mensaje programado enviado a ${m.telefono}`);
     } catch (err) {
       console.error(`[${m.linea_id}] Error enviando mensaje programado:`, (err as Error).message);
+      // Conexión caída: se reintenta en la próxima vuelta (mientras no pase la tolerancia).
+      if (esConexionCaida(err) && Date.now() - new Date(m.enviar_en).getTime() < TOLERANCIA_LINEA_CAIDA_MS) {
+        await marcar(m.id, { estado: 'pendiente' });
+        continue;
+      }
       await marcar(m.id, { estado: 'error', motivo: (err as Error).message.slice(0, 200) });
     }
   }

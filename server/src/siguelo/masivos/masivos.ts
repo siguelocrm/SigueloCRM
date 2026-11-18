@@ -7,6 +7,7 @@ import { obtenerSesion } from '../../whatsapp/sesiones.js';
 import { marcarEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import type { FiltroMasivo, MasivoEnvioRow, MasivoRow } from '../tipos.js';
 import { adaptarParaCliente } from './adaptar.js';
+import { enviarConReintento, esConexionCaida } from '../reintento.js';
 import { cuentasBloqueadas } from '../agencia/bloqueo.js';
 
 // Mensajes masivos (SígueloCRM): un mensaje a muchos contactos desde un número,
@@ -278,7 +279,7 @@ async function enviarUno(m: MasivoRow, ahora: number): Promise<void> {
     // "Que la IA adapte el mensaje": fiel al original, con lo que este cliente ya contó (si falla, va el original).
     if (m.adaptar && !grupo && elegido.texto) elegido.texto = await adaptarParaCliente(m.empresa_id, contactoId, chatId, siguiente.nombre, elegido.texto).catch(() => elegido.texto);
     const jid = grupo ? siguiente.telefono : `${siguiente.telefono}@s.whatsapp.net`;
-    const resultado = await sesion.sock.sendMessage(jid, contenidoMasivo(m, elegido.texto));
+    const resultado = await enviarConReintento(m.linea_id, sesion.sock, jid, contenidoMasivo(m, elegido.texto));
     const whatsappId = resultado?.key?.id || null;
     if (whatsappId) marcarEnviadoPorCRM(whatsappId);
     const { data: mensaje } = chatId
@@ -302,6 +303,12 @@ async function enviarUno(m: MasivoRow, ahora: number): Promise<void> {
     console.log(`📣 Masivo "${m.nombre}": enviado a +${siguiente.telefono}`);
     est.erroresSeguidos = 0;
   } catch (err) {
+    // Conexión caída: ese envío vuelve a la fila (no se pierde ni cuenta para pausar el masivo).
+    if (esConexionCaida(err)) {
+      await db.from('siguelo_masivo_envios').update({ estado: 'pendiente' }).eq('id', siguiente.id).eq('estado', 'enviando');
+      est.proximo = Date.now() + 60_000;
+      return;
+    }
     const motivo = (err as Error).message.slice(0, 200);
     await cerrarEnvio(siguiente, { estado: 'error', motivo });
     await actualizarMasivo(m, { errores: m.errores + 1 });
