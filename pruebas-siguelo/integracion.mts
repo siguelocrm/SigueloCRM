@@ -610,6 +610,28 @@ assert.equal((await uno(`select motivo from siguelo_cola where contacto_id = $1 
 db.maxFilas = 1000;
 paso('con más contactos de los que entran en un pedido, el motor lee por partes y no cancela nada de más; "En Negociación" usa los textos de cada sucursal');
 
+// ---------- Cada número con sus propios límites, y pausar solo uno ----------
+const { delNumero } = await import(R + 'cola.ts');
+await pg.query(`update siguelo_ajustes set por_numero = $2::jsonb where empresa_id = $1`, [empresa, JSON.stringify({ [linea2]: { maximo_diario: 5, pausa_min_seg: 60, pausa_max_seg: 120, pausado: true } })]);
+const ajPor = await ajustes();
+assert.deepEqual(delNumero(ajPor, linea2), { maximo_diario: 5, pausa_min_seg: 60, pausa_max_seg: 120, pausado: true });
+assert.deepEqual(delNumero(ajPor, lineaId), { maximo_diario: ajPor.maximo_diario, pausa_min_seg: ajPor.pausa_min_seg, pausa_max_seg: ajPor.pausa_max_seg, pausado: false }, 'el otro número usa lo general');
+const enPausaId = (await uno(`insert into contactos (empresa_id, telefono, nombre) values ($1, '59174444444', 'En pausa') returning id`, [empresa])).id;
+await pg.query(`insert into siguelo_seguimientos (contacto_id, empresa_id) values ($1, $2)`, [enPausaId, empresa]);
+const convPausa = (await uno(`insert into conversaciones (linea_id, contacto_telefono, contacto_nombre, estado) values ($1, '59174444444', 'En pausa', 'abierto') returning id`, [linea2])).id;
+const filaPausa = (await uno(
+  `insert into siguelo_cola (empresa_id, contacto_id, conversacion_id, linea_id, telefono, tipo, paso, token, nombre, variantes, vence, estado) values ($1, $2, $3, $4, '59174444444', 'react', 0, 'c1', 'Reactivación', '{hola}', $5, 'pendiente') returning id`,
+  [empresa, enPausaId, convPausa, linea2, iso(reloj.ahora - MIN)],
+)).id;
+en(reloj.ahora + 5 * MIN);
+await cola();
+assert.equal((await uno(`select estado from siguelo_cola where id = $1`, [filaPausa])).estado, 'pendiente', 'un número en pausa no manda nada');
+await pg.query(`update siguelo_ajustes set por_numero = '{}'::jsonb where empresa_id = $1`, [empresa]);
+en(reloj.ahora + 5 * MIN);
+await cola();
+assert.notEqual((await uno(`select estado from siguelo_cola where id = $1`, [filaPausa])).estado, 'pendiente', 'al quitarle la pausa, sigue');
+paso('cada número puede tener su propio máximo y su pausa, y se puede pausar solo uno');
+
 console.log(`\n${ok} pasos OK · mensajes "enviados":`);
 for (const e of enviados) console.log('  →', e.jid, JSON.stringify(e.texto));
 const reg = (await pg.query<any>(`select texto from siguelo_registro order by creado_en`)).rows.map((r: any) => r.texto);

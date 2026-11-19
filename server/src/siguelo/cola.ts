@@ -32,9 +32,23 @@ type EstadoLinea = {
 };
 const lineas = new Map<string, EstadoLinea>();
 
-const azarMs = (aj: AjustesRow) => {
-  const min = Math.min(aj.pausa_min_seg, aj.pausa_max_seg);
-  const max = Math.max(aj.pausa_min_seg, aj.pausa_max_seg);
+// Lo de cada número (Seguimiento → Ajustes → "Cada número"): su máximo por día y su pausa; lo que
+// no tenga propio usa lo general. "pausado": ese número no manda recordatorios ni reactivaciones.
+export function delNumero(aj: AjustesRow, lineaId: string) {
+  const p = aj.por_numero?.[lineaId] ?? {};
+  const num = (v: unknown, general: number) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : general);
+  return {
+    maximo_diario: num(p.maximo_diario, aj.maximo_diario),
+    pausa_min_seg: num(p.pausa_min_seg, aj.pausa_min_seg),
+    pausa_max_seg: num(p.pausa_max_seg, aj.pausa_max_seg),
+    pausado: !!p.pausado,
+  };
+}
+
+const azarMs = (aj: AjustesRow, lineaId: string) => {
+  const n = delNumero(aj, lineaId);
+  const min = Math.min(n.pausa_min_seg, n.pausa_max_seg);
+  const max = Math.max(n.pausa_min_seg, n.pausa_max_seg);
   return (min + Math.random() * (max - min)) * 1000;
 };
 
@@ -43,7 +57,7 @@ const azarMs = (aj: AjustesRow) => {
 function estadoLinea(aj: AjustesRow, lineaId: string): EstadoLinea {
   let e = lineas.get(lineaId);
   if (!e) {
-    e = { proximo: Date.now() + azarMs(aj), erroresSeguidos: 0, retraso: null };
+    e = { proximo: Date.now() + azarMs(aj, lineaId), erroresSeguidos: 0, retraso: null };
     lineas.set(lineaId, e);
   }
   return e;
@@ -174,7 +188,7 @@ async function intentar(item: ColaRow, aj: AjustesRow, franja: Franja, ahora: nu
   }
   // Mínimo entre dos mensajes automáticos de este número a la misma persona.
   if (ahora < (await ultimoAutomatico(item.contacto_id, item.linea_id)) + aj.min_entre_misma_persona_min * MIN) return 'sigue';
-  if (usados >= aj.maximo_diario) return 'tope';
+  if (usados >= delNumero(aj, item.linea_id).maximo_diario) return 'tope';
 
   const sesion = obtenerSesion(item.linea_id);
   if (!sesion || sesion.estado !== 'activo') return 'sigue'; // espera a que la línea se reconecte
@@ -215,7 +229,7 @@ async function intentar(item: ColaRow, aj: AjustesRow, franja: Franja, ahora: nu
     await sumarEnviado(aj.empresa_id, item.linea_id, fechaDe(ahora, franja.zona));
     await registrar(aj.empresa_id, item.contacto_id, 'enviado', `${contacto.nombre || contacto.telefono}: salió "${item.nombre}"${adaptado ? ' (adaptado por la IA a la conversación)' : ''}.`);
     e.erroresSeguidos = 0;
-    e.proximo = Date.now() + azarMs(aj);
+    e.proximo = Date.now() + azarMs(aj, item.linea_id);
     return 'enviado';
   } catch (err) {
     // La conexión se cayó y no volvió a tiempo: vuelve a la cola y sale en la próxima vuelta (no se pierde
@@ -229,7 +243,7 @@ async function intentar(item: ColaRow, aj: AjustesRow, franja: Franja, ahora: nu
     await cerrar(item, 'error', motivo);
     await registrar(aj.empresa_id, item.contacto_id, 'error', `${contacto.nombre || contacto.telefono}: no se pudo enviar "${item.nombre}" (${motivo}).`);
     e.erroresSeguidos++;
-    e.proximo = Date.now() + azarMs(aj);
+    e.proximo = Date.now() + azarMs(aj, item.linea_id);
     if (e.erroresSeguidos >= ERRORES_PARA_PAUSAR) {
       // Solo ese número descansa un rato; los demás siguen con lo suyo.
       e.erroresSeguidos = 0;
@@ -295,7 +309,7 @@ async function intentarCita(item: ColaRow, aj: AjustesRow, franja: Franja, ahora
     const motivo = (err as Error).message.slice(0, 200);
     await cerrar(item, 'error', motivo);
     await avanzarCita(item, false);
-    e.proximo = Date.now() + azarMs(aj);
+    e.proximo = Date.now() + azarMs(aj, item.linea_id);
     return 'error';
   }
 }
@@ -324,6 +338,8 @@ export async function procesarCola(aj: AjustesRow): Promise<number | null> {
     const e = estadoLinea(aj, linea);
     const esCita = item.tipo === 'cita';
     if (listas.has(linea)) continue;
+    // Número pausado a mano: sus recordatorios y reactivaciones esperan (los mensajes de citas sí salen).
+    if (!esCita && delNumero(aj, linea).pausado) continue;
     if (ahora < e.proximo) {
       enPausa.add(linea);
       continue;

@@ -2040,3 +2040,9 @@ create index if not exists conversaciones_telefono_idx on conversaciones (contac
 create index if not exists contactos_etapa_cambio_idx on contactos (empresa_id, etapa_actualizada_en);
 create index if not exists siguelo_seguimientos_cambio_idx on siguelo_seguimientos (empresa_id, actualizado_en);
 create index if not exists siguelo_cola_cerrado_idx on siguelo_cola (empresa_id, cerrado_en);
+
+-- ---------- 47. Límites y pausa de cada número ----------
+-- Seguimiento → Ajustes → "Cada número": su propio máximo por día y su pausa entre mensajes (si no
+-- tiene, usa los generales), y pausar solo ese número (por ejemplo si WhatsApp lo restringió).
+-- {"<linea_id>": {"maximo_diario": 100, "pausa_min_seg": 60, "pausa_max_seg": 180, "pausado": true}}
+alter table siguelo_ajustes add column if not exists por_numero jsonb not null default '{}'::jsonb;

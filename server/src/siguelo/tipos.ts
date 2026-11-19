@@ -33,6 +33,8 @@ export type EstadoReact = {
   ultimo_envio: number | null;
 };
 
+export type AjustesNumero = { maximo_diario?: number | null; pausa_min_seg?: number | null; pausa_max_seg?: number | null; pausado?: boolean };
+
 export type AjustesRow = {
   empresa_id: string;
   activo: boolean;
@@ -45,6 +47,8 @@ export type AjustesRow = {
   pausa_min_seg: number;
   pausa_max_seg: number;
   maximo_diario: number;
+  // Límites y pausa de cada número (sección 47): lo que no tenga, usa los generales.
+  por_numero?: Record<string, AjustesNumero> | null;
   min_entre_misma_persona_min: number;
   no_recordar_si_escribio_horas: number;
   atraso_max_reactivacion_horas: number;

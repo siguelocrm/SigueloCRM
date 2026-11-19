@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Power, Clock, Gauge, MessageSquareText, OctagonX, Sparkles } from 'lucide-react';
+import { Power, Clock, Gauge, MessageSquareText, OctagonX, Smartphone, Sparkles } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import { TEXTO_PRIMARIO, TEXTO_SECUNDARIO, TEXTO_TERCIARIO } from '../../lib/tema';
 import { etiquetaDeZona, formatearEnZona, listaDeZonas } from '../../lib/zonaHoraria';
 import { Boton, Interruptor, Tarjeta, useToast } from '../../components/ui';
-import type { AjustesSeguimiento as Ajustes } from './tipos';
+import type { AjustesNumero, AjustesSeguimiento as Ajustes } from './tipos';
 import { PIE_EJEMPLO, TEXTO_VARIABLES, textoAVariantes, variablesDesconocidas, variantesATexto } from './plantillas';
 import { claseCampo, estiloArea, estiloCampo } from './estilos';
 
@@ -39,6 +39,12 @@ function Numero({ etiqueta, ayuda, valor, onCambiar, deshabilitado, unidad }: { 
   );
 }
 
+// Lo propio de cada número mientras lo editas ('' = usa lo general).
+type NumeroEditado = { maximo: string; desde: string; hasta: string };
+const aTexto = (v: number | null | undefined) => (typeof v === 'number' ? String(v) : '');
+const aEdicion = (aj: Ajustes): Record<string, NumeroEditado> =>
+  Object.fromEntries(Object.entries(aj.por_numero ?? {}).map(([id, p]) => [id, { maximo: aTexto(p.maximo_diario), desde: aTexto(p.pausa_min_seg), hasta: aTexto(p.pausa_max_seg) }]));
+
 const ADAPTAR_INICIAL = { activo: false, recordatorios: true, reactivaciones: true, instrucciones: '' };
 
 // "stop" (Fase 4) mientras lo editas: una palabra o frase por línea.
@@ -72,6 +78,16 @@ export default function AjustesSeguimiento({ ajustes, existe, puedeEditar, onGua
   const [stop, setStop] = useState(() => aStop(ajustes));
   const [adaptar, setAdaptar] = useState(() => ajustes.adaptar ?? ADAPTAR_INICIAL);
   const [guardando, setGuardando] = useState(false);
+  const [porNumero, setPorNumero] = useState<Record<string, NumeroEditado>>(() => aEdicion(ajustes));
+  const [lineasCuenta, setLineasCuenta] = useState<{ id: string; nombre: string }[]>([]);
+
+  useEffect(() => {
+    supabase
+      .from('lineas_whatsapp')
+      .select('id, nombre')
+      .order('nombre')
+      .then(({ data }) => setLineasCuenta((data as { id: string; nombre: string }[] | null) ?? []));
+  }, []);
 
   // Si los ajustes cambian desde afuera (otra pestaña, el servidor), se recargan.
   useEffect(() => {
@@ -83,6 +99,7 @@ export default function AjustesSeguimiento({ ajustes, existe, puedeEditar, onGua
     setPieTexto(variantesATexto(ajustes.pie?.variantes ?? []));
     setStop(aStop(ajustes));
     setAdaptar(ajustes.adaptar ?? ADAPTAR_INICIAL);
+    setPorNumero(aEdicion(ajustes));
   }, [ajustes]);
 
   const zonas = useMemo(() => [...new Set([...listaDeZonas(), zona])].sort((a, b) => a.localeCompare(b)), [zona]);
@@ -124,13 +141,36 @@ export default function AjustesSeguimiento({ ajustes, existe, puedeEditar, onGua
     if (pieActivo && !variantes.length) return toast('Escribe el pie o apágalo.', 'error');
     const desconocidas = variablesDesconocidas(pieTexto);
     if (desconocidas.length) return toast(`Esa variable no existe: ${desconocidas.map((v) => `{${v}}`).join(', ')}. Puedes usar ${TEXTO_VARIABLES}.`, 'error');
+    // Lo propio de cada número (vacío = usa lo general). Solo con la sección 47 pegada.
+    let conPorNumero = {};
+    if (ajustes.por_numero !== undefined) {
+      const por: Record<string, AjustesNumero> = {};
+      for (const l of lineasCuenta) {
+        const e = porNumero[l.id] ?? { maximo: '', desde: '', hasta: '' };
+        const leer = (t: string) => (t.trim() === '' ? null : Math.round(parseFloat(t.replace(',', '.'))));
+        const p = { maximo_diario: leer(e.maximo), pausa_min_seg: leer(e.desde), pausa_max_seg: leer(e.hasta) };
+        if (Object.values(p).some((v) => v !== null && (!Number.isFinite(v) || v < 0))) return toast(`Revisa los números de ${l.nombre}: tienen que ser 0 o más (o vacíos).`, 'error');
+        const pausado = !!ajustes.por_numero?.[l.id]?.pausado;
+        if (pausado || Object.values(p).some((v) => v !== null)) por[l.id] = { ...p, pausado };
+      }
+      conPorNumero = { por_numero: por };
+    }
     setGuardando(true);
     // "stop" solo si la Fase 4 de database/siguelo.sql está pegada (si no, la columna no existe).
     const conStop = ajustes.stop ? { stop: { activo: stop.activo, palabras: lineas(stop.palabras), parecidas: lineas(stop.parecidas), respuesta: stop.respuesta.trim() } } : {};
     const conAdaptar = ajustes.adaptar ? { adaptar: { ...adaptar, instrucciones: adaptar.instrucciones.trim() } } : {};
-    await guardarCambios({ ...valores, zona_horaria: zona, hora_inicio: horaInicio, hora_fin: horaFin, pie: { activo: pieActivo, variantes }, ...conStop, ...conAdaptar }, 'Ajustes guardados');
+    await guardarCambios({ ...valores, zona_horaria: zona, hora_inicio: horaInicio, hora_fin: horaFin, pie: { activo: pieActivo, variantes }, ...conStop, ...conAdaptar, ...conPorNumero }, 'Ajustes guardados');
     setGuardando(false);
   };
+
+  // Pausar o reanudar un solo número (se guarda en el momento).
+  const pausarNumero = (lineaId: string, nombre: string, pausado: boolean) =>
+    guardarCambios(
+      { por_numero: { ...ajustes.por_numero, [lineaId]: { ...ajustes.por_numero?.[lineaId], pausado } } },
+      pausado ? `${nombre} en pausa: no manda recordatorios ni reactivaciones` : `${nombre} vuelve a enviar`,
+    );
+  const editarNumero = (id: string, campo: keyof NumeroEditado, v: string) =>
+    setPorNumero((p) => ({ ...p, [id]: { ...(p[id] ?? { maximo: '', desde: '', hasta: '' }), [campo]: v } }));
 
   const n = (c: CampoNumero) => ({ valor: numeros[c], onCambiar: (v: string) => setNumeros({ ...numeros, [c]: v }), deshabilitado: !puedeEditar });
 
@@ -183,6 +223,48 @@ export default function AjustesSeguimiento({ ajustes, existe, puedeEditar, onGua
           <Numero etiqueta="Como mucho una reactivación cada" unidad="horas" ayuda="Por contacto y por etapa." {...n('ciclos_reactivacion_cada_horas')} />
         </div>
       </Bloque>
+
+      {lineasCuenta.length > 0 && (
+        <Bloque icono={Smartphone} titulo="Cada número">
+          {ajustes.por_numero === undefined ? (
+            <span className="text-[12.5px]" style={{ color: 'var(--warn)' }}>Para darle a cada número sus propios límites o pausarlo solo a él, pega la sección 47 de database/siguelo.sql en Supabase.</span>
+          ) : (
+            <>
+              <span className="text-[12px]" style={{ color: TEXTO_TERCIARIO }}>
+                Si un número es nuevo o WhatsApp lo restringió, dale un máximo más bajo y pausas más largas, o páusalo solo a él. Vacío = usa lo de arriba
+                ({ajustes.maximo_diario} por día, {ajustes.pausa_min_seg} a {ajustes.pausa_max_seg} s).
+              </span>
+              {lineasCuenta.map((l) => {
+                const e = porNumero[l.id] ?? { maximo: '', desde: '', hasta: '' };
+                const pausado = !!ajustes.por_numero?.[l.id]?.pausado;
+                const campo = (c: keyof NumeroEditado, etiqueta: string, general: number) => (
+                  <label className="flex items-center gap-1.5 text-[12px]" style={{ color: TEXTO_SECUNDARIO }}>
+                    {etiqueta}
+                    <input value={e[c]} onChange={(ev) => editarNumero(l.id, c, ev.target.value)} disabled={!puedeEditar} inputMode="numeric" placeholder={String(general)} aria-label={`${etiqueta} de ${l.nombre}`} className={`${claseCampo} w-16 text-right`} style={estiloCampo} />
+                  </label>
+                );
+                return (
+                  <div key={l.id} className="flex items-center gap-x-3 gap-y-2 flex-wrap py-1.5" style={{ borderTop: '1px solid var(--line)' }}>
+                    <span className="text-[13px] font-semibold w-full sm:w-40 truncate" style={{ color: pausado ? 'var(--bad)' : TEXTO_PRIMARIO }}>
+                      {l.nombre}
+                      {pausado && ' · en pausa'}
+                    </span>
+                    {campo('maximo', 'Máx. por día', ajustes.maximo_diario)}
+                    {campo('desde', 'Pausa', ajustes.pausa_min_seg)}
+                    {campo('hasta', 'a', ajustes.pausa_max_seg)}
+                    <span className="text-[12px]" style={{ color: TEXTO_TERCIARIO }}>s</span>
+                    <span className="flex items-center gap-2 ml-auto text-[12px]" style={{ color: TEXTO_SECUNDARIO }}>
+                      Pausar
+                      <Interruptor activo={pausado} onCambiar={(v) => pausarNumero(l.id, l.nombre, v)} etiqueta={`Pausar ${l.nombre}`} deshabilitado={!puedeEditar} />
+                    </span>
+                  </div>
+                );
+              })}
+              <span className="text-[11.5px]" style={{ color: TEXTO_TERCIARIO }}>Los límites se guardan con el botón Guardar de abajo; la pausa, al momento. Un número en pausa sí manda los recordatorios de citas.</span>
+            </>
+          )}
+        </Bloque>
+      )}
 
       <Bloque icono={Sparkles} titulo="La IA adapta cada mensaje a la conversación">
         {!ajustes.adaptar ? (

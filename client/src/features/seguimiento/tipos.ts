@@ -19,6 +19,8 @@ export interface AjustesSeguimiento {
   pausa_min_seg: number;
   pausa_max_seg: number;
   maximo_diario: number;
+  // Límites y pausa de cada número (sección 47 de siguelo.sql; sin ella no viene).
+  por_numero?: Record<string, AjustesNumero> | null;
   min_entre_misma_persona_min: number;
   no_recordar_si_escribio_horas: number;
   atraso_max_reactivacion_horas: number;
@@ -111,4 +113,18 @@ export interface RegistroSeguimiento {
   tipo: string;
   texto: string;
   creado_en: string;
+}
+
+export type AjustesNumero = { maximo_diario?: number | null; pausa_min_seg?: number | null; pausa_max_seg?: number | null; pausado?: boolean };
+
+// Lo de un número: lo propio o, si no tiene, lo general (como server/src/siguelo/cola.ts).
+export function delNumero(aj: AjustesSeguimiento, lineaId: string) {
+  const p = aj.por_numero?.[lineaId] ?? {};
+  const num = (v: unknown, general: number) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : general);
+  return {
+    maximo_diario: num(p.maximo_diario, aj.maximo_diario),
+    pausa_min_seg: num(p.pausa_min_seg, aj.pausa_min_seg),
+    pausa_max_seg: num(p.pausa_max_seg, aj.pausa_max_seg),
+    pausado: !!p.pausado,
+  };
 }

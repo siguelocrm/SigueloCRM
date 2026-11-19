@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { AMBER, BORDE, TEXTO_PRIMARIO, TEXTO_SECUNDARIO, TEXTO_TERCIARIO } from '../../lib/tema';
 import { Boton, EstadoVacio, Tarjeta, useToast } from '../../components/ui';
 import Etiqueta from './Etiqueta';
-import type { AjustesSeguimiento, ItemCola, RegistroSeguimiento } from './tipos';
+import { delNumero, type AjustesSeguimiento, type ItemCola, type RegistroSeguimiento } from './tipos';
 import { MIN, ajustar, enFranja, fechaDe, inicioDeManana, type Franja } from './horario';
 
 const ms = (iso: string | null | undefined) => (iso ? new Date(iso).getTime() || 0 : 0);
@@ -23,12 +23,12 @@ const ESTADO: Record<string, { texto: string; color: string }> = {
 function planificar(items: ItemCola[], aj: AjustesSeguimiento, usadosHoy: Record<string, number>, ultimoAuto: Record<string, number>, pausados: Set<string>) {
   const franja: Franja = { zona: aj.zona_horaria, desde: aj.hora_inicio, hasta: aj.hora_fin };
   const minMisma = aj.min_entre_misma_persona_min * MIN;
-  const pausaMedia = ((aj.pausa_min_seg + aj.pausa_max_seg) / 2) * 1000;
   const relojes: Record<string, { t: number; dia: string; usados: number }> = {};
   const ultimo = { ...ultimoAuto };
   const estimado: Record<string, number | null> = {};
   for (const item of items) {
-    if (pausados.has(item.contacto_id)) {
+    const n = delNumero(aj, item.linea_id);
+    if (pausados.has(item.contacto_id) || (n.pausado && item.tipo !== 'cita')) {
       estimado[item.id] = null;
       continue;
     }
@@ -40,7 +40,7 @@ function planificar(items: ItemCola[], aj: AjustesSeguimiento, usadosHoy: Record
       r.dia = fechaDe(e, franja.zona);
       r.usados = 0;
     }
-    if (r.usados >= aj.maximo_diario) {
+    if (r.usados >= n.maximo_diario) {
       e = inicioDeManana(e, franja);
       r.dia = fechaDe(e, franja.zona);
       r.usados = 0;
@@ -48,7 +48,7 @@ function planificar(items: ItemCola[], aj: AjustesSeguimiento, usadosHoy: Record
     r.usados++;
     ultimo[persona] = e;
     estimado[item.id] = e;
-    r.t = Math.max(r.t, e + pausaMedia);
+    r.t = Math.max(r.t, e + ((n.pausa_min_seg + n.pausa_max_seg) / 2) * 1000);
   }
   return estimado;
 }
@@ -169,7 +169,7 @@ export default function ColaSeguimiento({ ajustes }: { ajustes: AjustesSeguimien
 
   const franja: Franja = { zona, desde: ajustes.hora_inicio, hasta: ajustes.hora_fin };
   const lineasConPendientes = [...new Set(pendientes.map((i) => i.linea_id))];
-  const todasLlenas = lineasConPendientes.length > 0 && lineasConPendientes.every((l) => (usadosHoy[l] || 0) >= ajustes.maximo_diario);
+  const todasLlenas = lineasConPendientes.length > 0 && lineasConPendientes.every((l) => (usadosHoy[l] || 0) >= delNumero(ajustes, l).maximo_diario);
   const estadoCola = !ajustes.activo
     ? 'El seguimiento está apagado: no sale nada.'
     : ajustes.pausado
@@ -190,12 +190,17 @@ export default function ColaSeguimiento({ ajustes }: { ajustes: AjustesSeguimien
         {varias ? (
           <span className="flex items-center gap-1.5 flex-wrap text-[13px]" style={{ color: TEXTO_PRIMARIO }}>
             <b>Hoy:</b>
-            {lineas.map((l) => (
-              <Etiqueta key={l.id} color={(usadosHoy[l.id] || 0) >= ajustes.maximo_diario ? 'var(--bad)' : 'var(--accent)'}>{l.nombre}: {usadosHoy[l.id] || 0} / {ajustes.maximo_diario}</Etiqueta>
-            ))}
+            {lineas.map((l) => {
+              const n = delNumero(ajustes, l.id);
+              return (
+                <Etiqueta key={l.id} color={n.pausado || (usadosHoy[l.id] || 0) >= n.maximo_diario ? 'var(--bad)' : 'var(--accent)'}>
+                  {l.nombre}: {n.pausado ? 'en pausa' : `${usadosHoy[l.id] || 0} / ${n.maximo_diario}`}
+                </Etiqueta>
+              );
+            })}
           </span>
         ) : (
-          <span className="text-[13.5px] font-semibold num" style={{ color: TEXTO_PRIMARIO }}>Hoy: {totalHoy} / {ajustes.maximo_diario}</span>
+          <span className="text-[13.5px] font-semibold num" style={{ color: TEXTO_PRIMARIO }}>Hoy: {totalHoy} / {lineas[0] ? delNumero(ajustes, lineas[0].id).maximo_diario : ajustes.maximo_diario}</span>
         )}
         <span className="text-[12.5px] flex-1 min-w-[200px]" style={{ color: TEXTO_SECUNDARIO }}>{estadoCola}</span>
       </Tarjeta>
