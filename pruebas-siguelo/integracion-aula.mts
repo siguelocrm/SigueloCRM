@@ -135,7 +135,7 @@ const foto = (conv: string, archivo: string) =>
 const pagoDe = async (contacto: string) => uno(`select * from siguelo_pagos where contacto_id = $1 order by creado_en desc limit 1`, [contacto]);
 const a = (tel: string) => enviados.filter((e) => e.jid.startsWith(tel));
 const pagar = (monto: number, tx: string) => {
-  comprobante = { es_comprobante: true, monto, moneda: 'BOB', fecha: hoyLP() + ' 09:00', transaccion: tx, destinatario: 'GUSTAVO HERBAS', cuenta_destino: null, senales_edicion: [], confianza: 0.95 };
+  comprobante = { es_comprobante: true, monto, moneda: 'BOB', fecha: hoyLP() + ' 00:00', transaccion: tx, destinatario: 'GUSTAVO HERBAS', cuenta_destino: null, senales_edicion: [], confianza: 0.95 };
 };
 
 // ---------- 0. Cálculos ----------

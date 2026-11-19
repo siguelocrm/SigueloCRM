@@ -169,7 +169,7 @@ paso('la IA responde con los horarios, cupos y precios de tu sistema, en vivo (y
 await escribe(ana.conv, 'Quiero inscribir a mi hijo Juan Pérez Rojas en ajedrez lunes miércoles y viernes a las 4');
 await foto(ana.conv, 'ana.jpg');
 avanzar(5_000);
-comprobante = { es_comprobante: true, monto: 180, moneda: 'BOB', fecha: hoyLP() + ' 09:00', transaccion: 'TX-777', destinatario: 'GUSTAVO HERBAS', cuenta_destino: null, senales_edicion: [], confianza: 0.95 };
+comprobante = { es_comprobante: true, monto: 180, moneda: 'BOB', fecha: hoyLP() + ' 00:00', transaccion: 'TX-777', destinatario: 'GUSTAVO HERBAS', cuenta_destino: null, senales_edicion: [], confianza: 0.95 };
 let leido = '';
 datosClub = (usuario, sistema) => {
   leido = usuario;
