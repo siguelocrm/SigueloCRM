@@ -8,6 +8,10 @@ export interface SesionLinea {
   sock: WASocket;
   estado: EstadoLinea;
   qrDataUrl: string | null;
+  // Vincular con código (sin QR, desde el mismo celular): el código de 8 letras que se escribe en
+  // WhatsApp → Dispositivos vinculados → Vincular con el número de teléfono.
+  codigo?: string | null;
+  errorCodigo?: string | null;
 }
 
 // Una sesión de WhatsApp por cada línea conectada, en memoria.

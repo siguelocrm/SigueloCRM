@@ -17,6 +17,11 @@ export default function Conexiones() {
   const [creando, setCreando] = useState(false);
   const [lineaConQr, setLineaConQr] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  // Vincular con código (sin QR): para cuando el único celular a mano es el del propio número.
+  const [conCodigo, setConCodigo] = useState(false);
+  const [telefonoCodigo, setTelefonoCodigo] = useState('');
+  const [codigo, setCodigo] = useState<string | null>(null);
+  const [errorCodigo, setErrorCodigo] = useState<string | null>(null);
   const [lineaEditando, setLineaEditando] = useState<string | null>(null);
   const [nombreEditado, setNombreEditado] = useState('');
   const [eliminando, setEliminando] = useState<string | null>(null);
@@ -60,11 +65,22 @@ export default function Conexiones() {
     intervaloRef.current = null;
   };
 
-  const conectar = async (linea: LineaWhatsapp) => {
+  const conectar = async (linea: LineaWhatsapp, telefono?: string) => {
     setLineaConQr(linea.id);
     setQrDataUrl(null);
+    setCodigo(null);
+    setErrorCodigo(null);
+    if (telefono === undefined) setConCodigo(false);
     try {
-      await fetch(`${backendUrl}/lineas/${linea.id}/conectar`, { method: 'POST', headers: await conSesion() });
+      const resp = await fetch(`${backendUrl}/lineas/${linea.id}/conectar`, {
+        method: 'POST',
+        headers: await conSesion({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(telefono === undefined ? {} : { telefono }),
+      });
+      if (!resp.ok) {
+        const d = await resp.json().catch(() => ({}));
+        return toast(d.error || 'No se pudo empezar a vincular.', 'error');
+      }
     } catch (err) {
       console.error(err);
     }
@@ -74,6 +90,8 @@ export default function Conexiones() {
         const resp = await fetch(`${backendUrl}/lineas/${linea.id}/estado`, { headers: await conSesion() });
         const data = await resp.json();
         if (data.qr) setQrDataUrl(data.qr);
+        if (data.codigo) setCodigo(data.codigo);
+        if (data.errorCodigo) setErrorCodigo(data.errorCodigo);
         if (data.estado === 'activo') {
           detenerPolling();
           setLineaConQr(null);
@@ -228,17 +246,64 @@ export default function Conexiones() {
 
           {lineaEnQr && (
             <div className="rounded-2xl flex flex-col gap-3 items-center text-center" style={{ backgroundColor: 'var(--surface)', border: `1px solid ${BORDE}`, boxShadow: SOMBRA_CARD, padding: 18 }}>
-              <span className="self-start text-[14.5px] font-bold tracking-tight" style={{ color: TEXTO_PRIMARIO }}>Vincular por QR</span>
-              <span className="self-start text-left text-[12.5px] leading-relaxed" style={{ color: TEXTO_SECUNDARIO }}>
-                Abrí WhatsApp en el celular de "{lineaEnQr.nombre}" → Dispositivos vinculados → Escaneá este código.
-              </span>
-              <div className="rounded-xl flex flex-col items-center justify-center gap-2.5" style={{ width: 196, height: 196, border: '2px dashed var(--line-2)', backgroundColor: 'var(--surface-2)' }}>
-                {qrDataUrl ? (
-                  <img src={qrDataUrl} alt="Código QR de WhatsApp" className="w-full h-full object-contain p-2" />
-                ) : (
-                  <span className="text-[11.5px]" style={{ color: TEXTO_TERCIARIO, fontFamily: 'ui-monospace, monospace' }}>generando código…</span>
-                )}
-              </div>
+              <span className="self-start text-[14.5px] font-bold tracking-tight" style={{ color: TEXTO_PRIMARIO }}>{conCodigo ? 'Vincular con código' : 'Vincular por QR'}</span>
+              {!conCodigo ? (
+                <>
+                  <span className="self-start text-left text-[12.5px] leading-relaxed" style={{ color: TEXTO_SECUNDARIO }}>
+                    Abrí WhatsApp en el celular de "{lineaEnQr.nombre}" → Dispositivos vinculados → Escaneá este código.
+                  </span>
+                  <div className="rounded-xl flex flex-col items-center justify-center gap-2.5" style={{ width: 196, height: 196, border: '2px dashed var(--line-2)', backgroundColor: 'var(--surface-2)' }}>
+                    {qrDataUrl ? (
+                      <img src={qrDataUrl} alt="Código QR de WhatsApp" className="w-full h-full object-contain p-2" />
+                    ) : (
+                      <span className="text-[11.5px]" style={{ color: TEXTO_TERCIARIO, fontFamily: 'ui-monospace, monospace' }}>generando código…</span>
+                    )}
+                  </div>
+                  <button type="button" onClick={() => setConCodigo(true)} className="text-[12.5px] font-semibold" style={{ color: 'var(--accent)' }}>
+                    ¿Solo tienes este celular? Vincular con código
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="self-start text-left text-[12.5px] leading-relaxed" style={{ color: TEXTO_SECUNDARIO }}>
+                    Para vincular desde el mismo celular, sin escanear. Escribe el número de "{lineaEnQr.nombre}" con su código de país (por ejemplo 59171234567).
+                  </span>
+                  <div className="flex gap-2 w-full">
+                    <input
+                      value={telefonoCodigo}
+                      onChange={(e) => setTelefonoCodigo(e.target.value)}
+                      inputMode="tel"
+                      placeholder="59171234567"
+                      aria-label="Número con código de país"
+                      className="flex-1 min-w-0 rounded-lg px-3 py-2 text-[14px] outline-none"
+                      style={{ border: `1px solid ${BORDE}`, backgroundColor: 'var(--surface-2)', color: TEXTO_PRIMARIO }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => conectar(lineaEnQr, telefonoCodigo)}
+                      disabled={telefonoCodigo.replace(/\D/g, '').length < 8}
+                      className="rounded-lg px-3 py-2 text-[13px] font-semibold"
+                      style={{ backgroundColor: TEAL, color: 'var(--accent-fg)', opacity: telefonoCodigo.replace(/\D/g, '').length < 8 ? 0.5 : 1 }}
+                    >
+                      Pedir código
+                    </button>
+                  </div>
+                  {codigo && (
+                    <>
+                      <span className="text-[28px] font-bold tracking-[0.2em] select-all" style={{ color: TEXTO_PRIMARIO, fontFamily: 'ui-monospace, monospace' }}>
+                        {codigo.slice(0, 4)}-{codigo.slice(4)}
+                      </span>
+                      <span className="self-start text-left text-[12.5px] leading-relaxed" style={{ color: TEXTO_SECUNDARIO }}>
+                        En WhatsApp: <b>Dispositivos vinculados</b> → <b>Vincular un dispositivo</b> → abajo, <b>"Vincular con el número de teléfono"</b> → escribe este código. Vence en unos minutos: si vence, pide otro.
+                      </span>
+                    </>
+                  )}
+                  {errorCodigo && <span className="text-[12.5px]" style={{ color: 'var(--bad)' }}>No se pudo pedir el código: {errorCodigo}. Inténtalo de nuevo.</span>}
+                  <button type="button" onClick={() => conectar(lineaEnQr)} className="text-[12.5px] font-semibold" style={{ color: 'var(--accent)' }}>
+                    Mejor con QR
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>

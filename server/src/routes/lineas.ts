@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { Router } from 'express';
 import { actualizarEstadoLinea, borrarSesion, carpetaAuth, obtenerSesion } from '../whatsapp/sesiones.js';
-import { iniciarConexion } from '../whatsapp/conexion.js';
+import { iniciarConexion, pedirCodigoDeVinculacion } from '../whatsapp/conexion.js';
 import { supabase } from '../supabase/client.js';
 import { conNumero } from '../siguelo/usuarios/proteger.js';
 
@@ -16,6 +16,15 @@ export const lineasRouter = Router();
 lineasRouter.post('/lineas/:id/conectar', ...delDueno, (req, res) => {
   const { id } = req.params;
   const existente = obtenerSesion(id);
+  // Con "telefono": vincular con código en vez de QR (desde el mismo celular del número).
+  const telefono = String(req.body?.telefono ?? '').replace(/\D/g, '');
+  if (req.body?.telefono !== undefined) {
+    if (telefono.length < 8 || telefono.length > 15) return res.status(400).json({ error: 'Escribe el número con su código de país, por ejemplo 59171234567.' });
+    if (existente?.estado === 'activo') return res.json({ ok: true, yaEnProceso: true });
+    pedirCodigoDeVinculacion(id, telefono);
+    iniciarConexion(id).catch((err) => console.error(`Error iniciando línea ${id}:`, err.message));
+    return res.json({ ok: true });
+  }
   if (existente && (existente.estado === 'activo' || existente.estado === 'conectando')) {
     return res.json({ ok: true, yaEnProceso: true });
   }
@@ -52,7 +61,7 @@ lineasRouter.post('/lineas/:id/resincronizar-etiquetas', ...delDueno, async (req
 lineasRouter.get('/lineas/:id/estado', ...deQuienLoTiene, (req, res) => {
   const sesion = obtenerSesion(req.params.id);
   if (!sesion) return res.json({ estado: 'desconectado', qr: null });
-  res.json({ estado: sesion.estado, qr: sesion.qrDataUrl || null });
+  res.json({ estado: sesion.estado, qr: sesion.qrDataUrl || null, codigo: sesion.codigo || null, errorCodigo: sesion.errorCodigo || null });
 });
 
 // Desvincula el número (cierra sesión de WhatsApp y borra las credenciales guardadas).

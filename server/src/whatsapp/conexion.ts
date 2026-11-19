@@ -51,6 +51,13 @@ function cerrarSocket(sock: WASocket | undefined): void {
   }
 }
 
+// Vincular con código en vez de QR (cuando el único celular es el del propio número): el teléfono
+// al que se le pide el código. Se borra al conectar.
+const vincularConCodigo = new Map<string, string>();
+export function pedirCodigoDeVinculacion(lineaId: string, telefono: string): void {
+  vincularConCodigo.set(lineaId, telefono);
+}
+
 export async function iniciarConexion(lineaId: string): Promise<WASocket> {
   const { state, saveCreds } = await useAuthStateSeguro(carpetaAuth(lineaId));
   // La versión de WhatsApp Web que trae Baileys por defecto se queda vieja y
@@ -83,8 +90,22 @@ export async function iniciarConexion(lineaId: string): Promise<WASocket> {
     if (sesionActual && sesionActual.sock !== sock) return;
 
     if (qr) {
-      const qrDataUrl = await qrcode.toDataURL(qr);
-      guardarSesion(lineaId, { sock, qrDataUrl, estado: 'conectando' });
+      const telefono = vincularConCodigo.get(lineaId);
+      if (telefono && !state.creds.registered) {
+        // Con código: se pide una sola vez por socket (el QR se renueva cada ~20 s, el código no).
+        const previa = obtenerSesion(lineaId);
+        if (!(previa?.sock === sock && (previa.codigo || previa.errorCodigo))) {
+          try {
+            const codigo = await sock.requestPairingCode(telefono);
+            guardarSesion(lineaId, { sock, qrDataUrl: null, codigo, errorCodigo: null, estado: 'conectando' });
+          } catch (err) {
+            guardarSesion(lineaId, { sock, qrDataUrl: null, codigo: null, errorCodigo: (err as Error).message, estado: 'conectando' });
+          }
+        }
+      } else {
+        const qrDataUrl = await qrcode.toDataURL(qr);
+        guardarSesion(lineaId, { sock, qrDataUrl, estado: 'conectando' });
+      }
       await actualizarEstadoLinea(lineaId, 'conectando');
     }
 
@@ -100,7 +121,10 @@ export async function iniciarConexion(lineaId: string): Promise<WASocket> {
       // carpeta de credenciales (pasó el 2026-10-15: se cayeron todas las
       // líneas a la vez y hubo que reescanear todos los QR). Una línea ya
       // vinculada siempre tiene `creds.me`.
-      const qrVencidoSinVincular = codigo === DisconnectReason.timedOut && !state.creds.me;
+      // Con código: si venció sin que lo escribieran, tampoco se reintenta solo (se pide otro).
+      const codigoVencido = vincularConCodigo.has(lineaId) && !state.creds.registered && codigo === DisconnectReason.timedOut;
+      if (codigoVencido) vincularConCodigo.delete(lineaId);
+      const qrVencidoSinVincular = codigoVencido || (codigo === DisconnectReason.timedOut && !state.creds.me);
       const debeReconectar = codigo !== DisconnectReason.loggedOut && !qrVencidoSinVincular;
       console.log(`[${lineaId}] Conexión cerrada (código ${codigo ?? 'desconocido'}: ${(lastDisconnect?.error as Error | undefined)?.message ?? 'sin detalle'}).`, debeReconectar ? 'Reconectando...' : qrVencidoSinVincular ? 'QR vencido sin vincular, esperando que se pida uno nuevo.' : 'Sesión cerrada.');
       if (debeReconectar) {
@@ -133,6 +157,7 @@ export async function iniciarConexion(lineaId: string): Promise<WASocket> {
       }
     } else if (connection === 'open') {
       intentosReconexion.delete(lineaId);
+      vincularConCodigo.delete(lineaId);
       const numero = sock.user?.id?.split(':')[0] || null;
       guardarSesion(lineaId, { sock, estado: 'activo', qrDataUrl: null });
       await actualizarEstadoLinea(lineaId, 'activo', numero);
