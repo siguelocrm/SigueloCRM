@@ -156,9 +156,9 @@ const QUIETO_RAPIDO_MS = 2_000;
 const esperando = new Map<string, NodeJS.Timeout>();
 const lineaEmpresa = new Map<string, string>();
 const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function conCandadoEsperando(conCandado: (t: () => Promise<void>) => Promise<void>, tarea: () => Promise<void>): Promise<void> {
+async function conCandadoEsperando(conCandado: (t: () => Promise<void>) => Promise<void>, tarea: () => Promise<void>, intentos = 40): Promise<void> {
   // El candado no corre la tarea si está ocupado: se reintenta unos segundos.
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < intentos; i++) {
     let corrio = false;
     await conCandado(async () => {
       corrio = true;
@@ -168,7 +168,17 @@ async function conCandadoEsperando(conCandado: (t: () => Promise<void>) => Promi
     await dormir(250);
   }
 }
+// Respuestas rápidas en curso: "ponerse al día" les cede el paso (lo nuevo primero).
+let rapidosEnCurso = 0;
 async function responderRapido(lineaId: string): Promise<void> {
+  rapidosEnCurso++;
+  try {
+    await responderRapidoSinContar(lineaId);
+  } finally {
+    rapidosEnCurso--;
+  }
+}
+async function responderRapidoSinContar(lineaId: string): Promise<void> {
   if (!lineaEmpresa.has(lineaId)) {
     const { data } = await db.from('lineas_whatsapp').select('empresa_id').eq('id', lineaId).maybeSingle();
     if (!data) return;
@@ -176,7 +186,8 @@ async function responderRapido(lineaId: string): Promise<void> {
   }
   const c = (await empresasConIA()).find((x) => x.ia.empresa_id === lineaEmpresa.get(lineaId));
   if (!c) return;
-  await conCandadoEsperando(conCandadoLector, () => leerPendientes(c, 5, 1));
+  // Espera hasta 30 s si la IA está ocupada (por ejemplo leyendo un chat de "ponerse al día").
+  await conCandadoEsperando(conCandadoLector, () => leerPendientes(c, 5, 1), 120);
   // Lo que quedó listo para salir ahora (texto, y después ubicación o respuestas rápidas) sale en seguida.
   for (let i = 0; i < 4; i++) {
     await conCandadoEsperando(conCandadoSalida, () => procesarSalida(c));
@@ -217,6 +228,8 @@ export function detenerAlDia(empresaId: string, lineaId: string | null = null): 
 async function responderFila(c: NonNullable<Awaited<ReturnType<typeof configDeEmpresa>>>, st: ProgresoAlDia, chats: ChatSinRespuesta[]): Promise<void> {
   for (const ch of chats) {
     if (!st.activo) break;
+    // Lo nuevo primero: si alguien acaba de escribir, se espera a que la IA le responda (hasta 1 min).
+    for (let i = 0; i < 60 && st.activo && (esperando.size > 0 || rapidosEnCurso > 0); i++) await dormir(1_000);
     let r: { ok: boolean; mensaje: string } | null = null;
     // Espera su turno con la lectura normal de la IA (así no responde dos veces el mismo chat).
     for (let i = 0; i < 20 && !r && st.activo; i++) {
