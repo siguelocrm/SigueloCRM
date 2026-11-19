@@ -196,6 +196,8 @@ async function guardarNombreDePerfil(lineaId: string, telefono: string, conversa
   }
 }
 
+const LLEGA_TARDE_MS = 10 * 60_000;
+
 export async function procesarMensajeEntrante(msg: WAMessage, sock: WASocket, lineaId: string): Promise<void> {
   const resultado = detectarTipoYTexto(msg);
   if (!resultado) return; // tipo no soportado todavía: se ignora, no se guarda nada
@@ -223,6 +225,11 @@ export async function procesarMensajeEntrante(msg: WAMessage, sock: WASocket, li
     if (existente && existente.length > 0) return;
   }
 
+  // Un mensaje que llega tarde (el número estuvo desconectado y WhatsApp lo entrega al reconectar)
+  // se guarda con su hora real: así la IA no responde de golpe todo lo atrasado (más de 2 h), y queda
+  // en IA → "Chats que quedaron sin respuesta" para responderlo despacio.
+  const enviadoEn = Number(msg.messageTimestamp ?? 0) * 1000;
+  const atrasado = enviadoEn > 0 && Date.now() - enviadoEn > LLEGA_TARDE_MS;
   const { error: errorMensaje } = await supabase.from('mensajes').insert({
     conversacion_id: conversacion.id,
     remitente: 'cliente',
@@ -230,6 +237,7 @@ export async function procesarMensajeEntrante(msg: WAMessage, sock: WASocket, li
     contenido: texto,
     media_url: mediaUrl,
     whatsapp_id: msg.key.id || null,
+    ...(atrasado ? { creado_en: new Date(enviadoEn).toISOString() } : {}),
   });
 
   if (errorMensaje) {
@@ -240,7 +248,8 @@ export async function procesarMensajeEntrante(msg: WAMessage, sock: WASocket, li
     mensajeNuevo(lineaId);
   }
 
-  if (!errorMensaje && tipo === 'texto') {
+  // El bot de reglas no contesta lo atrasado (sería una bienvenida horas después).
+  if (!errorMensaje && tipo === 'texto' && !atrasado) {
     // Sin await a propósito: una regla puede tener demora configurada (hasta
     // una hora, ver database/instalar.sql) y no queremos
     // frenar acá el procesamiento de los próximos mensajes entrantes del

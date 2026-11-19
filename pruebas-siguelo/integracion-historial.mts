@@ -48,4 +48,15 @@ const sin = await chatsSinRespuesta(empresa, null);
 assert.deepEqual(sin.map((x: any) => x.telefono), ['59170000001'], 'solo queda sin respuesta el de anoche (al otro le respondiste desde el teléfono)');
 paso('lo que llegó con el número desconectado aparece en "Chats que quedaron sin respuesta"');
 
+// Sin QR nuevo: WhatsApp entrega lo pendiente como mensajes nuevos. Lo atrasado se guarda con su
+// hora real (así la IA no responde todo de golpe) y el bot no contesta; lo de recién, normal.
+const { procesarMensajeEntrante } = await import(new URL('../server/src/whatsapp/mensajes-entrantes.ts', import.meta.url).href);
+await procesarMensajeEntrante(msg('N1', '59170000004@s.whatsapp.net', 'Hola, ¿están?', 6), {} as any, linea);
+const n1 = await uno(`select creado_en from mensajes where whatsapp_id = 'N1'`);
+assert.ok(Math.abs(new Date(n1.creado_en).getTime() - (reloj.ahora - 6 * HORA)) < 2000, 'lo atrasado queda con su hora real');
+await procesarMensajeEntrante(msg('N2', '59170000005@s.whatsapp.net', 'Hola', 0), {} as any, linea);
+await new Promise((r) => setTimeout(r, 300));
+assert.equal(botAutomatico.length, 1, 'el bot solo contesta el de recién, no el atrasado');
+paso('lo que WhatsApp entrega tarde al reconectar se guarda con su hora real y el bot no lo contesta');
+
 console.log(`\n${ok} pasos OK`);
