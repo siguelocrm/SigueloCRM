@@ -84,18 +84,16 @@ iaRouter.get('/siguelo/ia/al-dia', soloAdmin, (req, res) => {
 iaRouter.post('/siguelo/ia/al-dia', soloAdmin, async (req, res) => {
   const empresaId = req.usuarioAutenticado!.empresa_id;
   const lineaId = req.body?.linea_id ? String(req.body.linea_id) : null;
-  let numero: string | null = null;
   if (lineaId) {
-    const { data } = await db.from('lineas_whatsapp').select('nombre').eq('id', lineaId).eq('empresa_id', empresaId).maybeSingle();
+    const { data } = await db.from('lineas_whatsapp').select('id').eq('id', lineaId).eq('empresa_id', empresaId).maybeSingle();
     if (!data) return res.status(404).json({ error: 'No se encontró ese número.' });
-    numero = data.nombre;
   }
-  const r = await ponerseAlDia(empresaId, lineaId, numero);
+  const r = await ponerseAlDia(empresaId, lineaId);
   if (!r.ok) return res.status(400).json({ error: r.mensaje });
   res.json(r);
 });
 iaRouter.post('/siguelo/ia/al-dia/detener', soloAdmin, (req, res) => {
-  detenerAlDia(req.usuarioAutenticado!.empresa_id);
+  detenerAlDia(req.usuarioAutenticado!.empresa_id, req.body?.linea_id ? String(req.body.linea_id) : null);
   res.json({ ok: true });
 });
 

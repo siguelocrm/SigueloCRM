@@ -239,7 +239,7 @@ npm test
 - **Ponerse al día** (`ia/alDia.ts`, IA → arriba "Chats que quedaron sin respuesta"): si un número estuvo desconectado o
   restringido por WhatsApp, lo que llegó mientras tanto tiene más de 2 horas y la IA no lo responde sola. El botón busca los
   chats de las últimas 48 h donde el cliente fue el último en escribir y la IA los lee uno por uno (45 a 90 s entre cada
-  uno) con `responderConversacion(c, id, true)`: lectura normal con todos sus frenos, solo sin el límite de 2 horas. El
+  uno, cada número con su propia fila y a la vez) con `responderConversacion(c, id, true)`: lectura normal con todos sus frenos, solo sin el límite de 2 horas. El
   progreso vive en memoria del servidor (`progresoAlDia`); si el servidor se reinicia, se vuelve a pulsar.
 - **Motor por partes** (sección 46, `siguelo_actividad_de`): Supabase devuelve como mucho 1000 filas por pedido y corta el
   resto sin avisar. El motor leía todos los contactos y estados de un solo pedido: con más de 1000, cada minuto veía un grupo

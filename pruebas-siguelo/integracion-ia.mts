@@ -707,6 +707,27 @@ const rHilda = await responderConversacion(await config(), hilda.conv, true);
 assert.match(rHilda.mensaje, /apagaste la IA en este chat/);
 paso('ponerse al día: responde lo que quedó sin respuesta (más de 2 horas), con los demás frenos de siempre');
 
+// "Todos": cada número con su propia fila, a la vez (uno con muchos no deja a otro para el final).
+const { ponerseAlDia, progresoAlDia, PAUSA_AL_DIA_MS } = await import(R + 'index.ts');
+PAUSA_AL_DIA_MS.min = 0;
+PAUSA_AL_DIA_MS.max = 0;
+const deQuilla = await chat(L1, '59170000081', 'Iván');
+const deCercado = await chat(L2, '59170000082', 'Juana');
+for (const x of [deQuilla, deCercado]) {
+  await escribe(x.conv, 'Hola, ¿siguen atendiendo?');
+  await pg.query(`update conversaciones set ultima_actividad = $2 where id = $1`, [x.conv, iso(reloj.ahora)]);
+}
+avanzar(5 * 60 * MIN);
+responder = () => ({ resumen: 'Pregunta si atienden', puede_responder: true, respuesta: 'Sí, atendemos. Perdona la demora 🙏' });
+const rTodos = await ponerseAlDia(empresa, null);
+assert.ok(rTodos.ok, rTodos.mensaje);
+for (let i = 0; i < 200 && progresoAlDia(empresa).some((p: any) => p.activo); i++) await new Promise((r) => setTimeout(r, 50));
+const filasAlDia = progresoAlDia(empresa);
+assert.ok(filasAlDia.some((p: any) => p.linea_id === L1) && filasAlDia.some((p: any) => p.linea_id === L2), 'una fila por cada número');
+await salida();
+assert.ok(enviados.some((e) => e.jid.startsWith('59170000081')) && enviados.some((e) => e.jid.startsWith('59170000082')), 'responde en los dos números');
+paso('ponerse al día con "Todos": cada número con su propia fila, a la vez');
+
 const uso = await uno(`select sum(consultas)::int c, sum(entrada)::int e from siguelo_ia_uso`);
 console.log(`\n${ok} pasos OK · ${uso.c} consultas a la IA (${uso.e} tokens de entrada) · mensajes:`);
 for (const e of enviados) console.log('  →', e.jid.split('@')[0], e.imagen ? `[foto ${e.imagen}]` : e.ubicacion ? `[ubicación ${e.ubicacion.name}]` : JSON.stringify(e.texto).slice(0, 110));
