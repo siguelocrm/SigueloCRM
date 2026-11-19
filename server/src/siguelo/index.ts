@@ -5,6 +5,7 @@ import { limpiarRegistroViejo } from './registro.js';
 import { configDeEmpresa, empresasConIA } from './ia/config.js';
 import { leerPendientes, responderConversacion } from './ia/lector.js';
 import { procesarSalida } from './ia/salida.js';
+import { chatsSinRespuesta } from './ia/alDia.js';
 import { revisarPagos } from './pagos/inscripcion.js';
 import { revisarRedes } from './redes/redes.js';
 import type { AjustesRow } from './tipos.js';
@@ -201,6 +202,50 @@ export async function responderAhora(empresaId: string, conversacionId: string):
   }
   return r;
 }
+// "Ponerse al día" (IA → Resumen): responde, uno por uno y despacio, los chats que quedaron sin
+// respuesta (ia/alDia.ts). Entre chat y chat espera de 45 a 90 s, para que WhatsApp no lo vea como
+// envío masivo (sobre todo si el número acaba de estar restringido).
+export type ProgresoAlDia = { total: number; hechos: number; respondidos: number; activo: boolean; numero: string | null; ultimo: string };
+const alDia = new Map<string, ProgresoAlDia>();
+export const PAUSA_AL_DIA_MS = { min: 45_000, max: 90_000 };
+export const progresoAlDia = (empresaId: string): ProgresoAlDia | null => alDia.get(empresaId) ?? null;
+export function detenerAlDia(empresaId: string): void {
+  const st = alDia.get(empresaId);
+  if (st) st.activo = false;
+}
+export async function ponerseAlDia(empresaId: string, lineaId: string | null, numero: string | null): Promise<{ ok: boolean; mensaje: string }> {
+  if (alDia.get(empresaId)?.activo) return { ok: false, mensaje: 'Ya está respondiendo los chats pendientes.' };
+  const c = await configDeEmpresa(empresaId);
+  if (!c) return { ok: false, mensaje: 'Falta la clave de OpenAI (IA → Ajustes).' };
+  const chats = await chatsSinRespuesta(empresaId, lineaId);
+  if (!chats.length) return { ok: true, mensaje: 'No hay chats esperando respuesta.' };
+  const st: ProgresoAlDia = { total: chats.length, hechos: 0, respondidos: 0, activo: true, numero, ultimo: '' };
+  alDia.set(empresaId, st);
+  (async () => {
+    for (const ch of chats) {
+      if (!st.activo) break;
+      let r: { ok: boolean; mensaje: string } | null = null;
+      // Espera su turno con la lectura normal de la IA (así no responde dos veces el mismo chat).
+      for (let i = 0; i < 20 && !r && st.activo; i++) {
+        await conCandadoEsperando(conCandadoLector, async () => {
+          r = await responderConversacion(c, ch.conversacion_id, true);
+        });
+        if (!r) await dormir(5_000);
+      }
+      const hecho: { ok: boolean; mensaje: string } = r ?? { ok: false, mensaje: 'la IA estaba ocupada' };
+      st.hechos++;
+      if (/^(respondiendo|respuesta lista)/.test(hecho.mensaje)) st.respondidos++;
+      st.ultimo = `${ch.nombre || `+${ch.telefono.split('@')[0]}`}: ${hecho.mensaje}`;
+      if (st.hechos < chats.length && st.activo) await dormir(PAUSA_AL_DIA_MS.min + Math.random() * (PAUSA_AL_DIA_MS.max - PAUSA_AL_DIA_MS.min));
+    }
+    st.activo = false;
+  })().catch((err) => {
+    st.activo = false;
+    console.error('IA: falló "ponerse al día":', (err as Error).message);
+  });
+  return { ok: true, mensaje: `Respondiendo ${chats.length} ${chats.length === 1 ? 'chat' : 'chats'}, uno por uno.` };
+}
+
 alLlegarMensaje((lineaId) => {
   clearTimeout(esperando.get(lineaId));
   esperando.set(

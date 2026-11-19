@@ -233,6 +233,11 @@ npm test
   esperan a propósito), así uno con muchos pendientes no atrasa a los demás. La cola se programa sola: vuelve cuando el
   primer número con mensajes listos termina su pausa (mín. 3 s), o cada 20 s. 3 errores seguidos pausan solo ese número
   30 minutos (antes pausaban todo el seguimiento).
+- **Ponerse al día** (`ia/alDia.ts`, IA → arriba "Chats que quedaron sin respuesta"): si un número estuvo desconectado o
+  restringido por WhatsApp, lo que llegó mientras tanto tiene más de 2 horas y la IA no lo responde sola. El botón busca los
+  chats de las últimas 48 h donde el cliente fue el último en escribir y la IA los lee uno por uno (45 a 90 s entre cada
+  uno) con `responderConversacion(c, id, true)`: lectura normal con todos sus frenos, solo sin el límite de 2 horas. El
+  progreso vive en memoria del servidor (`progresoAlDia`); si el servidor se reinicia, se vuelve a pulsar.
 - **Motor por partes** (sección 46, `siguelo_actividad_de`): Supabase devuelve como mucho 1000 filas por pedido y corta el
   resto sin avisar. El motor leía todos los contactos y estados de un solo pedido: con más de 1000, cada minuto veía un grupo
   distinto y cancelaba o reprogramaba los mensajes de los demás ("Ya no corresponde"). Ahora cada minuto revisa solo los

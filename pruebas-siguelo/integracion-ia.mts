@@ -679,6 +679,34 @@ assert.match(enviados.filter((e) => e.jid.startsWith('59178888888')).at(-1)!.tex
 await pg.query(`update siguelo_negocios set avisos_telefono = null where id = $1`, [nQuilla]);
 paso('desde tu WhatsApp le preguntas al asistente por tus datos (a cualquier número) y te responde ahí; solo a tu número principal');
 
+// ---------- Ponerse al día: lo que llegó con el número desconectado o restringido ----------
+const { chatsSinRespuesta } = await import(R + 'ia/alDia.ts');
+const gina = await chat(L2, '59170000077', 'Gina');
+await escribe(gina.conv, 'Hola, ¿tienen cadenas?');
+await pg.query(`update conversaciones set ultima_actividad = $2 where id = $1`, [gina.conv, iso(reloj.ahora)]);
+avanzar(3 * 60 * MIN); // el número vuelve 3 horas después
+responder = () => ({ resumen: 'Pregunta por cadenas', puede_responder: true, respuesta: 'Hola Gina, sí tenemos cadenas: 120 Bs. Perdona la demora 🙏' });
+const antesGina = enviados.length;
+await leerPendientes(await config());
+await salida();
+assert.equal(enviados.filter((e) => e.jid.startsWith('59170000077')).length, 0, 'sola, la IA no responde un mensaje de hace más de 2 horas');
+const sinResp = await chatsSinRespuesta(empresa, L2);
+assert.ok(sinResp.some((x: any) => x.conversacion_id === gina.conv), 'Gina aparece entre los que quedaron sin respuesta');
+assert.ok(sinResp.every((x: any) => x.linea_id === L2), 'solo los del número elegido');
+const rGina = await responderConversacion(await config(), gina.conv, true);
+assert.match(rGina.mensaje, /^(respondiendo|respuesta lista)/, rGina.mensaje);
+await salida();
+assert.match(enviados.slice(antesGina).find((e) => e.jid.startsWith('59170000077'))!.texto, /Perdona la demora/);
+assert.ok(!(await chatsSinRespuesta(empresa, L2)).some((x: any) => x.conversacion_id === gina.conv), 'ya respondido: deja de aparecer');
+// Los frenos de siempre siguen: un chat con la IA apagada no se responde aunque esté pendiente.
+const hilda = await chat(L2, '59170000078', 'Hilda');
+await escribe(hilda.conv, '¿Precio?');
+await pg.query(`insert into siguelo_ia_lecturas (conversacion_id, empresa_id, linea_id, sin_respuestas) values ($1, $2, $3, true)`, [hilda.conv, empresa, L2]);
+avanzar(3 * 60 * MIN);
+const rHilda = await responderConversacion(await config(), hilda.conv, true);
+assert.match(rHilda.mensaje, /apagaste la IA en este chat/);
+paso('ponerse al día: responde lo que quedó sin respuesta (más de 2 horas), con los demás frenos de siempre');
+
 const uso = await uno(`select sum(consultas)::int c, sum(entrada)::int e from siguelo_ia_uso`);
 console.log(`\n${ok} pasos OK · ${uso.c} consultas a la IA (${uso.e} tokens de entrada) · mensajes:`);
 for (const e of enviados) console.log('  →', e.jid.split('@')[0], e.imagen ? `[foto ${e.imagen}]` : e.ubicacion ? `[ubicación ${e.ubicacion.name}]` : JSON.stringify(e.texto).slice(0, 110));

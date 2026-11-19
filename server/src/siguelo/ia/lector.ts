@@ -159,6 +159,9 @@ type Contexto = {
   preguntaCliente: string;
   // Lo pidió una persona con el botón "Responder con IA" de la bandeja: responde sí o sí, al momento.
   forzado: boolean;
+  // "Responder los que quedaron sin respuesta" (IA → Ponerse al día): responde aunque el mensaje sea
+  // de hace más de 2 horas (llegó mientras el número estaba desconectado o restringido). Los demás frenos sí aplican.
+  atrasado: boolean;
   // Reuniones virtuales: los horarios que vio la IA y la que quedó agendada en esta lectura.
   huecos: Hueco[];
   reunion: { texto: string; enlace: string } | null;
@@ -219,7 +222,7 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
     if (etapa?.tipo === 'perdida') return `no le respondió: está en "${etapa.nombre}"`;
     // Solo si el cliente fue el último en escribir, y hace poco.
     if (!x.clienteUltimo) return 'no le respondió: ya le contestó una persona después de su último mensaje';
-    if (Date.now() - ms(x.fila.ultimo_cliente) > NO_RESPONDER_VIEJOS_MS) return 'no le respondió: su mensaje es de hace más de 2 horas';
+    if (!x.atrasado && Date.now() - ms(x.fila.ultimo_cliente) > NO_RESPONDER_VIEJOS_MS) return 'no le respondió: su mensaje es de hace más de 2 horas';
   }
 
   let texto = r.puede_responder ? r.respuesta : '';
@@ -419,7 +422,7 @@ async function avisarReunion(x: Contexto, cuando: string, reprogramada: boolean,
 
 // Lee una conversación. ok: false si falló la IA; hecho: lo que hizo (o por qué no respondió).
 type Leido = { ok: boolean; hecho: string };
-async function leer(c: Config, fila: PorLeerRow, forzado = false): Promise<Leido> {
+async function leer(c: Config, fila: PorLeerRow, forzado = false, atrasado = false): Promise<Leido> {
   const empresaId = c.ia.empresa_id;
   const { data: previa } = await db.from('siguelo_ia_lecturas').select('*').eq('conversacion_id', fila.conversacion_id).maybeSingle();
   const lectura: LecturaRow = previa ?? {
@@ -581,6 +584,7 @@ async function leer(c: Config, fila: PorLeerRow, forzado = false): Promise<Leido
     })(),
     ultimaPersona,
     forzado,
+    atrasado,
     huecos,
     reunion: null,
   };
@@ -595,7 +599,7 @@ async function leer(c: Config, fila: PorLeerRow, forzado = false): Promise<Leido
 const PEDIDO_FORZADO = `IMPORTANTE: una persona del equipo pidió que le respondas AHORA a este cliente, aunque el último mensaje sea de hace rato, sea corto o ya se le haya escrito después. Responde a lo que el cliente necesita según la conversación ("puede_responder": true), con texto y/o la respuesta rápida, ubicación, grupo, QR o regla del bot que corresponda. Si escribió algo corto ("ok", "gracias", un emoji), contéstale con amabilidad y ofrécele ayuda o el siguiente paso. Solo si de verdad falta un dato de la ficha, "necesita_al_dueno": true.`;
 
 // El botón "Responder con IA" de la bandeja: lee esa conversación ahora y responde sí o sí.
-export async function responderConversacion(c: Config, conversacionId: string): Promise<{ ok: boolean; mensaje: string }> {
+export async function responderConversacion(c: Config, conversacionId: string, atrasado = false): Promise<{ ok: boolean; mensaje: string }> {
   const { data: cv } = await db.from('conversaciones').select('id, linea_id, contacto_telefono').eq('id', conversacionId).maybeSingle();
   if (!cv) return { ok: false, mensaje: 'No se encontró esa conversación.' };
   const [{ data: contacto }, { data: ultimo }] = await Promise.all([
@@ -603,7 +607,8 @@ export async function responderConversacion(c: Config, conversacionId: string): 
     db.from('mensajes').select('creado_en').eq('conversacion_id', cv.id).eq('remitente', 'cliente').order('creado_en', { ascending: false }).limit(1).maybeSingle(),
   ]);
   if (!ultimo) return { ok: false, mensaje: 'Este cliente todavía no escribió nada: no hay a qué responderle.' };
-  const r = await leer(c, { conversacion_id: cv.id, linea_id: cv.linea_id, telefono: cv.contacto_telefono, contacto_id: contacto?.id ?? null, ultimo_cliente: ultimo.creado_en }, true);
+  // atrasado: lo lee como una lectura normal (con todos sus frenos), solo sin el límite de 2 horas.
+  const r = await leer(c, { conversacion_id: cv.id, linea_id: cv.linea_id, telefono: cv.contacto_telefono, contacto_id: contacto?.id ?? null, ultimo_cliente: ultimo.creado_en }, !atrasado, atrasado);
   if (!r.ok) return { ok: false, mensaje: `La IA no pudo leer el chat: ${r.hecho}` };
   return { ok: r.hecho.startsWith('respondiendo'), mensaje: r.hecho };
 }

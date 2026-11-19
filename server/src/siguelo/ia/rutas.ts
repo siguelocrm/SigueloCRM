@@ -11,7 +11,8 @@ import { aplicarAcciones, conversar } from './asistente.js';
 import { conectarClub, olvidarClub } from '../club/club.js';
 import type { IaRow } from '../tipos.js';
 import { conNumero } from '../usuarios/proteger.js';
-import { responderAhora } from '../index.js';
+import { detenerAlDia, ponerseAlDia, progresoAlDia, responderAhora } from '../index.js';
+import { chatsSinRespuesta } from './alDia.js';
 
 // Lo de la IA que pasa por el servidor: la clave de OpenAI (la página la manda
 // una vez y nunca la vuelve a leer), probar la conexión y probar un mensaje.
@@ -67,6 +68,35 @@ iaRouter.post('/siguelo/ia/responder', ...conNumero((req) => req.body?.linea_id)
   if (!cv || cv.linea_id !== lineaId) return res.status(404).json({ error: 'No se encontró esa conversación.' });
   const r = await responderAhora(empresaId, conversacionId);
   res.json(r);
+});
+
+// "Ponerse al día": cuántos chats de cada número quedaron sin respuesta (últimas 48 h) y cómo va.
+iaRouter.post('/siguelo/ia/al-dia/revisar', soloAdmin, async (req, res) => {
+  const empresaId = req.usuarioAutenticado!.empresa_id;
+  const [chats, { data: lineas }] = await Promise.all([chatsSinRespuesta(empresaId, null), db.from('lineas_whatsapp').select('id, nombre').eq('empresa_id', empresaId).order('nombre')]);
+  const cuenta: Record<string, number> = {};
+  for (const ch of chats) cuenta[ch.linea_id] = (cuenta[ch.linea_id] || 0) + 1;
+  res.json({ numeros: (lineas || []).map((l) => ({ id: l.id, nombre: l.nombre, pendientes: cuenta[l.id] || 0 })), progreso: progresoAlDia(empresaId) });
+});
+iaRouter.get('/siguelo/ia/al-dia', soloAdmin, (req, res) => {
+  res.json({ progreso: progresoAlDia(req.usuarioAutenticado!.empresa_id) });
+});
+iaRouter.post('/siguelo/ia/al-dia', soloAdmin, async (req, res) => {
+  const empresaId = req.usuarioAutenticado!.empresa_id;
+  const lineaId = req.body?.linea_id ? String(req.body.linea_id) : null;
+  let numero: string | null = null;
+  if (lineaId) {
+    const { data } = await db.from('lineas_whatsapp').select('nombre').eq('id', lineaId).eq('empresa_id', empresaId).maybeSingle();
+    if (!data) return res.status(404).json({ error: 'No se encontró ese número.' });
+    numero = data.nombre;
+  }
+  const r = await ponerseAlDia(empresaId, lineaId, numero);
+  if (!r.ok) return res.status(400).json({ error: r.mensaje });
+  res.json(r);
+});
+iaRouter.post('/siguelo/ia/al-dia/detener', soloAdmin, (req, res) => {
+  detenerAlDia(req.usuarioAutenticado!.empresa_id);
+  res.json({ ok: true });
 });
 
 // Qué haría la IA con un mensaje de un cliente inventado, sin tocar a nadie.
