@@ -20,7 +20,8 @@ const uno = async (sql: string, p: unknown[] = []) => (await pg.query<any>(sql, 
 const empresa = (await uno(`insert into empresas (nombre) values ('Historial') returning id`)).id;
 const linea = (await uno(`insert into lineas_whatsapp (empresa_id, nombre, numero, estado) values ($1, 'El Alto', '591', 'activo') returning id`, [empresa])).id;
 
-const seg = (t: number) => Math.floor(t / 1000);
+// Como llega en el historial real: la hora es un Long de protobuf (no un número).
+const seg = (t: number) => ({ low: Math.floor(t / 1000), high: 0, unsigned: true, toNumber() { return this.low; } });
 const msg = (id: string, jid: string, texto: string, horasAtras: number, fromMe = false) => ({
   key: { remoteJid: jid, id, fromMe },
   messageTimestamp: seg(reloj.ahora - horasAtras * HORA),

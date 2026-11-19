@@ -1,5 +1,5 @@
 import type { WAMessage, WASocket } from '@whiskeysockets/baileys';
-import { downloadMediaMessage } from '@whiskeysockets/baileys';
+import { downloadMediaMessage, toNumber } from '@whiskeysockets/baileys';
 import { supabase } from '../supabase/client.js';
 import type { ConversacionRow, TipoMensaje } from '../types/dominio.js';
 import { obtenerEmpresaIdDeLinea } from './empresa.js';
@@ -197,6 +197,9 @@ async function guardarNombreDePerfil(lineaId: string, telefono: string, conversa
 }
 
 const LLEGA_TARDE_MS = 10 * 60_000;
+// En el historial la hora viene como un Long de protobuf (no un número): Number() daba NaN y se
+// descartaba todo. toNumber de Baileys sirve para los dos.
+const horaDe = (msg: WAMessage) => toNumber(msg.messageTimestamp as Parameters<typeof toNumber>[0]) * 1000;
 
 export async function procesarMensajeEntrante(msg: WAMessage, sock: WASocket, lineaId: string): Promise<void> {
   const resultado = detectarTipoYTexto(msg);
@@ -228,7 +231,7 @@ export async function procesarMensajeEntrante(msg: WAMessage, sock: WASocket, li
   // Un mensaje que llega tarde (el número estuvo desconectado y WhatsApp lo entrega al reconectar)
   // se guarda con su hora real: así la IA no responde de golpe todo lo atrasado (más de 2 h), y queda
   // en IA → "Chats que quedaron sin respuesta" para responderlo despacio.
-  const enviadoEn = Number(msg.messageTimestamp ?? 0) * 1000;
+  const enviadoEn = horaDe(msg);
   const atrasado = enviadoEn > 0 && Date.now() - enviadoEn > LLEGA_TARDE_MS;
   const { error: errorMensaje } = await supabase.from('mensajes').insert({
     conversacion_id: conversacion.id,
@@ -299,7 +302,6 @@ export async function procesarMensajeSaliente(msg: WAMessage, lineaId: string): 
 // aparecen en la Bandeja y en IA → "Chats que quedaron sin respuesta", y tú decides cuándo responder.
 const HISTORIAL_MAX_MS = 48 * 60 * 60_000;
 const HISTORIAL_MAX_MENSAJES = 500;
-const horaDe = (msg: WAMessage) => Number(msg.messageTimestamp ?? 0) * 1000;
 
 async function guardarDelHistorial(msg: WAMessage, lineaId: string): Promise<boolean> {
   if (!msg.key.id) return false;
