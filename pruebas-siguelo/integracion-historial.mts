@@ -36,7 +36,10 @@ const historial = [
 
 const n = await importarHistorial(historial, linea);
 assert.equal(n, 3, 'guarda los 3 de las últimas 48 h de chats uno a uno');
+await pg.query(`update conversaciones set estado = 'cerrado', ultima_actividad = $1 where contacto_telefono = '59170000002'`, [new Date(reloj.ahora - 9 * HORA).toISOString()]);
 assert.equal(await importarHistorial(historial, linea), 0, 'si llega dos veces, no se duplica');
+const cerrado = await uno(`select estado from conversaciones where contacto_telefono = '59170000002'`);
+assert.equal(cerrado.estado, 'cerrado', 'un chat sin nada nuevo no se reabre');
 const h1 = await uno(`select remitente, contenido, creado_en from mensajes where whatsapp_id = 'H1'`);
 assert.equal(h1.remitente, 'cliente');
 assert.ok(Math.abs(new Date(h1.creado_en).getTime() - (reloj.ahora - 14 * HORA)) < 2000, 'con su hora real');

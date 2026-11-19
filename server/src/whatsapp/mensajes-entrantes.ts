@@ -307,9 +307,15 @@ async function guardarDelHistorial(msg: WAMessage, lineaId: string): Promise<boo
   if (!resultado) return false;
   const { tipo, texto, esMedia } = resultado;
   const telefono = await resolverTelefono(msg, lineaId);
+  // Primero se mira si ya lo tenemos (en cualquier chat de ese contacto en este número): así un chat
+  // viejo sin nada nuevo no se reabre ni sube en la Bandeja.
+  const { data: chats } = await supabase.from('conversaciones').select('id').eq('linea_id', lineaId).eq('contacto_telefono', telefono);
+  const ids = (chats || []).map((c) => c.id);
+  if (ids.length) {
+    const { data: existente } = await supabase.from('mensajes').select('id').in('conversacion_id', ids).eq('whatsapp_id', msg.key.id).limit(1);
+    if (existente && existente.length > 0) return false;
+  }
   const conversacion = await buscarOCrearConversacion(lineaId, telefono);
-  const { data: existente } = await supabase.from('mensajes').select('id').eq('conversacion_id', conversacion.id).eq('whatsapp_id', msg.key.id).limit(1);
-  if (existente && existente.length > 0) return false;
   const mediaUrl = esMedia ? await descargarYSubirMedia(msg, tipo, lineaId).catch(() => null) : null;
   const { error } = await supabase.from('mensajes').insert({
     conversacion_id: conversacion.id,
