@@ -611,6 +611,7 @@ export type SigueloDatabase = {
     Views: Record<string, never>;
     Functions: {
       siguelo_actividad: { Args: { p_empresa: string }; Returns: ActividadRow[] };
+      siguelo_actividad_de: { Args: { p_empresa: string; p_contactos: string[] }; Returns: ActividadRow[] };
       siguelo_cola_siguientes: { Args: { p_empresa: string; p_ahora: string; p_por_linea: number }; Returns: ColaRow[] };
       siguelo_ia_por_leer: { Args: { p_empresa: string; p_quieto_seg: number }; Returns: PorLeerRow[] };
       siguelo_pagos_por_leer: { Args: { p_empresa: string }; Returns: PagoPorLeerRow[] };

@@ -156,7 +156,9 @@ class Consulta {
       if (this.op === 'select') {
         sql = `select ${this.cols} from ${this.t}${await this.where(params)}`;
         if (this.orden.length) sql += ` order by ${this.orden.join(', ')}`;
-        if (this.lim) sql += ` limit ${this.lim}`;
+        // Como Supabase: como mucho db.maxFilas filas por pedido (1000), aunque se pidan más.
+        const lim = Math.min(this.lim || Infinity, TABLAS_GRANDES.has(this.t) ? db.maxFilas : 1000);
+        if (lim !== Infinity) sql += ` limit ${lim}`;
         if (this.desde) sql += ` offset ${this.desde}`;
       } else if (this.op === 'insert' || this.op === 'upsert') {
         const filas = this.filas.map((f) => (CON_CREADO_EN.has(this.t) && !('creado_en' in f) ? { ...f, creado_en: new RealDate(reloj.ahora).toISOString() } : f));
@@ -230,19 +232,65 @@ const auth = {
   },
 };
 
+// Las tablas que en una cuenta real pasan de 1000 filas (las pruebas bajan db.maxFilas para verlo con pocas).
+const TABLAS_GRANDES = new Set(['contactos', 'conversaciones', 'mensajes', 'siguelo_seguimientos', 'siguelo_cola']);
+
 export const db = {
   auth,
   from: (t) => new Consulta(t),
-  async rpc(fn, args) {
-    try {
-      const claves = Object.keys(args);
-      const r = await pg.query(`select * from ${fn}(${claves.map((_, i) => `$${i + 1}`).join(', ')})`, claves.map((k) => args[k]));
-      const filas = normalizar(r.rows, r.fields);
-      // Una función que devuelve un solo valor: Supabase devuelve ese valor, no una fila.
-      if (r.fields.length === 1 && r.fields[0].name === fn && filas.length === 1) return { data: filas[0][fn], error: null };
-      return { data: filas, error: null };
-    } catch (e) {
-      return { data: null, error: { message: e.message } };
-    }
+  // Filas que devuelve Supabase como mucho en un pedido (para probar que se lee por partes).
+  maxFilas: 1000,
+  // Como supabase-js: .rpc() se puede seguir con .order() y .range() (y también devuelve 1000 filas como mucho).
+  rpc(fn, args) {
+    const orden = [];
+    let desde = 0;
+    let lim = null;
+    const correr = async () => {
+      try {
+        const claves = Object.keys(args);
+        let sql = `select * from ${fn}(${claves.map((_, i) => `$${i + 1}`).join(', ')})`;
+        if (orden.length) sql += ` order by ${orden.join(', ')}`;
+        const tope = Math.min(lim ?? Infinity, db.maxFilas);
+        if (tope !== Infinity) sql += ` limit ${tope}`;
+        if (desde) sql += ` offset ${desde}`;
+        const r = await pg.query(sql, claves.map((k) => args[k]));
+        const filas = normalizar(r.rows, r.fields);
+        // Una función que devuelve un solo valor: Supabase devuelve ese valor, no una fila.
+        if (r.fields.length === 1 && r.fields[0].name === fn && filas.length === 1) return { data: filas[0][fn], error: null };
+        return { data: filas, error: null };
+      } catch (e) {
+        return { data: null, error: { message: e.message } };
+      }
+    };
+    const q = {
+      order(c, { ascending = true } = {}) { orden.push(`${c} ${ascending ? 'asc' : 'desc'}`); return q; },
+      range(d, h) { desde = d; lim = h - d + 1; return q; },
+      then(ok, mal) { return correr().then(ok, mal); },
+    };
+    return q;
   },
 };
+
+// Los mismos ayudantes que server/src/siguelo/db.ts.
+// Las páginas son del tamaño del tope (en Supabase, las dos son de 1000).
+export async function todas(pedir, tope = 50_000) {
+  const filas = [];
+  const pagina = Math.min(1000, db.maxFilas);
+  for (let desde = 0; ; desde += pagina) {
+    const { data, error } = await pedir(desde, desde + pagina - 1);
+    if (error) throw new Error(error.message);
+    filas.push(...(data || []));
+    if (!data || data.length < pagina || filas.length >= tope) return filas;
+  }
+}
+// Los grupos se achican en la misma proporción que el tope (200 o 300 ids de 1000 filas).
+export async function porGrupos(ids, pedir, tam = 200) {
+  const filas = [];
+  tam = Math.max(1, Math.floor((tam * db.maxFilas) / 1000));
+  for (let i = 0; i < ids.length; i += tam) {
+    const { data, error } = await pedir(ids.slice(i, i + tam));
+    if (error) throw new Error(error.message);
+    filas.push(...(data || []));
+  }
+  return filas;
+}

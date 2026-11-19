@@ -1,5 +1,5 @@
 import type { AnyMessageContent } from '@whiskeysockets/baileys';
-import { db } from '../db.js';
+import { db, todas } from '../db.js';
 import { MIN, enFranja, inicioDelDia, type Franja } from '../horario.js';
 import { elegirVariante, normalizarTexto } from '../textos.js';
 import { variablesDeLinea } from '../negocios.js';
@@ -39,17 +39,6 @@ export function leerLinea(linea: string): { telefono: string; nombre: string | n
   return telefono ? { telefono, nombre: m[2].trim() || null } : null;
 }
 
-// Trae todas las filas de a 1000 (Supabase devuelve como mucho 1000 por pedido).
-async function todas<T>(pedir: (desde: number, hasta: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
-  const filas: T[] = [];
-  for (let desde = 0; ; desde += 1000) {
-    const { data, error } = await pedir(desde, desde + 999);
-    if (error) throw new Error(error.message);
-    filas.push(...(data || []));
-    if (!data || data.length < 1000 || filas.length > 50_000) return filas;
-  }
-}
-
 type ContactoCorto = { id: string; telefono: string; nombre: string | null; etapa_id: string | null };
 
 async function contactosPorTelefono(empresaId: string, telefonos: string[]): Promise<Map<string, ContactoCorto>> {
@@ -69,10 +58,10 @@ export async function armarDestinatarios(empresaId: string, lineaId: string, fil
   } else if (filtro.origen === 'lista') {
     base = (filtro.lista || []).map(leerLinea).filter((x): x is { telefono: string; nombre: string | null } => !!x);
   } else if (filtro.origen === 'chats') {
-    const chats = await todas((d, h) => db.from('conversaciones').select('contacto_telefono, contacto_nombre').eq('linea_id', lineaId).order('creado_en').range(d, h));
+    const chats = await todas((d, h) => db.from('conversaciones').select('contacto_telefono, contacto_nombre').eq('linea_id', lineaId).order('creado_en').order('id').range(d, h));
     base = chats.map((c) => ({ telefono: c.contacto_telefono, nombre: c.contacto_nombre }));
   } else {
-    const cs = await todas((d, h) => db.from('contactos').select('telefono, nombre').eq('empresa_id', empresaId).order('creado_en').range(d, h));
+    const cs = await todas((d, h) => db.from('contactos').select('telefono, nombre').eq('empresa_id', empresaId).order('creado_en').order('id').range(d, h));
     base = cs.map((c) => ({ telefono: c.telefono, nombre: c.nombre }));
   }
   // Sin repetidos y solo números de verdad.
@@ -87,7 +76,7 @@ export async function armarDestinatarios(empresaId: string, lineaId: string, fil
   const etapas = new Set(filtro.etapas || []);
   let conEtiqueta: Set<string> | null = null;
   if (filtro.etiquetas?.length) {
-    const filas = await todas((d, h) => db.from('contacto_etiquetas').select('contacto_id').in('etiqueta_id', filtro.etiquetas!).range(d, h));
+    const filas = await todas((d, h) => db.from('contacto_etiquetas').select('contacto_id').in('etiqueta_id', filtro.etiquetas!).order('contacto_id').order('etiqueta_id').range(d, h));
     conEtiqueta = new Set(filas.map((f) => f.contacto_id));
   }
   let perdidas = new Set<string>();
@@ -99,7 +88,7 @@ export async function armarDestinatarios(empresaId: string, lineaId: string, fil
   let conInteres: Set<string> | null = null;
   if (filtro.con_interes || filtro.intereses?.length) {
     const palabras = (filtro.intereses || []).map(normalizarTexto).filter(Boolean);
-    const filas = await todas((d, h) => db.from('siguelo_ia_lecturas').select('contacto_id, interes').eq('empresa_id', empresaId).range(d, h));
+    const filas = await todas((d, h) => db.from('siguelo_ia_lecturas').select('contacto_id, interes').eq('empresa_id', empresaId).order('conversacion_id').range(d, h));
     conInteres = new Set(
       filas
         .filter((f) => f.contacto_id && f.interes?.trim() && (!palabras.length || palabras.some((p) => normalizarTexto(f.interes).includes(p))))
@@ -126,7 +115,7 @@ export const esGrupo = (telefono: string) => telefono.endsWith('@g.us');
 
 // Los intereses que más anotó la IA (para elegir a quiénes les llega).
 export async function interesesComunes(empresaId: string): Promise<{ texto: string; n: number }[]> {
-  const filas = await todas((d, h) => db.from('siguelo_ia_lecturas').select('interes').eq('empresa_id', empresaId).range(d, h));
+  const filas = await todas((d, h) => db.from('siguelo_ia_lecturas').select('interes').eq('empresa_id', empresaId).order('conversacion_id').range(d, h));
   const cuenta = new Map<string, { texto: string; n: number }>();
   for (const f of filas) {
     for (const parte of String(f.interes || '').split(/[,;/]| y /)) {

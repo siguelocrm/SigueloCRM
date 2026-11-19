@@ -41,39 +41,47 @@ export async function estadoSeguimiento(empresaId: string): Promise<EstadoSeguim
     );
   }
 
-  // Mensajes de cada etapa (los generales; los de un negocio mandan sobre estos).
+  // Mensajes de cada etapa, como los usa el motor (motor.ts): los de un negocio mandan sobre los
+  // generales, y una etapa sin mensajes propios usa los de la primera etapa de su embudo que los
+  // tenga, también por negocio (por ejemplo "En Negociación" usa los de "Primer Contacto" de cada sede).
   const embudoDe = new Map((deEmbudo || []).map((e) => [e.etapa_id, e.embudo_id] as const));
-  const general_ = new Map((cfgs || []).filter((c: EtapaConfigRow) => !c.negocio_id).map((c: EtapaConfigRow) => [c.etapa_id, c] as const));
+  const porClave = new Map((cfgs || []).map((c: EtapaConfigRow) => [`${c.etapa_id}|${c.negocio_id ?? ''}`, c] as const));
+  const cfgDe = (etapaId: string, negocioId: string | null): EtapaConfigRow | undefined => (negocioId && porClave.get(`${etapaId}|${negocioId}`)) || porClave.get(`${etapaId}|`) || undefined;
+  const conTextos = [...new Set((cfgs || []).map((c: EtapaConfigRow) => c.negocio_id).filter((x): x is string => !!x))];
   const lista = etapas || [];
   const resumen: EstadoSeguimiento['etapas'] = [];
   for (const e of lista) {
     if (e.tipo !== 'normal') continue;
-    const propia = general_.get(e.id);
-    if (propia?.sin_seguimiento || (nombreConcretado(e.nombre) && !activa(propia?.recordatorios) && !activa(propia?.reactivacion))) {
+    const general = cfgDe(e.id, null);
+    if (general?.sin_seguimiento || (nombreConcretado(e.nombre) && !activa(general?.recordatorios) && !activa(general?.reactivacion))) {
       resumen.push({ nombre: e.nombre, tipo: e.tipo, recordatorios: 'ninguno', reactivacion: 'ninguna', respaldo: false, concretado: true });
       continue;
     }
-    const base = lista
-      .filter((x) => x.tipo === 'normal' && (embudoDe.get(x.id) ?? null) === (embudoDe.get(e.id) ?? null))
-      .map((x) => general_.get(x.id))
-      .find((c) => c && (activa(c.recordatorios) || activa(c.reactivacion)));
-    const rec = activa(propia?.recordatorios) ? propia!.recordatorios : base?.recordatorios;
-    const react = activa(propia?.reactivacion) ? propia!.reactivacion : base?.reactivacion;
-    // Los textos propios de cada negocio (sucursal) en esta etapa.
-    const deNegocios = (cfgs || []).filter((c: EtapaConfigRow) => c.negocio_id && c.etapa_id === e.id && !c.sin_seguimiento);
-    const enNegocios = (cual: 'recordatorios' | 'reactivacion') =>
-      deNegocios
-        .filter((c: EtapaConfigRow) => activa(c[cual]))
-        .map((c: EtapaConfigRow) => `${nombreNegocio.get(c.negocio_id!) ?? 'un negocio'}: ${describir(c[cual])}`)
-        .join(' · ');
-    const conNegocios = (general: string, propios: string, nada: string) => [general, propios && `${general ? 'y ' : ''}${propios}`].filter(Boolean).join(' ') || nada;
-    resumen.push({
-      nombre: e.nombre,
-      tipo: e.tipo,
-      recordatorios: conNegocios(describir(rec), enNegocios('recordatorios'), 'ninguno'),
-      reactivacion: conNegocios(describir(react), enNegocios('reactivacion'), 'ninguna'),
-      respaldo: (!activa(propia?.recordatorios) && activa(base?.recordatorios)) || (!activa(propia?.reactivacion) && activa(base?.reactivacion)),
-    });
+    const delEmbudo = lista.filter((x) => x.tipo === 'normal' && (embudoDe.get(x.id) ?? null) === (embudoDe.get(e.id) ?? null));
+    // Lo que usa un contacto de este negocio (null = sin textos propios) en esta etapa, y de qué etapa sale.
+    const usa = (negocioId: string | null, cual: 'recordatorios' | 'reactivacion') => {
+      const propia = cfgDe(e.id, negocioId);
+      if (activa(propia?.[cual])) return { sec: propia![cual], de: null as string | null };
+      if (nombreConcretado(e.nombre)) return null; // ya concretó: solo lo propio
+      for (const x of delEmbudo) {
+        const c = cfgDe(x.id, negocioId);
+        if (c && (activa(c.recordatorios) || activa(c.reactivacion))) return activa(c[cual]) ? { sec: c[cual], de: x.id === e.id ? null : x.nombre } : null;
+      }
+      return null;
+    };
+    const texto = (u: ReturnType<typeof usa>) => (u ? `${describir(u.sec)}${u.de ? ` (los de "${u.de}")` : ''}` : '');
+    const linea = (cual: 'recordatorios' | 'reactivacion', nada: string) => {
+      const deTodos = usa(null, cual);
+      const propios = conTextos
+        .map((n) => ({ n, u: usa(n, cual) }))
+        .filter(({ u }) => u && u.sec !== deTodos?.sec)
+        .map(({ n, u }) => `${nombreNegocio.get(n) ?? 'un negocio'}: ${texto(u)}`);
+      const partes = [deTodos ? texto(deTodos) : '', ...propios].filter(Boolean);
+      return { texto: partes.join(' · ') || nada, respaldo: !!deTodos?.de || propios.some((x) => x.includes(' (los de "')) };
+    };
+    const rec = linea('recordatorios', 'ninguno');
+    const react = linea('reactivacion', 'ninguna');
+    resumen.push({ nombre: e.nombre, tipo: e.tipo, recordatorios: rec.texto, reactivacion: react.texto, respaldo: rec.respaldo || react.respaldo });
   }
   if (!resumen.some((r) => r.recordatorios !== 'ninguno' || r.reactivacion !== 'ninguna')) {
     general.push({ ok: false, titulo: 'Ninguna etapa tiene mensajes de seguimiento', detalle: 'En "Mensajes por etapa", activa los recordatorios y la reactivación de "Primer Contacto" con sus mensajes (las demás etapas los usan si no tienen propios). Puedes hacerlo para todos los negocios o con textos propios de cada uno.' });

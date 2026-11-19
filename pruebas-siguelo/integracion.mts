@@ -563,6 +563,53 @@ assert.ok(!estSuc.general.some((g: any) => /Ninguna etapa tiene mensajes/.test(g
 assert.match(estSuc.etapas[0].reactivacion, /Club Cercado: 1 h, 3 h/);
 paso('"¿Por qué no se programa?" cuenta los textos propios de cada sucursal');
 
+// ---------- Más contactos de los que Supabase devuelve en un pedido (1000; aquí 3) ----------
+// Solo hay textos propios de la sucursal en "Primer Contacto": "En Negociación" usa esos. Antes, el
+// motor leía de un solo pedido: veía un grupo distinto cada minuto y cancelaba los mensajes del resto
+// ("Ya no corresponde"). Ahora lee por partes y cada minuto solo revisa a los que tienen novedades.
+const { olvidarVueltas } = await import(R + 'motor.ts');
+const etapasSuc = (await pg.query<any>(`select id, nombre from etapas_venta where empresa_id = $1 and tipo = 'normal' order by orden`, [soloSucursales])).rows;
+const negSuc = etapasSuc[1];
+assert.match(estSuc.etapas[1].reactivacion, /Club Cercado: 1 h, 3 h \(los de "/, 'la segunda etapa usa los textos de la sucursal de la primera');
+const lineaSuc = (await uno(`insert into lineas_whatsapp (empresa_id, nombre, numero, estado) values ($1, 'Cercado', '593', 'activo') returning id`, [soloSucursales])).id;
+await pg.query(`insert into siguelo_lineas (linea_id, empresa_id, negocio_id) values ($1, $2, $3)`, [lineaSuc, soloSucursales, sucursal]);
+const tSuc = reloj.ahora;
+await pg.query(`update siguelo_ajustes set activado_en = $2, hora_inicio = '00:00', hora_fin = '23:59' where empresa_id = $1`, [soloSucursales, iso(tSuc - DIA)]);
+const ajSuc = async () => (await db.from('siguelo_ajustes').select('*').eq('empresa_id', soloSucursales).single()).data;
+const enNeg: { id: string; conv: string }[] = [];
+for (let i = 0; i < 8; i++) {
+  const tel = `5917600000${i}`;
+  const conv = (await uno(`insert into conversaciones (linea_id, contacto_telefono, contacto_nombre, estado, ultima_actividad, creado_en) values ($1, $2, $3, 'abierto', $4, $4) returning id`, [lineaSuc, tel, `Neg ${i}`, iso(tSuc - 2 * HORA)])).id;
+  const id = (await uno(`insert into contactos (empresa_id, telefono, nombre) values ($1, $2, $3) on conflict (empresa_id, telefono) do update set nombre = excluded.nombre returning id`, [soloSucursales, tel, `Neg ${i}`])).id;
+  await pg.query(`update contactos set etapa_id = $2 where id = $1`, [id, negSuc.id]);
+  await pg.query(`update contactos set etapa_actualizada_en = $2 where id = $1`, [id, iso(tSuc - 2 * HORA)]);
+  await msg(conv, 'cliente', tSuc - 2 * HORA, 'Quiero inscribirme');
+  await msg(conv, 'agente', tSuc - HORA, 'Te paso los horarios');
+  enNeg.push({ id, conv });
+}
+db.maxFilas = 3;
+olvidarVueltas();
+const programados = async () => (await pg.query<any>(`select id, contacto_id, nombre from siguelo_cola where empresa_id = $1 and estado = 'pendiente' and tipo = 'react' order by id`, [soloSucursales])).rows;
+await revisarEmpresa(await ajSuc());
+const primeros = await programados();
+assert.equal(primeros.length, 8, 'los 8 contactos tienen su reactivación, aunque cada pedido devuelve 3');
+assert.ok(primeros.every((q: any) => q.nombre === `${negSuc.nombre} · Reactivación 1`));
+for (let i = 1; i <= 5; i++) {
+  en(reloj.ahora + MIN);
+  await revisarEmpresa(await ajSuc());
+}
+assert.deepEqual((await programados()).map((q: any) => q.id), primeros.map((q: any) => q.id), 'vuelta tras vuelta quedan los mismos, sin cancelar ni reprogramar');
+const anulados = (await uno(`select count(*)::int n from siguelo_cola where empresa_id = $1 and estado = 'cancelado'`, [soloSucursales])).n;
+assert.equal(anulados, 0, 'nada se cancela con "Ya no corresponde"');
+// Una vuelta de un minuto revisa a quien escribió (aunque no le toque la vuelta completa).
+await msg(enNeg[6].conv, 'cliente', reloj.ahora, '¿A qué hora es?');
+en(reloj.ahora + MIN);
+await revisarEmpresa(await ajSuc());
+assert.equal((await programados()).length, 7, 'al que respondió se le detiene la reactivación en la vuelta siguiente');
+assert.equal((await uno(`select motivo from siguelo_cola where contacto_id = $1 and estado = 'cancelado'`, [enNeg[6].id])).motivo, 'El cliente respondió');
+db.maxFilas = 1000;
+paso('con más contactos de los que entran en un pedido, el motor lee por partes y no cancela nada de más; "En Negociación" usa los textos de cada sucursal');
+
 console.log(`\n${ok} pasos OK · mensajes "enviados":`);
 for (const e of enviados) console.log('  →', e.jid, JSON.stringify(e.texto));
 const reg = (await pg.query<any>(`select texto from siguelo_registro order by creado_en`)).rows.map((r: any) => r.texto);

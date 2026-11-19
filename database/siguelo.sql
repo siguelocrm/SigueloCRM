@@ -1958,3 +1958,85 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke execute on function siguelo_cola_siguientes(uuid, timestamptz, integer) from public, anon, authenticated;
 grant execute on function siguelo_cola_siguientes(uuid, timestamptz, integer) to service_role;
+
+-- ---------- 46. El seguimiento lee por partes ----------
+-- Lo mismo que siguelo_actividad (sección 8), pero solo de los contactos que se le pasan. Supabase
+-- devuelve como mucho 1000 filas por pedido: con más contactos en el embudo, el motor veía cada
+-- minuto un grupo distinto de 1000 y desprogramaba (o reprogramaba) mensajes de los demás. Ahora
+-- cada minuto revisa solo los contactos con novedades, y una vez por hora a todos, de a grupos.
+create or replace function siguelo_actividad_de(p_empresa uuid, p_contactos uuid[])
+returns table (
+  contacto_id uuid,
+  telefono text,
+  nombre text,
+  etapa_id uuid,
+  etapa_actualizada_en timestamptz,
+  contacto_creado_en timestamptz,
+  conversacion_id uuid,
+  linea_id uuid,
+  primer_mensaje timestamptz,
+  ultimo_cliente timestamptz,
+  ultimo_saliente timestamptz,
+  ultimo_manual timestamptz
+)
+language sql
+stable
+set search_path = public
+as $$
+  with contactos_en_seguimiento as (
+    select c.id, c.telefono, c.nombre, c.etapa_id, c.etapa_actualizada_en, c.creado_en
+    from contactos c
+    where c.empresa_id = p_empresa
+      and c.id = any(p_contactos)
+      and (
+        c.etapa_id in (select se.etapa_id from siguelo_etapas se where se.empresa_id = p_empresa)
+        or (
+          c.etapa_id in (select ev.id from etapas_venta ev where ev.empresa_id = p_empresa and ev.tipo = 'normal')
+          and exists (select 1 from siguelo_etapas se2 where se2.empresa_id = p_empresa)
+        )
+      )
+  ),
+  chats as (
+    select cv.id, cv.linea_id, cv.contacto_telefono, cv.estado, cv.ultima_actividad
+    from conversaciones cv
+    join lineas_whatsapp l on l.id = cv.linea_id
+    where l.empresa_id = p_empresa
+      and cv.contacto_telefono in (select telefono from contactos_en_seguimiento)
+  ),
+  chat_principal as (
+    select distinct on (contacto_telefono) contacto_telefono, id, linea_id
+    from chats
+    order by contacto_telefono, (estado = 'abierto') desc, ultima_actividad desc
+  ),
+  tiempos as (
+    select
+      ch.contacto_telefono,
+      min(m.creado_en) as primer_mensaje,
+      max(m.creado_en) filter (where m.remitente = 'cliente') as ultimo_cliente,
+      max(m.creado_en) filter (where m.remitente = 'agente') as ultimo_saliente,
+      max(m.creado_en) filter (
+        where m.remitente = 'agente'
+          and not exists (select 1 from siguelo_cola q where q.mensaje_id = m.id)
+          and (m.whatsapp_id is null or not exists (select 1 from siguelo_cola q where q.whatsapp_id = m.whatsapp_id))
+          and not exists (select 1 from siguelo_masivo_envios x where x.mensaje_id = m.id)
+      ) as ultimo_manual
+    from chats ch
+    join mensajes m on m.conversacion_id = ch.id
+    group by ch.contacto_telefono
+  )
+  select
+    c.id, c.telefono, c.nombre, c.etapa_id, c.etapa_actualizada_en, c.creado_en,
+    cp.id, cp.linea_id,
+    t.primer_mensaje, t.ultimo_cliente, t.ultimo_saliente, t.ultimo_manual
+  from contactos_en_seguimiento c
+  join chat_principal cp on cp.contacto_telefono = c.telefono
+  left join tiempos t on t.contacto_telefono = c.telefono;
+$$;
+revoke execute on function siguelo_actividad_de(uuid, uuid[]) from public, anon, authenticated;
+grant execute on function siguelo_actividad_de(uuid, uuid[]) to service_role;
+
+-- Para encontrar rápido "qué cambió desde la vuelta anterior".
+create index if not exists conversaciones_telefono_idx on conversaciones (contacto_telefono);
+create index if not exists contactos_etapa_cambio_idx on contactos (empresa_id, etapa_actualizada_en);
+create index if not exists siguelo_seguimientos_cambio_idx on siguelo_seguimientos (empresa_id, actualizado_en);
+create index if not exists siguelo_cola_cerrado_idx on siguelo_cola (empresa_id, cerrado_en);

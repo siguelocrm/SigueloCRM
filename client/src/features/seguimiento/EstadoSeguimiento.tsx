@@ -70,7 +70,6 @@ export default function EstadoSeguimiento() {
                 {estado.etapas.map((e) => (
                   <span key={e.nombre} className="text-[12.5px]" style={{ color: TEXTO_SECUNDARIO }}>
                     <b style={{ color: TEXTO_PRIMARIO }}>{e.nombre}:</b> {e.concretado ? 'sin seguimiento (ya concretó)' : <>reactivación {e.reactivacion} · recordatorios {e.recordatorios}</>}
-                    {e.respaldo && <span style={{ color: TEXTO_TERCIARIO }}> (usa los de la primera etapa porque no tiene propios)</span>}
                   </span>
                 ))}
               </div>

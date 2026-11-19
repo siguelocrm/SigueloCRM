@@ -1,4 +1,4 @@
-import { db } from './db.js';
+import { db, porGrupos, todas } from './db.js';
 import { DIA } from './horario.js';
 import * as C from './calculo.js';
 import { registrar } from './registro.js';
@@ -18,29 +18,68 @@ const TIPOS: TipoSecuencia[] = ['rec', 'react'];
 const clave = (contactoId: string, tipo: string, paso: number, token: string) => `${contactoId}|${tipo}|${paso}|${token}`;
 const nombreDe = (a: Pick<ActividadRow, 'nombre' | 'telefono'>) => a.nombre?.trim() || a.telefono.split('@')[0];
 
-// Las conversaciones recientes que todavía no tienen ficha de contacto la
-// reciben (igual que hace la Bandeja al abrirse), así un cliente nuevo entra
-// al embudo aunque nadie tenga el CRM abierto.
-// Solo los chats con movimiento desde la vuelta anterior (antes traía hasta 1000 chats de los últimos
-// 3 días en cada vuelta: mucho tráfico con Supabase). La primera vez, los últimos 3 días.
-const ultimaFicha = new Map<string, number>();
-async function asegurarContactos(empresaId: string): Promise<void> {
-  const desde = ultimaFicha.get(empresaId) ?? Date.now() - 3 * DIA;
-  ultimaFicha.set(empresaId, Date.now());
+// Las conversaciones con movimiento desde la vuelta anterior que todavía no tienen ficha de
+// contacto la reciben (igual que hace la Bandeja al abrirse), así un cliente nuevo entra al embudo
+// aunque nadie tenga el CRM abierto. Devuelve los teléfonos de esos chats.
+async function asegurarContactos(empresaId: string, desde: number): Promise<string[]> {
   const { data: lineas } = await db.from('lineas_whatsapp').select('id').eq('empresa_id', empresaId);
   const ids = (lineas || []).map((l) => l.id);
-  if (!ids.length) return;
-  const { data: chats } = await db
-    .from('conversaciones')
-    .select('contacto_telefono, contacto_nombre')
-    .in('linea_id', ids)
-    .gte('ultima_actividad', new Date(desde - 2 * 60_000).toISOString())
-    .limit(1000);
-  if (!chats?.length) return;
+  if (!ids.length) return [];
+  const chats = await todas((d, h) =>
+    db.from('conversaciones').select('id, contacto_telefono, contacto_nombre').in('linea_id', ids).gte('ultima_actividad', new Date(desde).toISOString()).order('id').range(d, h),
+  );
+  if (!chats.length) return [];
   const filas = new Map<string, { empresa_id: string; telefono: string; nombre: string | null }>();
   for (const c of chats) filas.set(c.contacto_telefono, { empresa_id: empresaId, telefono: c.contacto_telefono, nombre: c.contacto_nombre || null });
   const { error } = await db.from('contactos').upsert([...filas.values()], { onConflict: 'empresa_id,telefono', ignoreDuplicates: true });
   if (error) console.error('Seguimiento: no se pudieron crear las fichas de contacto:', error.message);
+  return [...filas.keys()];
+}
+
+// Cada minuto el motor revisa solo a los contactos con novedades desde la vuelta anterior (un
+// mensaje en su chat, un cambio de etapa, un mensaje que salió o se canceló). Una vez por hora, y
+// cuando cambian los textos o los ajustes, revisa a todos. Supabase devuelve como mucho 1000 filas
+// por pedido: todo se lee por partes (antes, con más de 1000 contactos, cada minuto veía un grupo
+// distinto y desprogramaba los mensajes de los demás).
+const COMPLETA_CADA_MS = 60 * 60_000;
+const MARGEN_MS = 2 * 60_000;
+const ultimaVuelta = new Map<string, number>();
+const ultimaCompleta = new Map<string, { ts: number; firma: string }>();
+let faltaActividadDe = 0; // cuándo se vio que falta la sección 46 de siguelo.sql
+
+export function olvidarVueltas(): void {
+  ultimaVuelta.clear();
+  ultimaCompleta.clear();
+}
+
+// Los contactos con algo nuevo desde "desde".
+async function conNovedades(empresaId: string, desde: number, telefonos: string[]): Promise<string[]> {
+  const iso = new Date(desde).toISOString();
+  const [porEtapa, porEstado, porCola, porChat] = await Promise.all([
+    todas((d, h) => db.from('contactos').select('id').eq('empresa_id', empresaId).gte('etapa_actualizada_en', iso).order('id').range(d, h)),
+    todas((d, h) => db.from('siguelo_seguimientos').select('contacto_id').eq('empresa_id', empresaId).gte('actualizado_en', iso).order('contacto_id').range(d, h)),
+    todas((d, h) => db.from('siguelo_cola').select('id, contacto_id').eq('empresa_id', empresaId).gte('cerrado_en', iso).order('id').range(d, h)),
+    porGrupos(telefonos, (g) => db.from('contactos').select('id').eq('empresa_id', empresaId).in('telefono', g)),
+  ]);
+  return [...new Set([...porEtapa.map((x) => x.id), ...porEstado.map((x) => x.contacto_id), ...porCola.map((x) => x.contacto_id), ...porChat.map((x) => x.id)])];
+}
+
+// La actividad de esos contactos (null = de todos), de a grupos.
+async function actividadDe(empresaId: string, ids: string[] | null): Promise<ActividadRow[]> {
+  if (Date.now() - faltaActividadDe > COMPLETA_CADA_MS) {
+    const lista = ids ?? (await todas((d, h) => db.from('contactos').select('id').eq('empresa_id', empresaId).order('id').range(d, h))).map((c) => c.id);
+    try {
+      return await porGrupos(lista, (g) => db.rpc('siguelo_actividad_de', { p_empresa: empresaId, p_contactos: g }), 300);
+    } catch (err) {
+      if (!/function|does not exist|schema cache/i.test((err as Error).message)) throw err;
+      faltaActividadDe = Date.now();
+      console.warn('Seguimiento: falta pegar la sección 46 de database/siguelo.sql en Supabase (se lee todo de a 1000).');
+    }
+  }
+  const filas = await todas((d, h) => db.rpc('siguelo_actividad', { p_empresa: empresaId }).order('contacto_id').range(d, h));
+  if (!ids) return filas;
+  const quiero = new Set(ids);
+  return filas.filter((a) => quiero.has(a.contacto_id));
 }
 
 // Mismo cambio de etapa que hace la página (client/src/features/pipeline/useCambioEtapa.tsx):
@@ -81,25 +120,46 @@ export async function revisarEmpresa(aj: AjustesRow): Promise<void> {
   const ahora = Date.now();
   const activadoEn = C.ms(aj.activado_en) || ahora;
 
-  await asegurarContactos(empresaId);
+  const desde = (ultimaVuelta.get(empresaId) ?? ahora - 3 * DIA) - MARGEN_MS;
 
-  const [etapasR, cfgR, actR, segR, colaR, manoR] = await Promise.all([
-    db.from('etapas_venta').select('id, empresa_id, nombre, tipo, orden, probabilidad').eq('empresa_id', empresaId),
-    db.from('siguelo_etapas').select('*').eq('empresa_id', empresaId),
-    db.rpc('siguelo_actividad', { p_empresa: empresaId }),
-    db.from('siguelo_seguimientos').select('*').eq('empresa_id', empresaId),
-    db.from('siguelo_cola').select('*').eq('empresa_id', empresaId).eq('estado', 'pendiente'),
-    db
-      .from('siguelo_cola')
-      .select('contacto_id, tipo, paso, token')
-      .eq('empresa_id', empresaId)
-      .eq('estado', 'cancelado')
-      .eq('a_mano', true)
-      .gte('cerrado_en', new Date(ahora - 30 * DIA).toISOString()),
-  ]);
-  const error = etapasR.error || cfgR.error || actR.error || segR.error || colaR.error || manoR.error;
-  if (error) {
-    console.error('Seguimiento: no se pudo leer la base:', error.message);
+  let etapasR, cfgR, actividad: ActividadRow[], segsLista: SeguimientoRow[], pendientes: ColaRow[], mano: Pick<ColaRow, 'contacto_id' | 'tipo' | 'paso' | 'token'>[];
+  let completa: boolean;
+  let firma: string;
+  try {
+    const telefonos = await asegurarContactos(empresaId, desde);
+    [etapasR, cfgR] = await Promise.all([
+      db.from('etapas_venta').select('id, empresa_id, nombre, tipo, orden, probabilidad').eq('empresa_id', empresaId).order('id'),
+      db.from('siguelo_etapas').select('*').eq('empresa_id', empresaId).order('id'),
+    ]);
+    if (etapasR.error || cfgR.error) throw new Error((etapasR.error || cfgR.error)!.message);
+    // Si cambiaron las etapas, sus textos o los ajustes, se revisa a todos.
+    firma = JSON.stringify([etapasR.data, cfgR.data, aj]);
+    const previa = ultimaCompleta.get(empresaId);
+    completa = !previa || ahora - previa.ts >= COMPLETA_CADA_MS || previa.firma !== firma;
+    const ids = completa ? null : await conNovedades(empresaId, desde, telefonos);
+    const hace30 = new Date(ahora - 30 * DIA).toISOString();
+    const manoCols = 'id, contacto_id, tipo, paso, token';
+    [actividad, segsLista, pendientes, mano] = await Promise.all([
+      ids && !ids.length ? [] : actividadDe(empresaId, ids),
+      ids
+        ? porGrupos(ids, (g) => db.from('siguelo_seguimientos').select('*').in('contacto_id', g))
+        : todas((d, h) => db.from('siguelo_seguimientos').select('*').eq('empresa_id', empresaId).order('contacto_id').range(d, h)),
+      // Lo pendiente de esos contactos y todo lo de las citas (son pocas).
+      Promise.all([
+        ids
+          ? porGrupos(ids, (g) => db.from('siguelo_cola').select('*').eq('estado', 'pendiente').neq('tipo', 'cita').in('contacto_id', g))
+          : todas((d, h) => db.from('siguelo_cola').select('*').eq('empresa_id', empresaId).eq('estado', 'pendiente').neq('tipo', 'cita').order('id').range(d, h)),
+        todas((d, h) => db.from('siguelo_cola').select('*').eq('empresa_id', empresaId).eq('estado', 'pendiente').eq('tipo', 'cita').order('id').range(d, h)),
+      ]).then(([a, b]) => [...a, ...b]),
+      Promise.all([
+        ids
+          ? porGrupos(ids, (g) => db.from('siguelo_cola').select(manoCols).eq('estado', 'cancelado').eq('a_mano', true).gte('cerrado_en', hace30).in('contacto_id', g))
+          : todas((d, h) => db.from('siguelo_cola').select(manoCols).eq('empresa_id', empresaId).eq('estado', 'cancelado').eq('a_mano', true).neq('tipo', 'cita').gte('cerrado_en', hace30).order('id').range(d, h)),
+        todas((d, h) => db.from('siguelo_cola').select(manoCols).eq('empresa_id', empresaId).eq('estado', 'cancelado').eq('a_mano', true).eq('tipo', 'cita').gte('cerrado_en', hace30).order('id').range(d, h)),
+      ]).then(([a, b]) => [...a, ...b]),
+    ]);
+  } catch (err) {
+    console.error('Seguimiento: no se pudo leer la base:', (err as Error).message);
     return;
   }
 
@@ -138,9 +198,8 @@ export async function revisarEmpresa(aj: AjustesRow): Promise<void> {
       al_terminar: propia?.al_terminar ?? { etapa_id: null, dias: 0 },
     };
   };
-  const segs = new Map((segR.data || []).map((s: SeguimientoRow) => [s.contacto_id, s] as const));
-  const pendientes = colaR.data || [];
-  const cancelados = new Set((manoR.data || []).map((i) => clave(i.contacto_id, i.tipo, i.paso, i.token)));
+  const segs = new Map(segsLista.map((s) => [s.contacto_id, s] as const));
+  const cancelados = new Set(mano.map((i) => clave(i.contacto_id, i.tipo, i.paso, i.token)));
   const revisados = new Set<string>();
 
   const contexto = (a: ActividadRow, etapa: EtapaVentaRow, negocioId: string | null): C.Contexto => {
@@ -157,7 +216,7 @@ export async function revisarEmpresa(aj: AjustesRow): Promise<void> {
     };
   };
 
-  for (const a of actR.data || []) {
+  for (const a of actividad) {
     const inicial = etapas.get(a.etapa_id);
     if (!inicial) continue;
     let etapa: EtapaVentaRow = inicial;
@@ -350,11 +409,14 @@ export async function revisarEmpresa(aj: AjustesRow): Promise<void> {
     }
   }
 
-  // Lo pendiente de contactos que ya no están en una etapa con mensajes.
+  // Lo pendiente de contactos (de los que se revisaron en esta vuelta) que ya no están en una etapa con mensajes.
   for (const it of pendientes) {
     if (it.tipo !== 'cita' && !revisados.has(it.contacto_id)) await cancelarInterno(it, 'El contacto ya no está en una etapa con seguimiento');
   }
 
   // Los mensajes de las citas (Fase 4) van para cualquier contacto, esté en la etapa que esté.
   await revisarCitas(aj, pendientes, cancelados);
+
+  ultimaVuelta.set(empresaId, ahora);
+  if (completa) ultimaCompleta.set(empresaId, { ts: ahora, firma });
 }
