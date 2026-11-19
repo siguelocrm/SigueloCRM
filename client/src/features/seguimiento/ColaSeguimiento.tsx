@@ -91,18 +91,22 @@ export default function ColaSeguimiento({ ajustes }: { ajustes: AjustesSeguimien
   const cargar = useCallback(async () => {
     const campos = 'id, contacto_id, linea_id, tipo, nombre, variantes, vence, fijo, estado, a_mano, texto, motivo, creado_en, cerrado_en, contactos(nombre, telefono)';
     const deNumero = <T,>(q: T) => (filtro === 'todos' ? q : (q as unknown as { eq: (c: string, v: string) => T }).eq('linea_id', filtro));
-    const [pend, cerr, reg, cont, lin, todos] = await Promise.all([
+    const [pend, cerr, reg, cont, lin] = await Promise.all([
       deNumero(supabase.from('siguelo_cola').select(campos).in('estado', ['pendiente', 'enviando'])).order('vence').order('creado_en').limit(300).returns<ItemCola[]>(),
       deNumero(supabase.from('siguelo_cola').select(campos).in('estado', ['enviado', 'cancelado', 'error'])).order('cerrado_en', { ascending: false }).limit(30).returns<ItemCola[]>(),
       supabase.from('siguelo_registro').select('id, tipo, texto, creado_en').order('creado_en', { ascending: false }).limit(60).returns<RegistroSeguimiento[]>(),
       supabase.from('siguelo_contador').select('linea_id, enviados').eq('fecha', fechaDe(Date.now(), zona)).returns<{ linea_id: string; enviados: number }[]>(),
       supabase.from('lineas_whatsapp').select('id, nombre').order('nombre').returns<{ id: string; nombre: string }[]>(),
-      // Cuántos esperan en cada número (para los botones).
-      supabase.from('siguelo_cola').select('linea_id').in('estado', ['pendiente', 'enviando']).limit(5000).returns<{ linea_id: string }[]>(),
     ]);
-    const cuenta: Record<string, number> = {};
-    for (const x of todos.data || []) cuenta[x.linea_id] = (cuenta[x.linea_id] || 0) + 1;
-    setPorNumero(cuenta);
+    // Cuántos esperan en cada número (para los botones): Supabase solo cuenta, sin traer las filas
+    // (traerlas se cortaba en 1000, el máximo que devuelve por pedido).
+    const conteos = await Promise.all(
+      (lin.data || []).map(async (l) => {
+        const { count } = await supabase.from('siguelo_cola').select('id', { count: 'exact', head: true }).eq('linea_id', l.id).in('estado', ['pendiente', 'enviando']);
+        return [l.id, count ?? 0] as const;
+      }),
+    );
+    setPorNumero(Object.fromEntries(conteos));
     const lista = pend.data || [];
     setPendientes(lista);
     setCerrados(cerr.data || []);
