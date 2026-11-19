@@ -20,6 +20,17 @@ registerHooks({
         return { url: aqui + 'mock-sesiones.mjs', shortCircuit: true };
       }
     }
+    // server/src/whatsapp (el historial): la misma base de prueba y el bot de prueba.
+    if ((contexto.parentURL || '').includes('/server/src/whatsapp/')) {
+      if (especificador === '../supabase/client.js') {
+        redirigidos.push('supabase');
+        return { url: aqui + 'mock-supabase.mjs', shortCircuit: true };
+      }
+      if (especificador === './bot-automatico.js') {
+        redirigidos.push('bot');
+        return { url: aqui + 'mock-bot.mjs', shortCircuit: true };
+      }
+    }
     return siguiente(especificador, contexto);
   },
 });

@@ -73,10 +73,10 @@ iaRouter.post('/siguelo/ia/responder', ...conNumero((req) => req.body?.linea_id)
 // "Ponerse al día": cuántos chats de cada número quedaron sin respuesta (últimas 48 h) y cómo va.
 iaRouter.post('/siguelo/ia/al-dia/revisar', soloAdmin, async (req, res) => {
   const empresaId = req.usuarioAutenticado!.empresa_id;
-  const [chats, { data: lineas }] = await Promise.all([chatsSinRespuesta(empresaId, null), db.from('lineas_whatsapp').select('id, nombre').eq('empresa_id', empresaId).order('nombre')]);
+  const [chats, { data: lineas }] = await Promise.all([chatsSinRespuesta(empresaId, null), db.from('lineas_whatsapp').select('id, nombre, estado').eq('empresa_id', empresaId).order('nombre')]);
   const cuenta: Record<string, number> = {};
   for (const ch of chats) cuenta[ch.linea_id] = (cuenta[ch.linea_id] || 0) + 1;
-  res.json({ numeros: (lineas || []).map((l) => ({ id: l.id, nombre: l.nombre, pendientes: cuenta[l.id] || 0 })), progreso: progresoAlDia(empresaId) });
+  res.json({ numeros: (lineas || []).map((l) => ({ id: l.id, nombre: l.nombre, pendientes: cuenta[l.id] || 0, conectado: l.estado === 'activo' })), progreso: progresoAlDia(empresaId) });
 });
 iaRouter.get('/siguelo/ia/al-dia', soloAdmin, (req, res) => {
   res.json({ progreso: progresoAlDia(req.usuarioAutenticado!.empresa_id) });

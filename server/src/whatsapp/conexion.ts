@@ -4,7 +4,7 @@ import type { WASocket } from '@whiskeysockets/baileys';
 import type { Boom } from '@hapi/boom';
 import qrcode from 'qrcode';
 import { actualizarEstadoLinea, borrarSesion, carpetaAuth, guardarSesion, obtenerSesion } from './sesiones.js';
-import { procesarMensajeEntrante, procesarMensajeSaliente } from './mensajes-entrantes.js';
+import { importarHistorial, procesarMensajeEntrante, procesarMensajeSaliente } from './mensajes-entrantes.js';
 import { programarLimpiezaDeEtiquetasHuerfanas, registrarEventosDeEtiquetas } from './etiquetas.js';
 import { registrarSeguimientoDeEntrega } from './entrega.js';
 import { fueEnviadoPorCRM } from './mensajes-enviados-por-crm.js';
@@ -141,7 +141,17 @@ export async function iniciarConexion(lineaId: string): Promise<WASocket> {
     }
   });
 
+  // Al volver a vincular, WhatsApp manda lo reciente como historial: se guarda lo de las últimas 48 h
+  // que falte (sin bot ni IA al momento; ver importarHistorial).
+  sock.ev.on('messaging-history.set', ({ messages }) => {
+    if (messages?.length) importarHistorial(messages, lineaId).catch((err) => console.error(`[${lineaId}] Error importando el historial:`, (err as Error).message));
+  });
+
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type === 'append') {
+      await importarHistorial(messages, lineaId).catch((err) => console.error(`[${lineaId}] Error importando el historial:`, (err as Error).message));
+      return;
+    }
     if (type !== 'notify') return;
     for (const msg of messages) {
       const jid = msg.key.remoteJid;

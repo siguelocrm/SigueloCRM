@@ -9,7 +9,7 @@ import { Boton, Tarjeta, useToast } from '../../components/ui';
 // no los responde sola. Aquí ves cuántos chats quedaron sin respuesta en cada número (últimas 48 h) y
 // la IA los responde despacio: cada número con su propia fila, a la vez, de 45 a 90 s entre chat y chat.
 
-type Numero = { id: string; nombre: string; pendientes: number };
+type Numero = { id: string; nombre: string; pendientes: number; conectado?: boolean };
 type Progreso = { linea_id: string; numero: string; total: number; hechos: number; respondidos: number; activo: boolean; ultimo: string };
 
 export default function PonerseAlDia() {
@@ -103,6 +103,13 @@ export default function PonerseAlDia() {
           </span>
         ))}
 
+      {(numeros || [])
+        .filter((n) => n.conectado === false)
+        .map((n) => (
+          <span key={n.id} className="text-[12px] rounded-lg px-3 py-2" style={{ color: 'var(--warn)', backgroundColor: 'var(--surface-2)' }}>
+            <b>{n.nombre} está desconectado del CRM.</b> Lo que te escriban mientras tanto solo está en tu teléfono. Al volver a conectarlo (aunque sea con un QR nuevo), el CRM trae los mensajes de las últimas 48 horas y aparecen aquí.
+          </span>
+        ))}
       {numeros && (
         total === 0 ? (
           <span className="text-[12.5px]" style={{ color: TEXTO_SECUNDARIO }}>No hay chats esperando respuesta en las últimas 48 horas.</span>
