@@ -1,13 +1,13 @@
 import { db, porGrupos, todas } from '../db.js';
 
 // "Ponerse al día" (IA → Resumen): los chats donde el cliente fue el último en escribir, en las
-// últimas 48 h, y nadie le contestó. Pasa cuando el número estuvo desconectado o restringido por
+// últimos 4 días, y nadie le contestó. Pasa cuando el número estuvo desconectado o restringido por
 // WhatsApp: al volver, esos mensajes ya tienen más de 2 horas y la IA no los responde sola. Con el
 // botón, la IA los lee uno por uno, despacio, con todos sus frenos de siempre (chat con la IA
 // apagada, "Venta perdida", pago en curso...) menos el de las 2 horas. Solo responde chats que ya
 // existen: eso WhatsApp lo permite aunque el número esté restringido.
 
-export const VENTANA_AL_DIA_MS = 48 * 60 * 60_000;
+export const VENTANA_AL_DIA_MS = 4 * 24 * 60 * 60_000;
 
 export type ChatSinRespuesta = { conversacion_id: string; linea_id: string; telefono: string; nombre: string | null; ultimo: string };
 

@@ -4,7 +4,7 @@ import type { WASocket } from '@whiskeysockets/baileys';
 import type { Boom } from '@hapi/boom';
 import qrcode from 'qrcode';
 import { actualizarEstadoLinea, borrarSesion, carpetaAuth, guardarSesion, obtenerSesion } from './sesiones.js';
-import { importarHistorial, procesarMensajeEntrante, procesarMensajeSaliente } from './mensajes-entrantes.js';
+import { importarHistorial, marcarVinculado, procesarMensajeEntrante, procesarMensajeSaliente } from './mensajes-entrantes.js';
 import { programarLimpiezaDeEtiquetasHuerfanas, registrarEventosDeEtiquetas } from './etiquetas.js';
 import { registrarSeguimientoDeEntrega } from './entrega.js';
 import { fueEnviadoPorCRM } from './mensajes-enviados-por-crm.js';
@@ -83,6 +83,8 @@ export async function iniciarConexion(lineaId: string): Promise<WASocket> {
   registrarEventosDeEtiquetas(sock, lineaId);
   registrarSeguimientoDeEntrega(sock, lineaId);
 
+  // Este socket mostró un QR o pidió un código: es un vínculo nuevo (no una reconexión).
+  let mostroQr = false;
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
     const sesionActual = obtenerSesion(lineaId);
@@ -90,6 +92,7 @@ export async function iniciarConexion(lineaId: string): Promise<WASocket> {
     if (sesionActual && sesionActual.sock !== sock) return;
 
     if (qr) {
+      mostroQr = true;
       const telefono = vincularConCodigo.get(lineaId);
       if (telefono && !state.creds.registered) {
         // Con código: se pide una sola vez por socket (el QR se renueva cada ~20 s, el código no).
@@ -157,6 +160,8 @@ export async function iniciarConexion(lineaId: string): Promise<WASocket> {
       }
     } else if (connection === 'open') {
       intentosReconexion.delete(lineaId);
+      // Recién vinculado (con QR o código): desde ahora se espera el historial de WhatsApp.
+      if (mostroQr || vincularConCodigo.has(lineaId) || !state.creds.accountSyncCounter) marcarVinculado(lineaId);
       vincularConCodigo.delete(lineaId);
       const numero = sock.user?.id?.split(':')[0] || null;
       guardarSesion(lineaId, { sock, estado: 'activo', qrDataUrl: null });

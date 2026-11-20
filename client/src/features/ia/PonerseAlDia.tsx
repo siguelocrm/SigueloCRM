@@ -6,10 +6,24 @@ import { Boton, Tarjeta, useToast } from '../../components/ui';
 
 // "Ponerse al día" (server/src/siguelo/ia/alDia.ts): cuando un número estuvo desconectado o
 // restringido por WhatsApp, los mensajes que llegaron mientras tanto tienen más de 2 horas y la IA
-// no los responde sola. Aquí ves cuántos chats quedaron sin respuesta en cada número (últimas 48 h) y
+// no los responde sola. Aquí ves cuántos chats quedaron sin respuesta en cada número (últimos 4 días) y
 // la IA los responde despacio: cada número con su propia fila, a la vez, de 45 a 90 s entre chat y chat.
 
-type Numero = { id: string; nombre: string; pendientes: number; conectado?: boolean };
+type Historial = { vinculado: string | null; lotes: number; recibidos: number; enVentana: number; guardados: number; yaEstaban: number; sinTexto: number; errores: number; primerError: string | null; procesando: boolean; hechos: number; ultimo: string | null };
+type Numero = { id: string; nombre: string; pendientes: number; conectado?: boolean; historial?: Historial | null };
+
+const hora = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) : '');
+// Qué pasó con el historial que WhatsApp manda al vincular el número (para saber si trajo lo atrasado).
+function textoHistorial(h: Historial): string {
+  if (!h.lotes) {
+    const min = h.vinculado ? (Date.now() - new Date(h.vinculado).getTime()) / 60_000 : 0;
+    return min < 5
+      ? `Vinculado a las ${hora(h.vinculado)}: esperando el historial de WhatsApp (suele tardar 1 a 3 minutos)…`
+      : `Vinculado a las ${hora(h.vinculado)}, pero WhatsApp no mandó historial.`;
+  }
+  if (h.procesando) return `Trayendo el historial: ${h.hechos} de ${h.enVentana} mensajes de los últimos 4 días…`;
+  return `Historial de las ${hora(h.ultimo)}: llegaron ${h.recibidos} mensajes, ${h.enVentana} de los últimos 4 días; ${h.guardados} nuevos guardados, ${h.yaEstaban} ya estaban${h.sinTexto ? `, ${h.sinTexto} sin texto (reacciones, borrados…)` : ''}${h.errores ? `, ${h.errores} con error (${h.primerError})` : ''}.`;
+}
 type Progreso = { linea_id: string; numero: string; total: number; hechos: number; respondidos: number; activo: boolean; ultimo: string };
 
 export default function PonerseAlDia() {
@@ -73,7 +87,7 @@ export default function PonerseAlDia() {
         <div className="flex-1 min-w-[200px]">
           <div className="text-[13.5px] font-semibold" style={{ color: TEXTO_PRIMARIO }}>Chats que quedaron sin respuesta</div>
           <div className="text-[12px]" style={{ color: TEXTO_TERCIARIO }}>
-            Si un número estuvo desconectado o restringido, la IA no responde sola los mensajes de hace más de 2 horas. Aquí ves los de las últimas 48 horas y los responde despacio: cada número con su propia fila, a la vez.
+            Si un número estuvo desconectado o restringido, la IA no responde sola los mensajes de hace más de 2 horas. Aquí ves los de los últimos 4 días y los responde despacio: cada número con su propia fila, a la vez.
           </div>
         </div>
         <Boton tamano="sm" onClick={revisar} disabled={revisando}>
@@ -107,12 +121,19 @@ export default function PonerseAlDia() {
         .filter((n) => n.conectado === false)
         .map((n) => (
           <span key={n.id} className="text-[12px] rounded-lg px-3 py-2" style={{ color: 'var(--warn)', backgroundColor: 'var(--surface-2)' }}>
-            <b>{n.nombre} está desconectado del CRM.</b> Lo que te escriban mientras tanto solo está en tu teléfono. Al volver a conectarlo (aunque sea con un QR nuevo), el CRM trae los mensajes de las últimas 48 horas y aparecen aquí.
+            <b>{n.nombre} está desconectado del CRM.</b> Lo que te escriban mientras tanto solo está en tu teléfono. Al volver a conectarlo (aunque sea con un QR nuevo), el CRM trae los mensajes de los últimos 4 días y aparecen aquí.
+          </span>
+        ))}
+      {(numeros || [])
+        .filter((n) => n.historial)
+        .map((n) => (
+          <span key={`h-${n.id}`} className="text-[12px]" style={{ color: n.historial!.errores || (n.historial!.lotes === 0 && !n.historial!.procesando) ? 'var(--warn)' : TEXTO_SECUNDARIO }}>
+            <b>{n.nombre}:</b> {textoHistorial(n.historial!)}
           </span>
         ))}
       {numeros && (
         total === 0 ? (
-          <span className="text-[12.5px]" style={{ color: TEXTO_SECUNDARIO }}>No hay chats esperando respuesta en las últimas 48 horas.</span>
+          <span className="text-[12.5px]" style={{ color: TEXTO_SECUNDARIO }}>No hay chats esperando respuesta en los últimos 4 días.</span>
         ) : (
           <div className="flex flex-wrap gap-2">
             {numeros.filter((n) => n.pendientes > 0).map((n) => (

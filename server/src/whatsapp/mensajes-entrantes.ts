@@ -1,5 +1,5 @@
 import type { WAMessage, WASocket } from '@whiskeysockets/baileys';
-import { downloadMediaMessage, toNumber } from '@whiskeysockets/baileys';
+import { downloadMediaMessage, normalizeMessageContent, toNumber } from '@whiskeysockets/baileys';
 import { supabase } from '../supabase/client.js';
 import type { ConversacionRow, TipoMensaje } from '../types/dominio.js';
 import { obtenerEmpresaIdDeLinea } from './empresa.js';
@@ -297,16 +297,51 @@ export async function procesarMensajeSaliente(msg: WAMessage, lineaId: string): 
 }
 
 // Historial que WhatsApp manda al volver a vincular un número (por ejemplo, después de una
-// restricción o de escanear el QR de nuevo): los mensajes de las últimas 48 h que el CRM no tiene,
+// restricción o de escanear el QR de nuevo): los mensajes de los últimos 4 días que el CRM no tiene,
 // del cliente y los tuyos desde el teléfono, con su hora real. NO dispara el bot ni la IA al momento:
 // aparecen en la Bandeja y en IA → "Chats que quedaron sin respuesta", y tú decides cuándo responder.
-const HISTORIAL_MAX_MS = 48 * 60 * 60_000;
+const HISTORIAL_MAX_MS = 4 * 24 * 60 * 60_000;
 const HISTORIAL_MAX_MENSAJES = 500;
 
-async function guardarDelHistorial(msg: WAMessage, lineaId: string): Promise<boolean> {
-  if (!msg.key.id) return false;
+// Lo que pasó con el historial de cada número (se ve en IA → "Chats que quedaron sin respuesta"):
+// si WhatsApp lo mandó, cuántos mensajes trajo y cuántos se guardaron. Así, si algo falla, se sabe dónde.
+export type EstadoHistorial = {
+  vinculado: string | null;
+  lotes: number;
+  recibidos: number;
+  enVentana: number;
+  guardados: number;
+  yaEstaban: number;
+  sinTexto: number;
+  errores: number;
+  primerError: string | null;
+  procesando: boolean;
+  hechos: number;
+  ultimo: string | null;
+};
+const historiales = new Map<string, EstadoHistorial>();
+const estadoVacio = (): EstadoHistorial => ({ vinculado: null, lotes: 0, recibidos: 0, enVentana: 0, guardados: 0, yaEstaban: 0, sinTexto: 0, errores: 0, primerError: null, procesando: false, hechos: 0, ultimo: null });
+export const estadoHistorial = (lineaId: string): EstadoHistorial | null => historiales.get(lineaId) ?? null;
+// Al vincular (QR o código): desde aquí se espera el historial.
+export function marcarVinculado(lineaId: string): void {
+  historiales.set(lineaId, { ...estadoVacio(), vinculado: new Date().toISOString() });
+}
+
+// Fotos, audios y documentos del historial no se descargan (con decenas de chats tardaba muchos
+// minutos y a veces ya no se pueden bajar): queda una nota y se miran en el teléfono.
+const NOTA_MEDIA: Partial<Record<TipoMensaje, string>> = {
+  imagen: '📷 Foto (llegó con el número desconectado: mírala en el teléfono)',
+  audio: '🎤 Nota de voz (llegó con el número desconectado: escúchala en el teléfono)',
+  pdf: '📄 Documento (llegó con el número desconectado: míralo en el teléfono)',
+};
+
+type Resultado = 'guardado' | 'ya estaba' | 'sin texto';
+async function guardarDelHistorial(original: WAMessage, lineaId: string): Promise<Resultado> {
+  if (!original.key.id) return 'sin texto';
+  // Mensajes temporales, de una sola vista, etc. vienen envueltos: se sacan del envoltorio.
+  const msg = { ...original, message: normalizeMessageContent(original.message) ?? original.message } as WAMessage;
   const resultado = detectarTipoYTexto(msg);
-  if (!resultado) return false;
+  if (!resultado) return 'sin texto';
   const { tipo, texto, esMedia } = resultado;
   const telefono = await resolverTelefono(msg, lineaId);
   // Primero se mira si ya lo tenemos (en cualquier chat de ese contacto en este número): así un chat
@@ -314,29 +349,28 @@ async function guardarDelHistorial(msg: WAMessage, lineaId: string): Promise<boo
   const { data: chats } = await supabase.from('conversaciones').select('id').eq('linea_id', lineaId).eq('contacto_telefono', telefono);
   const ids = (chats || []).map((c) => c.id);
   if (ids.length) {
-    const { data: existente } = await supabase.from('mensajes').select('id').in('conversacion_id', ids).eq('whatsapp_id', msg.key.id).limit(1);
-    if (existente && existente.length > 0) return false;
+    const { data: existente } = await supabase.from('mensajes').select('id').in('conversacion_id', ids).eq('whatsapp_id', original.key.id).limit(1);
+    if (existente && existente.length > 0) return 'ya estaba';
   }
   const conversacion = await buscarOCrearConversacion(lineaId, telefono);
-  const mediaUrl = esMedia ? await descargarYSubirMedia(msg, tipo, lineaId).catch(() => null) : null;
+  const contenido = esMedia ? [NOTA_MEDIA[tipo], texto.trim()].filter(Boolean).join('\n') : texto;
   const { error } = await supabase.from('mensajes').insert({
     conversacion_id: conversacion.id,
     remitente: msg.key.fromMe ? 'agente' : 'cliente',
     agente_id: null,
-    tipo,
-    contenido: texto,
-    media_url: mediaUrl,
-    whatsapp_id: msg.key.id,
+    tipo: 'texto',
+    contenido,
+    media_url: null,
+    whatsapp_id: original.key.id,
     creado_en: new Date(horaDe(msg)).toISOString(),
   });
-  if (error) {
-    console.error(`[${lineaId}] No se pudo guardar un mensaje del historial:`, error.message);
-    return false;
-  }
-  return true;
+  if (error) throw new Error(error.message);
+  return 'guardado';
 }
 
 export async function importarHistorial(mensajes: WAMessage[], lineaId: string): Promise<number> {
+  const st = historiales.get(lineaId) ?? estadoVacio();
+  historiales.set(lineaId, st);
   const desde = Date.now() - HISTORIAL_MAX_MS;
   const lista = mensajes
     .filter((m) => {
@@ -345,14 +379,31 @@ export async function importarHistorial(mensajes: WAMessage[], lineaId: string):
     })
     .sort((a, b) => horaDe(a) - horaDe(b))
     .slice(-HISTORIAL_MAX_MENSAJES);
+  st.lotes++;
+  st.recibidos += mensajes.length;
+  st.enVentana += lista.length;
+  st.procesando = true;
+  st.ultimo = new Date().toISOString();
   let guardados = 0;
-  for (const msg of lista) {
-    try {
-      if (await guardarDelHistorial(msg, lineaId)) guardados++;
-    } catch (err) {
-      console.error(`[${lineaId}] Error con un mensaje del historial:`, (err as Error).message);
+  try {
+    for (const msg of lista) {
+      try {
+        const r = await guardarDelHistorial(msg, lineaId);
+        if (r === 'guardado') guardados++;
+        else if (r === 'ya estaba') st.yaEstaban++;
+        else st.sinTexto++;
+      } catch (err) {
+        st.errores++;
+        st.primerError ??= (err as Error).message.slice(0, 200);
+        console.error(`[${lineaId}] Error con un mensaje del historial:`, (err as Error).message);
+      }
+      st.hechos++;
     }
+  } finally {
+    st.guardados += guardados;
+    st.procesando = false;
+    st.ultimo = new Date().toISOString();
   }
-  if (guardados) console.log(`[${lineaId}] 🗂️ Historial: ${guardados} mensajes de las últimas 48 h que faltaban en el CRM.`);
+  console.log(`[${lineaId}] 🗂️ Historial: llegaron ${mensajes.length} mensajes, ${lista.length} de los últimos 4 días, ${guardados} nuevos guardados.`);
   return guardados;
 }

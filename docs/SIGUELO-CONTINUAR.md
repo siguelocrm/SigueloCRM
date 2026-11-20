@@ -239,7 +239,7 @@ npm test
 - **Historial al volver a vincular** (`whatsapp/mensajes-entrantes.ts → importarHistorial`): con un número desconectado
   (por ejemplo restringido por WhatsApp), lo que llega solo queda en el teléfono. Al conectarlo de nuevo (incluso con QR
   nuevo) WhatsApp manda lo reciente como historial (`messaging-history.set` y `messages.upsert` tipo `append`): se guarda lo
-  de las últimas 48 h que falta (cliente y lo tuyo desde el teléfono), con su hora real y sin bot ni IA al momento. Prueba:
+  de los últimos 4 días que falta (cliente y lo tuyo desde el teléfono; fotos y audios quedan como nota, sin descargar), con su hora real y sin bot ni IA al momento. Prueba:
   `integracion-historial.mts` (hooks redirige `../supabase/client.js` de `server/src/whatsapp/` a la base de prueba).
 - **Ponerse al día** (`ia/alDia.ts`, IA → arriba "Chats que quedaron sin respuesta"): si un número estuvo desconectado o
   restringido por WhatsApp, lo que llegó mientras tanto tiene más de 2 horas y la IA no lo responde sola. El botón busca los
