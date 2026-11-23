@@ -264,12 +264,11 @@ npm test
 - **Respuestas rápidas con varios mensajes** (sección 44, `respuestas_rapidas.partes`): la IA y el chat mandan el primero
   y los que siguen en orden. El asistente también ve números, respuestas rápidas (y en qué sucursales), bot y extras de
   cada negocio.
-- **Links de grupo con tarjeta** (`siguelo/linkDeGrupo.ts`): si lo que se manda tiene un link `chat.whatsapp.com/…`, sale
-  primero el mensaje sin el link y al final el link solo, con la tarjeta del grupo (`linkPreview`: nombre y participantes con
+- **Links de grupo con tarjeta** (`siguelo/linkDeGrupo.ts`): un texto con un link `chat.whatsapp.com/…` sale en el mismo
+  mensaje (el link sigue en el texto) con la tarjeta del grupo (`linkPreview`: nombre y participantes con
   `groupGetInviteInfo`, foto con `profilePictureUrl` + `extractImageThumb`; guardada 6 h por link, 10 min si WhatsApp no
-  contestó). La gente toca más el último mensaje si es corto. Lo hace `enviarConReintento` (IA, respuestas rápidas, link
-  después del pago, seguimiento, avisos) y `enviarPaso` del bot. Con `separar: false` (masivos, su prueba, programados y lo
-  que escribes en la bandeja) va en un solo mensaje con la tarjeta, para no duplicar envíos. Prueba: `integracion-grupo.mts`.
+  contestó). WhatsApp pone la tarjeta arriba del texto. Sin mensajes de más. El pie de una imagen no lleva tarjeta.
+  Lo hacen `enviarConReintento`, `enviarPaso` del bot, la bandeja y la prueba de masivos. Prueba: `integracion-grupo.mts`.
 - **Pagos** (`pagos/`): cada 10 s, `inscripcion.ts` toma las fotos/PDF nuevas de clientes en números con cursos
   (`siguelo_pagos_por_leer`), las manda a la IA con visión, y `comprobante.ts` decide sin IA (monto, destinatario, fecha,
   transacción repetida, señales de edición). Confirmado → documento en la ficha, oportunidad ganada, etapa ganada, pide los

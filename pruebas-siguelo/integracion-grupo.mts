@@ -1,16 +1,14 @@
 // Prueba de los links de grupo con su tarjeta (server/src/siguelo/linkDeGrupo.ts y enviarConReintento):
-// el link de un grupo sale al final, solo y con la tarjeta (nombre y foto del grupo); en masivos y en
-// lo que escribes a mano, en un solo mensaje con la tarjeta.
+// un texto con un link de grupo sale en el mismo mensaje, con el link en el texto y la tarjeta del
+// grupo (nombre, participantes y foto). Sin mensajes de más.
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
 import { redirigidos } from './hooks.mjs';
 import { enviados } from './mock-sesiones.mjs';
 
-const { separarLink, prepararMensajes, limitesGrupo, olvidarVistas } = await import(new URL('../server/src/siguelo/linkDeGrupo.ts', import.meta.url).href);
+const { linkDeGrupo, conTarjetaDeGrupo, limitesGrupo, olvidarVistas } = await import(new URL('../server/src/siguelo/linkDeGrupo.ts', import.meta.url).href);
 const { enviarConReintento } = await import(new URL('../server/src/siguelo/reintento.ts', import.meta.url).href);
-const { fueEnviadoPorCRM } = await import(new URL('../server/src/whatsapp/mensajes-enviados-por-crm.ts', import.meta.url).href);
 assert.ok(redirigidos.includes('sesiones'), 'usa el WhatsApp de prueba');
-limitesGrupo.entreMensajesMs = 5;
 limitesGrupo.consultaMs = 200;
 
 let ok = 0;
@@ -30,110 +28,68 @@ const sockConGrupo = {
   },
 };
 
-// 1. Separar el link del texto.
+// 1. Encontrar el link de grupo en el texto.
 {
-  const r = separarLink(`¡Ya estás inscrito! 🎉 Únete al grupo aquí:\n${LINK}`);
-  assert.equal(r?.link, LINK);
-  assert.equal(r?.codigo, 'AbCdEfGhIjKlMnOpQrStUv');
-  assert.equal(r?.resto, '¡Ya estás inscrito! 🎉 Únete al grupo aquí:');
-  assert.equal(separarLink(`Entra aquí (${LINK}).`)?.link, LINK, 'sin el paréntesis ni el punto del final');
-  assert.equal(separarLink('Visita https://infinitychess.com/cursos'), null, 'otros links no cuentan');
-  assert.equal(separarLink('Sin links'), null);
-  paso('separa el link del grupo del resto del texto (y no toca otros links)');
+  assert.deepEqual(linkDeGrupo(`¡Ya estás inscrito! 🎉 Únete al grupo aquí:\n${LINK}`), { link: LINK, codigo: 'AbCdEfGhIjKlMnOpQrStUv' });
+  assert.equal(linkDeGrupo(`Entra aquí (${LINK}).`)?.link, LINK, 'sin el paréntesis ni el punto del final');
+  assert.equal(linkDeGrupo('Visita https://infinitychess.com/cursos'), null, 'otros links no cuentan');
+  assert.equal(linkDeGrupo('Sin links'), null);
+  paso('encuentra el link del grupo (y no toma otros links)');
 }
 
-// 2. Texto con link: primero el texto, al final el link con la tarjeta (nombre, participantes y foto).
+// 2. Texto con link: el mismo mensaje, con el link en el texto y la tarjeta (nombre, participantes y foto).
 {
-  const m = await prepararMensajes(sockConGrupo, { text: `Hola 👋 Te dejo el grupo:\n${LINK}\n¡Te esperamos!` });
-  assert.equal(m.length, 2);
-  assert.equal(m[0].text, 'Hola 👋 Te dejo el grupo:\n\n¡Te esperamos!');
-  assert.equal(m[1].text, LINK);
-  assert.equal(m[1].linkPreview.title, 'Ajedrez Sábados');
-  assert.match(m[1].linkPreview.description, /87 participantes/);
-  assert.equal(m[1].linkPreview['matched-text'], LINK);
-  assert.ok(Buffer.isBuffer(m[1].linkPreview.jpegThumbnail) && m[1].linkPreview.jpegThumbnail.length > 100, 'con la foto del grupo');
-  paso('texto con link: el texto primero y el link al final con la tarjeta del grupo');
+  const texto = `Hola 👋 Te dejo el grupo:\n${LINK}\n¡Te esperamos!`;
+  const m = await conTarjetaDeGrupo(sockConGrupo, { text: texto });
+  assert.equal(m.text, texto, 'el texto no cambia: el link sigue adentro');
+  assert.equal(m.linkPreview.title, 'Ajedrez Sábados');
+  assert.match(m.linkPreview.description, /87 participantes · toca para unirte/);
+  assert.equal(m.linkPreview['matched-text'], LINK);
+  assert.ok(Buffer.isBuffer(m.linkPreview.jpegThumbnail) && m.linkPreview.jpegThumbnail.length > 100, 'con la foto del grupo');
+  paso('texto con link: un solo mensaje, con el link en el texto y la tarjeta del grupo');
 }
 
-// 3. Solo el link: un mensaje con la tarjeta. Y se le pregunta a WhatsApp una sola vez por link.
+// 3. Se le pregunta a WhatsApp una sola vez por link.
 {
   const antes = consultas;
-  const m = await prepararMensajes(sockConGrupo, { text: LINK });
-  assert.equal(m.length, 1);
-  assert.equal(m[0].linkPreview.title, 'Ajedrez Sábados');
+  const m = await conTarjetaDeGrupo(sockConGrupo, { text: LINK });
+  assert.equal(m.linkPreview.title, 'Ajedrez Sábados');
   assert.equal(consultas, antes, 'usa la tarjeta guardada');
-  paso('solo el link: un mensaje con la tarjeta (sin volver a preguntarle a WhatsApp)');
+  paso('la tarjeta se guarda: no le vuelve a preguntar a WhatsApp');
 }
 
-// 4. Imagen con el link en el pie: la imagen con su texto, y el link aparte con la tarjeta.
+// 4. Imagen, documento o texto sin link de grupo: tal cual.
 {
-  const m = await prepararMensajes(sockConGrupo, { image: { url: 'https://falso/afiche.jpg' }, caption: `Curso de verano 🏆\nInscríbete aquí: ${LINK}` });
-  assert.equal(m.length, 2);
-  assert.equal(m[0].image.url, 'https://falso/afiche.jpg');
-  assert.equal(m[0].caption, 'Curso de verano 🏆\nInscríbete aquí:');
-  assert.equal(m[1].text, LINK);
-  assert.ok(m[1].linkPreview);
-  const solo = await prepararMensajes(sockConGrupo, { image: { url: 'https://falso/a.jpg' }, caption: LINK });
-  assert.equal(solo[0].caption, undefined, 'si el pie era solo el link, la imagen va sin pie');
-  paso('imagen con el link en el pie: imagen primero y el link aparte con la tarjeta');
-}
-
-// 5. Sin separar (masivos, lo que escribes a mano): un solo mensaje con la tarjeta; la imagen, tal cual.
-{
-  const m = await prepararMensajes(sockConGrupo, { text: `Te dejo el grupo: ${LINK}` }, false);
-  assert.equal(m.length, 1);
-  assert.equal(m[0].text, `Te dejo el grupo: ${LINK}`);
-  assert.equal(m[0].linkPreview.title, 'Ajedrez Sábados');
   const img = { image: { url: 'https://falso/a.jpg' }, caption: `Grupo: ${LINK}` };
-  assert.deepEqual(await prepararMensajes(sockConGrupo, img, false), [img]);
-  paso('sin separar: un solo mensaje con la tarjeta (masivos y bandeja)');
-}
-
-// 6. Sin link de grupo, o con su propia vista previa: tal cual.
-{
+  assert.deepEqual(await conTarjetaDeGrupo(sockConGrupo, img), img, 'el pie de una imagen no lleva tarjeta');
   const t = { text: 'Hola, ¿cómo estás?' };
-  assert.deepEqual(await prepararMensajes(sockConGrupo, t), [t]);
+  assert.deepEqual(await conTarjetaDeGrupo(sockConGrupo, t), t);
   const doc = { document: { url: 'https://falso/a.pdf' }, fileName: 'a.pdf' };
-  assert.deepEqual(await prepararMensajes(sockConGrupo, doc), [doc]);
-  paso('sin link de grupo: el mensaje sale igual que antes');
+  assert.deepEqual(await conTarjetaDeGrupo(sockConGrupo, doc), doc);
+  paso('imágenes, documentos y textos sin link de grupo salen igual que antes');
 }
 
-// 7. Si WhatsApp no da los datos del grupo (o no contesta), el link sale igual con un título genérico.
+// 5. Si WhatsApp no da los datos del grupo (o no contesta), el link sale igual con un título genérico.
 {
   olvidarVistas();
   const callado = { groupGetInviteInfo: () => new Promise(() => {}) };
-  const m = await prepararMensajes(callado, { text: `Grupo: ${LINK}` });
-  assert.equal(m.length, 2);
-  assert.equal(m[1].linkPreview.title, 'Grupo de WhatsApp');
-  assert.equal(m[1].linkPreview.jpegThumbnail, undefined);
-  const m2 = await prepararMensajes({}, { text: LINK });
-  assert.equal(m2[0].linkPreview.title, 'Grupo de WhatsApp');
+  const m = await conTarjetaDeGrupo(callado, { text: `Grupo: ${LINK}` });
+  assert.equal(m.linkPreview.title, 'Grupo de WhatsApp');
+  assert.equal(m.linkPreview.jpegThumbnail, undefined);
+  assert.equal((await conTarjetaDeGrupo({}, { text: LINK })).linkPreview.title, 'Grupo de WhatsApp');
   paso('si WhatsApp no contesta, el link sale igual con un título genérico');
 }
 
-// 8. enviarConReintento: manda los dos mensajes en orden, devuelve el primero y marca el segundo como del CRM.
+// 6. enviarConReintento: un solo mensaje, con el link en el texto.
 {
   olvidarVistas();
   enviados.length = 0;
   const { obtenerSesion } = await import('./mock-sesiones.mjs');
-  const sock = obtenerSesion('l1').sock;
-  const r = await enviarConReintento('l1', sock, '59170000001@s.whatsapp.net', { text: `¡Listo! Únete aquí: ${LINK}` });
-  assert.equal(enviados.length, 2);
-  assert.equal(enviados[0].texto, '¡Listo! Únete aquí:');
-  assert.equal(enviados[1].texto, LINK);
-  assert.ok(enviados[0].en <= enviados[1].en, 'en orden');
-  const idPrimero = r?.key?.id;
-  assert.ok(idPrimero);
-  const idSegundo = `WID-${Number(String(idPrimero).split('-')[1]) + 1}`;
-  assert.ok(fueEnviadoPorCRM(idSegundo), 'el link no se guarda dos veces como "escrito desde el teléfono"');
-
-  enviados.length = 0;
-  await enviarConReintento('l1', sock, '59170000001@s.whatsapp.net', { text: `Promo: ${LINK}` }, { separar: false });
-  assert.equal(enviados.length, 1, 'masivos: un solo mensaje');
-  enviados.length = 0;
-  await enviarConReintento('l1', sock, '59170000001@s.whatsapp.net', { text: 'Sin link' });
-  assert.equal(enviados.length, 1);
-  paso('al enviar: el texto y luego el link, en orden; en masivos, un solo mensaje');
+  const r = await enviarConReintento('l1', obtenerSesion('l1').sock, '59170000001@s.whatsapp.net', { text: `¡Listo! Únete aquí: ${LINK}` });
+  assert.equal(enviados.length, 1, 'sin mensaje de más');
+  assert.equal(enviados[0].texto, `¡Listo! Únete aquí: ${LINK}`);
+  assert.ok(r?.key?.id);
+  paso('al enviar: un solo mensaje, con el link en el texto');
 }
 
 console.log(`\n${ok} pruebas de links de grupo: todas bien.`);

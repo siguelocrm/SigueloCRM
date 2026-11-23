@@ -3,20 +3,15 @@ import { extractImageThumb } from '@whiskeysockets/baileys';
 // Links de grupos de WhatsApp (chat.whatsapp.com/...) con su tarjeta.
 //
 // Cuando el CRM manda un link de grupo como texto, llega como un link azul suelto: sin la tarjeta
-// con la foto y el nombre del grupo que WhatsApp muestra cuando lo mandas desde el teléfono. Y si
-// el link va dentro de un texto largo o en el pie de una imagen, mucha gente no lo ve: se lee (y se
-// toca) el último mensaje, si es corto.
-//
-// Por eso, si lo que se va a mandar tiene un link de grupo:
-//  - con `separar` (lo normal): sale primero el mensaje sin el link y al final el link solo, con
-//    la tarjeta del grupo. Tocar la tarjeta abre la pantalla "Unirse al grupo".
-//  - sin `separar` (masivos y lo que escribes a mano en la bandeja): un solo mensaje, con la tarjeta.
+// con la foto y el nombre del grupo que WhatsApp muestra cuando lo mandas desde el teléfono.
+// Ahora un texto con un link de grupo sale en el MISMO mensaje (el link sigue en el texto) con la
+// tarjeta del grupo, que WhatsApp pone arriba del texto; tocarla abre "Unirse al grupo". No se
+// manda ningún mensaje de más. El pie de una imagen no puede llevar tarjeta: la imagen sale tal cual.
 // La tarjeta se arma con el nombre y la foto del grupo (se piden a WhatsApp una vez cada 6 horas por
 // link). Si WhatsApp no los da, el link sale igual, solo con un título genérico.
 
 export const LINK_GRUPO = /https?:\/\/chat\.whatsapp\.com\/(?:invite\/)?([A-Za-z0-9]{10,})[^\s]*/i;
 
-type Contenido = Record<string, unknown>;
 type VistaPrevia = { 'canonical-url': string; 'matched-text': string; title: string; description: string; jpegThumbnail?: Buffer };
 type SockGrupo = {
   groupGetInviteInfo?: (codigo: string) => Promise<{ id?: string; subject?: string; size?: number } | undefined>;
@@ -24,7 +19,7 @@ type SockGrupo = {
 };
 
 // Tiempo máximo para preguntarle a WhatsApp (las pruebas lo acortan).
-export const limitesGrupo = { consultaMs: 8_000, entreMensajesMs: 1_200 };
+export const limitesGrupo = { consultaMs: 8_000 };
 
 const HORA = 60 * 60_000;
 const cache = new Map<string, { vista: VistaPrevia; hasta: number }>();
@@ -33,16 +28,10 @@ export const olvidarVistas = () => cache.clear();
 const conTiempo = <T>(p: Promise<T>, ms: number): Promise<T | undefined> =>
   Promise.race([p.catch(() => undefined), new Promise<undefined>((ok) => setTimeout(() => ok(undefined), ms))]);
 
-// El texto separado en lo que va antes y el link de grupo (el primero que aparezca).
-export function separarLink(texto: string): { resto: string; link: string; codigo: string } | null {
+// El primer link de grupo del texto y su código.
+export function linkDeGrupo(texto: string): { link: string; codigo: string } | null {
   const m = LINK_GRUPO.exec(texto || '');
-  if (!m) return null;
-  const link = m[0].replace(/[).,;!?]+$/, '');
-  const resto = (texto.slice(0, m.index) + texto.slice(m.index + m[0].length))
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-  return { resto, link, codigo: m[1] };
+  return m ? { link: m[0].replace(/[).,;!?]+$/, ''), codigo: m[1] } : null;
 }
 
 // La tarjeta del grupo: nombre y foto (si WhatsApp los da).
@@ -75,20 +64,11 @@ export async function vistaDeGrupo(sock: unknown, link: string, codigo: string):
   return vista;
 }
 
-// Lo que hay que mandar, en orden. Sin link de grupo: el mismo contenido, tal cual.
-export async function prepararMensajes(sock: unknown, contenido: Contenido, separar = true): Promise<Contenido[]> {
-  const esTexto = typeof contenido.text === 'string';
-  const pie = !esTexto && contenido.image && typeof contenido.caption === 'string' ? (contenido.caption as string) : null;
-  if (!esTexto && !separar) return [contenido];
-  const texto = esTexto ? (contenido.text as string) : pie;
-  if (!texto || contenido.linkPreview) return [contenido];
-  const partes = separarLink(texto);
-  if (!partes) return [contenido];
-  const vista = await vistaDeGrupo(sock, partes.link, partes.codigo);
-
-  // Sin separar (o solo el link): un mensaje, con la tarjeta. Una imagen siempre se separa (su pie no lleva tarjeta).
-  if (esTexto && (!separar || !partes.resto)) return [{ ...contenido, linkPreview: vista }];
-  const tarjeta: Contenido = { text: partes.link, linkPreview: vista };
-  if (!esTexto) return [{ ...contenido, caption: partes.resto || undefined }, tarjeta];
-  return [{ ...contenido, text: partes.resto }, tarjeta];
+// El mismo mensaje; si es un texto con un link de grupo, con la tarjeta del grupo.
+export async function conTarjetaDeGrupo<C>(sock: unknown, contenido: C): Promise<C> {
+  const c = contenido as Record<string, unknown>;
+  if (typeof c.text !== 'string' || c.linkPreview) return contenido;
+  const g = linkDeGrupo(c.text);
+  if (!g) return contenido;
+  return { ...c, linkPreview: await vistaDeGrupo(sock, g.link, g.codigo) } as C;
 }

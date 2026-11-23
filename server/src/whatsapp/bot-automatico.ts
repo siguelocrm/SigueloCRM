@@ -5,7 +5,7 @@ import { obtenerEmpresaIdDeLinea } from './empresa.js';
 import { continuarFlujo, iniciarFlujo } from './flujo.js';
 import { aplicarVariables, palabraQueCoincide } from './coincidencia.js';
 import { reglasDelNumero } from '../siguelo/negocios.js';
-import { limitesGrupo, prepararMensajes } from '../siguelo/linkDeGrupo.js';
+import { conTarjetaDeGrupo } from '../siguelo/linkDeGrupo.js';
 import { marcarEnviadoPorCRM } from './mensajes-enviados-por-crm.js';
 
 const espera = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -202,16 +202,10 @@ export async function enviarPaso(
     contenidoWA = { document: { url: paso.media_url }, mimetype: 'application/pdf', fileName: paso.contenido || 'documento.pdf' };
   }
 
-  // SígueloCRM: si lleva un link de grupo, el link sale al final, solo y con la tarjeta del grupo.
-  const [primero, ...siguientes] = await prepararMensajes(sock, contenidoWA as Record<string, unknown>);
-  const resultado = await sock.sendMessage(jid, primero as never);
+  // SígueloCRM: un texto con link de grupo sale con la tarjeta del grupo (en el mismo mensaje).
+  const resultado = await sock.sendMessage(jid, await conTarjetaDeGrupo(sock, contenidoWA));
   // SígueloCRM: marcado como enviado por el CRM (no se duplica y la IA sabe que lo mandó el bot).
   if (resultado?.key?.id) marcarEnviadoPorCRM(resultado.key.id);
-  for (const siguiente of siguientes) {
-    await espera(limitesGrupo.entreMensajesMs);
-    const r = await sock.sendMessage(jid, siguiente as never).catch((err) => console.error('Bot: no salió el link del grupo:', (err as Error).message));
-    if (r?.key?.id) marcarEnviadoPorCRM(r.key.id);
-  }
 
   await supabase.from('mensajes').insert({
     conversacion_id: conversacionId,

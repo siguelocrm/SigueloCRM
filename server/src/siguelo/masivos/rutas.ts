@@ -7,7 +7,7 @@ import { accesoDe, veLinea } from '../usuarios/accesos.js';
 import { obtenerSesion } from '../../whatsapp/sesiones.js';
 import { marcarEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import type { FiltroMasivo, MasivoRow } from '../tipos.js';
-import { prepararMensajes } from '../linkDeGrupo.js';
+import { conTarjetaDeGrupo } from '../linkDeGrupo.js';
 import { MAX_DESTINATARIOS, armarDestinatarios, contenidoMasivo, despertarMasivos, interesesComunes, limpiarTelefono } from './masivos.js';
 
 // Mensajes masivos: contar a quiénes les llega, crear, pausar, reanudar,
@@ -214,8 +214,7 @@ masivosRouter.post('/siguelo/masivos/prueba', soloAdmin, async (req, res) => {
   const elegido = elegirVariante(textos, String(b.nombre ?? '') || 'Prueba', null, await variablesDeLinea(b.linea_id as string));
   if (!elegido.texto && !media.media_url) return res.status(400).json({ error: `Falta completar ${elegido.faltan.join(', ')} en la ficha del negocio de ese número.` });
   try {
-    const [contenido] = await prepararMensajes(sesion.sock, contenidoMasivo(media, elegido.texto), false);
-    const r = await sesion.sock.sendMessage(`${telefono}@s.whatsapp.net`, contenido as never);
+    const r = await sesion.sock.sendMessage(`${telefono}@s.whatsapp.net`, await conTarjetaDeGrupo(sesion.sock, contenidoMasivo(media, elegido.texto)));
     if (r?.key?.id) marcarEnviadoPorCRM(r.key.id);
     res.json({ ok: true, texto: elegido.texto });
   } catch (err) {
