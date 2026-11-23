@@ -63,7 +63,7 @@ async function procesarVencidos(): Promise<void> {
       }
 
       const jid = m.telefono.includes('@') ? m.telefono : `${m.telefono}@s.whatsapp.net`;
-      const resultado = await enviarConReintento(m.linea_id, sesion.sock, jid, await construirContenidoWA({ tipo: m.tipo, texto: m.contenido, media_url: m.media_url, mimetype: m.mimetype }));
+      const resultado = await enviarConReintento(m.linea_id, sesion.sock, jid, await construirContenidoWA({ tipo: m.tipo, texto: m.contenido, media_url: m.media_url, mimetype: m.mimetype }), { separar: false });
       if (resultado?.key?.id) marcarEnviadoPorCRM(resultado.key.id);
 
       await supabase.from('mensajes').insert({

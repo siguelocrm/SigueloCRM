@@ -268,7 +268,7 @@ async function enviarUno(m: MasivoRow, ahora: number): Promise<void> {
     // "Que la IA adapte el mensaje": fiel al original, con lo que este cliente ya contó (si falla, va el original).
     if (m.adaptar && !grupo && elegido.texto) elegido.texto = await adaptarParaCliente(m.empresa_id, contactoId, chatId, siguiente.nombre, elegido.texto).catch(() => elegido.texto);
     const jid = grupo ? siguiente.telefono : `${siguiente.telefono}@s.whatsapp.net`;
-    const resultado = await enviarConReintento(m.linea_id, sesion.sock, jid, contenidoMasivo(m, elegido.texto));
+    const resultado = await enviarConReintento(m.linea_id, sesion.sock, jid, contenidoMasivo(m, elegido.texto), { separar: false });
     const whatsappId = resultado?.key?.id || null;
     if (whatsappId) marcarEnviadoPorCRM(whatsappId);
     const { data: mensaje } = chatId

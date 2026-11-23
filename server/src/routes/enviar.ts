@@ -4,6 +4,7 @@ import { buscarOCrearConversacion } from '../whatsapp/mensajes-entrantes.js';
 import { TIPOS_ENVIABLES, construirContenidoWA } from '../whatsapp/contenido.js';
 import { marcarEnviadoPorCRM } from '../whatsapp/mensajes-enviados-por-crm.js';
 import { supabase } from '../supabase/client.js';
+import { prepararMensajes } from '../siguelo/linkDeGrupo.js';
 import { conNumero } from '../siguelo/usuarios/proteger.js';
 
 export const enviarRouter = Router();
@@ -43,7 +44,8 @@ enviarRouter.post('/enviar', ...conNumero((req) => req.body?.linea_id), async (r
     const jid = telefono.includes('@') ? telefono : `${telefono}@s.whatsapp.net`;
 
     if (!(TIPOS_ENVIABLES as readonly string[]).includes(tipo)) return res.status(400).json({ error: 'Tipo no soportado' });
-    const contenidoWA = await construirContenidoWA({ tipo, texto, media_url, mimetype });
+    // SígueloCRM: un link de grupo sale con la tarjeta del grupo (en el mismo mensaje).
+    const contenidoWA = (await prepararMensajes(sesion.sock, (await construirContenidoWA({ tipo, texto, media_url, mimetype })) as Record<string, unknown>, false))[0] as Awaited<ReturnType<typeof construirContenidoWA>>;
 
     let resultado;
     try {

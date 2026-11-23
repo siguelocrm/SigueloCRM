@@ -1,4 +1,6 @@
 import { obtenerSesion } from '../whatsapp/sesiones.js';
+import { marcarEnviadoPorCRM } from '../whatsapp/mensajes-enviados-por-crm.js';
+import { limitesGrupo, prepararMensajes } from './linkDeGrupo.js';
 
 // WhatsApp a veces cierra la conexión un momento ("Connection Closed") y la línea se reconecta
 // sola en pocos segundos. Un envío que cae justo ahí no es un error real: se espera la conexión
@@ -31,8 +33,8 @@ export function conLimite<T>(p: Promise<T>, ms: number, que: string): Promise<T>
 
 type Sock = { sendMessage: (jid: string, contenido: never) => Promise<{ key?: { id?: string | null } } | undefined> };
 
-// Manda por esa línea; si la conexión se había caído, espera la nueva y reintenta una vez.
-export async function enviarConReintento<C>(lineaId: string, sock: unknown, jid: string, contenido: C): Promise<{ key?: { id?: string | null } } | undefined> {
+// Manda un mensaje por esa línea; si la conexión se había caído, espera la nueva y reintenta una vez.
+async function enviarUno<C>(lineaId: string, sock: unknown, jid: string, contenido: C): Promise<{ key?: { id?: string | null } } | undefined> {
   try {
     return await conLimite((sock as Sock).sendMessage(jid, contenido as never), limites.envioMs, 'WhatsApp no respondió al enviar');
   } catch (err) {
@@ -41,4 +43,23 @@ export async function enviarConReintento<C>(lineaId: string, sock: unknown, jid:
     if (!nueva) throw err;
     return conLimite((nueva.sock as unknown as Sock).sendMessage(jid, contenido as never), limites.envioMs, 'WhatsApp no respondió al enviar');
   }
+}
+
+// Manda por esa línea, con reintento. Si lleva un link de grupo, el link sale al final con la
+// tarjeta del grupo (ver linkDeGrupo.ts; `separar: false` lo deja en un solo mensaje). Devuelve
+// el primer mensaje; los que siguen ya quedan marcados como enviados por el CRM. Si falla uno de
+// los que siguen, no se reintenta todo (se duplicaría el primero): queda en el registro del servidor.
+export async function enviarConReintento<C>(lineaId: string, sock: unknown, jid: string, contenido: C, opciones: { separar?: boolean } = {}): Promise<{ key?: { id?: string | null } } | undefined> {
+  const mensajes = await prepararMensajes(sock, contenido as Record<string, unknown>, opciones.separar ?? true);
+  const primero = await enviarUno(lineaId, sock, jid, mensajes[0]);
+  for (const siguiente of mensajes.slice(1)) {
+    await new Promise((r) => setTimeout(r, limitesGrupo.entreMensajesMs));
+    try {
+      const r = await enviarUno(lineaId, obtenerSesion(lineaId)?.sock ?? sock, jid, siguiente);
+      if (r?.key?.id) marcarEnviadoPorCRM(r.key.id);
+    } catch (err) {
+      console.error(`[${lineaId}] No salió el link del grupo después del mensaje:`, (err as Error).message);
+    }
+  }
+  return primero;
 }
