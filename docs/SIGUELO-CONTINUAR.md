@@ -272,6 +272,12 @@ npm test
   800 ms) y los números de las pestañas se recuentan cada 8 s como mucho. "Hoy" usa `misEsperando`. Sin la sección 48
   (PGRST202) funciona como antes (`modoAntiguo`, recarga juntada cada 3 s). Lista estilo WhatsApp Web (`formatoFechaLista`).
   Pruebas: `probar-sql.mjs` (sección 48) y `npm run banco` → `?vista=bandeja`.
+- **La IA lee cada número por separado** (sección 51, `siguelo/candados.ts`): antes había un solo candado de lectura para
+  todo el CRM (un chat a la vez, de cualquier número) y "Responder con IA" se rendía a los 10 s. Ahora `lectorDe(lineaId)` da
+  un candado por número: números distintos leen a la vez; el botón espera su turno hasta 1 min; "ponerse al día" cede el paso
+  solo a lo nuevo de su número. `siguelo_ia_por_leer(p_empresa, p_quieto_seg, p_linea)`: la vuelta de respaldo pide número
+  por número (sin número trae solo los 20 más viejos de todo el CRM). Sin la sección 51, `pendientesPorLeer` filtra en código.
+  Pruebas: `integracion-candados.mts` y `probar-sql.mjs`.
 - **Permisos livianos** (sección 50): `mensajes_select/insert`, `mensajes_programados_todo` y `contacto_etiquetas_*` decían
   "conversacion_id in (todos los chats que puedes ver)": Supabase Realtime revisa la política en cada cambio y por cada
   pestaña, y con miles de chats eso era ~1 s por vez (74 % del tiempo de la base, la consulta `wal->>…` de Realtime en

@@ -732,6 +732,7 @@ $$;
 
 revoke execute on function siguelo_ia_por_leer(uuid, integer) from public, anon, authenticated;
 grant execute on function siguelo_ia_por_leer(uuid, integer) to service_role;
+-- (La sección 51 la reemplaza por una que también filtra por número.)
 
 -- =========================================================
 -- Fase 4: palabras que cambian de etapa
@@ -2304,3 +2305,39 @@ create policy "contacto_etiquetas_insert" on contacto_etiquetas for insert
 drop policy if exists "contacto_etiquetas_delete" on contacto_etiquetas;
 create policy "contacto_etiquetas_delete" on contacto_etiquetas for delete
   using (siguelo_ve_contacto_id(contacto_id));
+
+-- ---------- 51. La IA lee cada número por separado ----------
+-- Antes la IA leía un chat a la vez para todo el CRM: con masivos en los 4 números, un número con
+-- muchas respuestas hacía esperar a los demás (Online esperaba a las sucursales). Ahora cada número
+-- tiene su propia fila; esta función puede traer los pendientes de un solo número.
+drop function if exists siguelo_ia_por_leer(uuid, integer);
+drop function if exists siguelo_ia_por_leer(uuid, integer, uuid);
+create or replace function siguelo_ia_por_leer(p_empresa uuid, p_quieto_seg integer default 45, p_linea uuid default null)
+returns table (
+  conversacion_id uuid,
+  linea_id uuid,
+  telefono text,
+  contacto_id uuid,
+  ultimo_cliente timestamptz
+)
+language sql
+stable
+set search_path = public
+as $$
+  select cv.id, cv.linea_id, cv.contacto_telefono, c.id, max(m.creado_en)
+  from mensajes m
+  join conversaciones cv on cv.id = m.conversacion_id
+  join lineas_whatsapp l on l.id = cv.linea_id and l.empresa_id = p_empresa and (p_linea is null or l.id = p_linea)
+  left join contactos c on c.empresa_id = p_empresa and c.telefono = cv.contacto_telefono
+  left join siguelo_ia_lecturas lec on lec.conversacion_id = cv.id
+  where m.remitente = 'cliente'
+    and m.creado_en > now() - interval '48 hours'
+  group by cv.id, cv.linea_id, cv.contacto_telefono, c.id, lec.leido_hasta, lec.reintentar_en
+  having max(m.creado_en) > coalesce(lec.leido_hasta, '-infinity'::timestamptz)
+     and max(m.creado_en) < now() - make_interval(secs => p_quieto_seg)
+     and (lec.reintentar_en is null or lec.reintentar_en < now())
+  order by max(m.creado_en) asc
+  limit 20;
+$$;
+revoke execute on function siguelo_ia_por_leer(uuid, integer, uuid) from public, anon, authenticated;
+grant execute on function siguelo_ia_por_leer(uuid, integer, uuid) to service_role;

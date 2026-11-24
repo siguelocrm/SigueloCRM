@@ -3,12 +3,13 @@ import { procesarCola } from './cola.js';
 import { revisarEmpresa } from './motor.js';
 import { limpiarRegistroViejo } from './registro.js';
 import { configDeEmpresa, empresasConIA } from './ia/config.js';
-import { leerPendientes, responderConversacion } from './ia/lector.js';
+import { leerFilas, leerPendientes, pendientesPorLeer, responderConversacion } from './ia/lector.js';
 import { procesarSalida } from './ia/salida.js';
 import { chatsSinRespuesta, type ChatSinRespuesta } from './ia/alDia.js';
 import { revisarPagos } from './pagos/inscripcion.js';
 import { revisarRedes } from './redes/redes.js';
 import type { AjustesRow } from './tipos.js';
+import { candadoConVigia, candadosPorClave, conCandadoEsperando } from './candados.js';
 import { cuentasBloqueadas } from './agencia/bloqueo.js';
 import { enFranja } from './horario.js';
 import { desactivarVencidos } from './usuarios/accesos.js';
@@ -37,26 +38,6 @@ const REDES_CADA_MS = 3 * 60_000;
 
 // El motor y la cola nunca corren a la vez: así la cola no envía algo que el
 // motor está por cancelar, y el motor ve siempre los envíos ya anotados.
-// Un candado que se libera solo si la tarea se traba (por ejemplo, esperando a WhatsApp una
-// respuesta que nunca llega): antes quedaba tomado para siempre y no salía nada más (masivos,
-// seguimiento) hasta reiniciar el servidor.
-const TRABADO_MS = 10 * 60_000;
-function candadoConVigia(nombre: string): (tarea: () => Promise<void>) => Promise<void> {
-  let desde: number | null = null;
-  return async (tarea) => {
-    if (desde !== null && Date.now() - desde < TRABADO_MS) return;
-    if (desde !== null) console.error(`⚠️ ${nombre} estuvo trabado más de ${TRABADO_MS / 60_000} minutos: se libera y sigue.`);
-    const yo = Date.now();
-    desde = yo;
-    try {
-      await tarea();
-    } catch (err) {
-      console.error(`Error en ${nombre}:`, (err as Error).message);
-    } finally {
-      if (desde === yo) desde = null;
-    }
-  };
-}
 const conCandado = candadoConVigia('el seguimiento automático');
 
 let cache: { leido: number; ajustes: AjustesRow[] } = { leido: 0, ajustes: [] };
@@ -119,8 +100,10 @@ async function vueltaDeLaCola(): Promise<number> {
 // La IA (Fase 3) lleva sus propios candados: una lectura puede tardar varios
 // segundos (espera a OpenAI) y no debe frenar al seguimiento ni a sus envíos.
 const candado = (nombre: string) => candadoConVigia(nombre);
-const conCandadoLector = candado('la lectura de la IA');
+// La lectura de la IA: un candado por número (cada número lee su chat a la vez que los demás).
+const lectorDe = candadosPorClave('la lectura de la IA');
 const conCandadoSalida = candado('los envíos de la IA');
+const conCandadoRespaldoIA = candado('la vuelta de respaldo de la IA');
 const conCandadoPagos = candado('los pagos');
 const conCandadoRedes = candado('las redes sociales');
 const conCandadoMasivos = candado('los mensajes masivos');
@@ -156,26 +139,14 @@ const QUIETO_RAPIDO_MS = 2_000;
 const esperando = new Map<string, NodeJS.Timeout>();
 const lineaEmpresa = new Map<string, string>();
 const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function conCandadoEsperando(conCandado: (t: () => Promise<void>) => Promise<void>, tarea: () => Promise<void>, intentos = 40): Promise<void> {
-  // El candado no corre la tarea si está ocupado: se reintenta unos segundos.
-  for (let i = 0; i < intentos; i++) {
-    let corrio = false;
-    await conCandado(async () => {
-      corrio = true;
-      await tarea();
-    });
-    if (corrio) return;
-    await dormir(250);
-  }
-}
-// Respuestas rápidas en curso: "ponerse al día" les cede el paso (lo nuevo primero).
-let rapidosEnCurso = 0;
+// Respuestas rápidas en curso, por número: "ponerse al día" de ese número les cede el paso (lo nuevo primero).
+const rapidosEnCurso = new Map<string, number>();
 async function responderRapido(lineaId: string): Promise<void> {
-  rapidosEnCurso++;
+  rapidosEnCurso.set(lineaId, (rapidosEnCurso.get(lineaId) ?? 0) + 1);
   try {
     await responderRapidoSinContar(lineaId);
   } finally {
-    rapidosEnCurso--;
+    rapidosEnCurso.set(lineaId, (rapidosEnCurso.get(lineaId) ?? 1) - 1);
   }
 }
 async function responderRapidoSinContar(lineaId: string): Promise<void> {
@@ -186,8 +157,8 @@ async function responderRapidoSinContar(lineaId: string): Promise<void> {
   }
   const c = (await empresasConIA()).find((x) => x.ia.empresa_id === lineaEmpresa.get(lineaId));
   if (!c) return;
-  // Espera hasta 30 s si la IA está ocupada (por ejemplo leyendo un chat de "ponerse al día").
-  await conCandadoEsperando(conCandadoLector, () => leerPendientes(c, 5, 1), 120);
+  // Lee los chats nuevos de ESTE número. Espera hasta 30 s si ese número ya está leyendo otro chat.
+  await conCandadoEsperando(lectorDe(lineaId), () => leerPendientes(c, 5, 1, lineaId), 120);
   // Lo que quedó listo para salir ahora (texto, y después ubicación o respuestas rápidas) sale en seguida.
   for (let i = 0; i < 4; i++) {
     await conCandadoEsperando(conCandadoSalida, () => procesarSalida(c));
@@ -201,10 +172,13 @@ async function responderRapidoSinContar(lineaId: string): Promise<void> {
 export async function responderAhora(empresaId: string, conversacionId: string): Promise<{ ok: boolean; mensaje: string }> {
   const c = await configDeEmpresa(empresaId);
   if (!c) return { ok: false, mensaje: 'Falta la clave de OpenAI (IA → Ajustes).' };
-  let r: { ok: boolean; mensaje: string } = { ok: false, mensaje: 'La IA está ocupada leyendo otros chats: inténtalo de nuevo en unos segundos.' };
-  await conCandadoEsperando(conCandadoLector, async () => {
+  const { data: cv } = await db.from('conversaciones').select('linea_id').eq('id', conversacionId).maybeSingle();
+  if (!cv) return { ok: false, mensaje: 'No se encontró esa conversación.' };
+  let r: { ok: boolean; mensaje: string } = { ok: false, mensaje: 'La IA sigue ocupada con otros chats de este número: inténtalo de nuevo en un minuto.' };
+  // Espera su turno en ese número hasta 1 minuto (antes se rendía a los 10 s).
+  await conCandadoEsperando(lectorDe(cv.linea_id), async () => {
     r = await responderConversacion(c, conversacionId);
-  });
+  }, 240);
   if (r.ok) {
     for (let i = 0; i < 6; i++) {
       await conCandadoEsperando(conCandadoSalida, () => procesarSalida(c));
@@ -228,12 +202,12 @@ export function detenerAlDia(empresaId: string, lineaId: string | null = null): 
 async function responderFila(c: NonNullable<Awaited<ReturnType<typeof configDeEmpresa>>>, st: ProgresoAlDia, chats: ChatSinRespuesta[]): Promise<void> {
   for (const ch of chats) {
     if (!st.activo) break;
-    // Lo nuevo primero: si alguien acaba de escribir, se espera a que la IA le responda (hasta 1 min).
-    for (let i = 0; i < 60 && st.activo && (esperando.size > 0 || rapidosEnCurso > 0); i++) await dormir(1_000);
+    // Lo nuevo primero: si alguien acaba de escribir a ESTE número, se espera a que la IA le responda (hasta 1 min).
+    for (let i = 0; i < 60 && st.activo && (esperando.has(st.linea_id) || (rapidosEnCurso.get(st.linea_id) ?? 0) > 0); i++) await dormir(1_000);
     let r: { ok: boolean; mensaje: string } | null = null;
     // Espera su turno con la lectura normal de la IA (así no responde dos veces el mismo chat).
     for (let i = 0; i < 20 && !r && st.activo; i++) {
-      await conCandadoEsperando(conCandadoLector, async () => {
+      await conCandadoEsperando(lectorDe(st.linea_id), async () => {
         r = await responderConversacion(c, ch.conversacion_id, true);
       });
       if (!r) await dormir(5_000);
@@ -292,8 +266,13 @@ export function iniciarIA(): void {
     .eq('estado', 'enviando')
     .then(() => undefined, () => undefined);
   // Respaldo: lo que la lectura al momento no alcanzó (reintentos, el servidor recién prendido).
-  setInterval(() => conCandadoLector(async () => {
-    for (const c of await empresasConIA()) await leerPendientes(c);
+  // Cada número lee lo suyo a la vez que los demás. Se pide número por número: la lista de todo el
+  // CRM trae solo los 20 más viejos, y un número con muchos pendientes dejaba a los demás afuera.
+  setInterval(() => conCandadoRespaldoIA(async () => {
+    for (const c of await empresasConIA()) {
+      const { data: lineas } = await db.from('lineas_whatsapp').select('id').eq('empresa_id', c.ia.empresa_id);
+      await Promise.all((lineas || []).map((l) => lectorDe(l.id)(async () => leerFilas(c, await pendientesPorLeer(c, undefined, l.id)))));
+    }
   }), LECTOR_RESPALDO_MS);
   setInterval(() => conCandadoSalida(vueltaDeSalida), SALIDA_CADA_MS);
   // Fase 5: comprobantes de pago e inscripciones (y al llegar cada mensaje, en responderRapido).

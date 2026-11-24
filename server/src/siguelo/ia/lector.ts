@@ -613,14 +613,27 @@ export async function responderConversacion(c: Config, conversacionId: string, a
   return { ok: r.hecho.startsWith('respondiendo'), mensaje: r.hecho };
 }
 
-// Una vuelta: lee las conversaciones que tienen mensajes nuevos del cliente.
-export async function leerPendientes(c: Config, maximo = 5, quietoSeg = QUIETO_SEG): Promise<void> {
-  const { data, error } = await db.rpc('siguelo_ia_por_leer', { p_empresa: c.ia.empresa_id, p_quieto_seg: quietoSeg });
-  if (error) return;
-  for (const fila of (data || []).slice(0, maximo)) {
+// Las conversaciones con mensajes nuevos del cliente (de un número, o de todos). Sin la sección 51
+// del SQL no se puede pedir por número: se piden todas y se filtran aquí.
+export async function pendientesPorLeer(c: Config, quietoSeg = QUIETO_SEG, lineaId: string | null = null): Promise<PorLeerRow[]> {
+  const base = { p_empresa: c.ia.empresa_id, p_quieto_seg: quietoSeg };
+  let { data, error } = await db.rpc('siguelo_ia_por_leer', lineaId ? { ...base, p_linea: lineaId } : base);
+  if (error && lineaId) ({ data, error } = await db.rpc('siguelo_ia_por_leer', base));
+  if (error) return [];
+  return (data || []).filter((f) => !lineaId || f.linea_id === lineaId);
+}
+
+// Lee esas conversaciones, una por una.
+export async function leerFilas(c: Config, filas: PorLeerRow[], maximo = 5): Promise<void> {
+  for (const fila of filas.slice(0, maximo)) {
     const { ok } = await leer(c, fila);
     if (!ok) break; // si OpenAI falla, no insiste con los demás en esta vuelta
   }
+}
+
+// Una vuelta: lee las conversaciones que tienen mensajes nuevos del cliente (de un número, o de todos).
+export async function leerPendientes(c: Config, maximo = 5, quietoSeg = QUIETO_SEG, lineaId: string | null = null): Promise<void> {
+  await leerFilas(c, await pendientesPorLeer(c, quietoSeg, lineaId), maximo);
 }
 
 // Para "Probar" en la pantalla IA: lee una conversación inventada sin tocar nada.

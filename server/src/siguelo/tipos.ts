@@ -617,7 +617,7 @@ export type SigueloDatabase = {
       siguelo_actividad: { Args: { p_empresa: string }; Returns: ActividadRow[] };
       siguelo_actividad_de: { Args: { p_empresa: string; p_contactos: string[] }; Returns: ActividadRow[] };
       siguelo_cola_siguientes: { Args: { p_empresa: string; p_ahora: string; p_por_linea: number }; Returns: ColaRow[] };
-      siguelo_ia_por_leer: { Args: { p_empresa: string; p_quieto_seg: number }; Returns: PorLeerRow[] };
+      siguelo_ia_por_leer: { Args: { p_empresa: string; p_quieto_seg: number; p_linea?: string }; Returns: PorLeerRow[] };
       siguelo_pagos_por_leer: { Args: { p_empresa: string }; Returns: PagoPorLeerRow[] };
       siguelo_redes_codigo: { Args: Record<string, never>; Returns: number };
       siguelo_datos_resumen: { Args: { p_empresa: string; p_lineas: string[]; p_desde: string; p_hasta: string }; Returns: Record<string, unknown> };

@@ -416,4 +416,22 @@ console.log('✓ límites por cuenta: 1 número y 1 negocio por defecto; ampliar
   assert.equal((await como(P2, `select count(*)::int n from contacto_etiquetas`)).rows[0].n, 0, 'otra cuenta no ve tus etiquetas');
   console.log(`✓ permisos livianos: abrir un chat con 3000 chats en ${ms} ms; mensajes y etiquetas con los mismos permisos`);
 }
+// ---------- 51. La IA lee cada número por separado ----------
+{
+  const [La, Lb] = [(await uno(`insert into lineas_whatsapp (empresa_id, nombre, numero) values ($1, 'L-IA-A', '599') returning id`, [club])).id, (await uno(`insert into lineas_whatsapp (empresa_id, nombre, numero) values ($1, 'L-IA-B', '600') returning id`, [club])).id];
+  for (const [l, tel] of [[La, '59166000001'], [Lb, '59166000002']]) {
+    const cv = (await uno(`insert into conversaciones (linea_id, contacto_telefono) values ($1, $2) returning id`, [l, tel])).id;
+    await db.query(`insert into mensajes (conversacion_id, remitente, contenido, creado_en) values ($1, 'cliente', 'hola', now() - interval '5 minutes')`, [cv]);
+  }
+  const deA = (await db.query(`select linea_id from siguelo_ia_por_leer($1, 0, $2)`, [club, La])).rows;
+  assert.ok(deA.length >= 1 && deA.every((x) => x.linea_id === La), 'solo los de ese número');
+  const deB = (await db.query(`select linea_id from siguelo_ia_por_leer($1, 0, $2)`, [club, Lb])).rows;
+  assert.ok(deB.length >= 1 && deB.every((x) => x.linea_id === Lb));
+  // Sin número trae los 20 más viejos de todo el CRM: si un número tiene muchos pendientes, los demás
+  // ni aparecen. Por eso la vuelta de respaldo pide número por número.
+  const todos = (await db.query(`select linea_id from siguelo_ia_por_leer($1, 0)`, [club])).rows.map((x) => x.linea_id);
+  assert.equal(todos.length, 20);
+  assert.ok(!todos.includes(Lb), 'con muchos pendientes en otro número, este no aparecía');
+  console.log('✓ la IA puede pedir los chats por leer de un solo número');
+}
 console.log('\nTodo OK');
