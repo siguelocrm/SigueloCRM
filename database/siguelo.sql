@@ -2255,3 +2255,52 @@ as $$
 $$;
 revoke execute on function siguelo_origenes(uuid) from public, anon;
 grant execute on function siguelo_origenes(uuid) to authenticated, service_role;
+
+-- ---------- 50. Permisos más livianos (mensajes y etiquetas) ----------
+-- Supabase revisa estos permisos en cada cambio que manda en vivo a la página, por cada pestaña
+-- abierta. Estaban escritos como "el chat está en la lista de TODOS los chats que puedes ver": con
+-- miles de chats, armar esa lista tardaba casi 1 segundo, y se hacía en cada mensaje (con masivos,
+-- muchísimas veces). Era el 74% del trabajo de la base, y abrir un chat tardaba varios segundos.
+-- Ahora se revisa solo ese chat (o ese contacto). Los permisos son los mismos.
+create or replace function siguelo_ve_conversacion(p_conversacion uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select siguelo_ve_linea(c.linea_id) from conversaciones c where c.id = p_conversacion), false);
+$$;
+revoke execute on function siguelo_ve_conversacion(uuid) from public, anon;
+grant execute on function siguelo_ve_conversacion(uuid) to authenticated, service_role;
+
+-- Un contacto de tu cuenta que puedes ver (lo mismo que "contactos_select").
+create or replace function siguelo_ve_contacto_id(p_contacto uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((
+    select k.empresa_id = (select u.empresa_id from usuario_actual() u) and siguelo_ve_contacto(k.telefono)
+    from contactos k where k.id = p_contacto
+  ), false);
+$$;
+revoke execute on function siguelo_ve_contacto_id(uuid) from public, anon;
+grant execute on function siguelo_ve_contacto_id(uuid) to authenticated, service_role;
+
+drop policy if exists "mensajes_select" on mensajes;
+create policy "mensajes_select" on mensajes for select
+  using (siguelo_ve_conversacion(conversacion_id));
+
+drop policy if exists "mensajes_insert" on mensajes;
+create policy "mensajes_insert" on mensajes for insert
+  with check (siguelo_ve_conversacion(conversacion_id));
+
+drop policy if exists "mensajes_programados_todo" on mensajes_programados;
+create policy "mensajes_programados_todo" on mensajes_programados for all
+  using (siguelo_ve_conversacion(conversacion_id))
+  with check (siguelo_ve_conversacion(conversacion_id));
+
+drop policy if exists "contacto_etiquetas_select" on contacto_etiquetas;
+create policy "contacto_etiquetas_select" on contacto_etiquetas for select
+  using (siguelo_ve_contacto_id(contacto_id));
+
+drop policy if exists "contacto_etiquetas_insert" on contacto_etiquetas;
+create policy "contacto_etiquetas_insert" on contacto_etiquetas for insert
+  with check (siguelo_ve_contacto_id(contacto_id));
+
+drop policy if exists "contacto_etiquetas_delete" on contacto_etiquetas;
+create policy "contacto_etiquetas_delete" on contacto_etiquetas for delete
+  using (siguelo_ve_contacto_id(contacto_id));

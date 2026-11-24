@@ -272,6 +272,11 @@ npm test
   800 ms) y los números de las pestañas se recuentan cada 8 s como mucho. "Hoy" usa `misEsperando`. Sin la sección 48
   (PGRST202) funciona como antes (`modoAntiguo`, recarga juntada cada 3 s). Lista estilo WhatsApp Web (`formatoFechaLista`).
   Pruebas: `probar-sql.mjs` (sección 48) y `npm run banco` → `?vista=bandeja`.
+- **Permisos livianos** (sección 50): `mensajes_select/insert`, `mensajes_programados_todo` y `contacto_etiquetas_*` decían
+  "conversacion_id in (todos los chats que puedes ver)": Supabase Realtime revisa la política en cada cambio y por cada
+  pestaña, y con miles de chats eso era ~1 s por vez (74 % del tiempo de la base, la consulta `wal->>…` de Realtime en
+  Query Performance) y abrir un chat tardaba segundos. Ahora `siguelo_ve_conversacion(id)` y `siguelo_ve_contacto_id(id)`
+  (security definer) revisan solo ese chat o contacto. Mismos permisos (los prueba probar-sql.mjs).
 - **De dónde salió cada mensaje** (sección 49, `siguelo_origenes`, `siguelo/origen.ts`, `BurbujaMensaje.tsx`): debajo de cada
   mensaje nuestro, en chiquito: Seguimiento · etapa y paso (siguelo_cola.mensaje_id), Cita, Masivo · nombre
   (siguelo_masivo_envios), IA / respuesta rápida / QR / grupo / pase / inscripción (siguelo_ia_salida), Bot, Programado,

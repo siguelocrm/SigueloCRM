@@ -402,4 +402,18 @@ console.log('✓ límites por cuenta: 1 número y 1 negocio por defecto; ampliar
   await assert.rejects(como(P, `insert into siguelo_mensaje_origen (mensaje_id, origen) values ($1, 'bot')`, [mNada]), /row-level security/, 'y solo el servidor escribe');
   console.log('✓ de dónde salió cada mensaje: seguimiento, masivo, IA, respuesta rápida, bot, programado, teléfono y quién lo escribió');
 }
+// ---------- 50. Permisos más livianos ----------
+{
+  const cvMuchos = (await uno(`select c.id from conversaciones c join lineas_whatsapp l on l.id = c.linea_id where l.nombre = 'L-Muchos' limit 1`)).id;
+  let t0 = Date.now();
+  const r = await como(P, `select id from mensajes where conversacion_id = $1`, [cvMuchos]);
+  const ms = Date.now() - t0;
+  assert.equal(r.rows.length, 3, 'abre el chat con sus mensajes');
+  assert.equal((await como(V, `select id from mensajes where conversacion_id = $1`, [cvMuchos])).rows.length, 0, 'sin ese número no ve sus mensajes');
+  assert.ok(ms < 1500, `abrir un chat tardó ${ms} ms`);
+  const et = (await como(P, `select ce.contacto_id from contacto_etiquetas ce join etiquetas_whatsapp e on e.id = ce.etiqueta_id where e.nombre = 'Interesados'`)).rows;
+  assert.equal(et.length, 1, 've las etiquetas de sus contactos');
+  assert.equal((await como(P2, `select count(*)::int n from contacto_etiquetas`)).rows[0].n, 0, 'otra cuenta no ve tus etiquetas');
+  console.log(`✓ permisos livianos: abrir un chat con 3000 chats en ${ms} ms; mensajes y etiquetas con los mismos permisos`);
+}
 console.log('\nTodo OK');
