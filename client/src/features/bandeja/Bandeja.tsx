@@ -80,7 +80,7 @@ export default function Bandeja() {
   const [respuestasAutomaticas, setRespuestasAutomaticas] = useState<RespuestaAutomatica[]>([]);
 
   const conv = useConversaciones(usuario);
-  const { mensajes, agregarMensaje, actualizarMensaje } = useMensajes(seleccionada?.id ?? null);
+  const { mensajes, origenes, agregarMensaje, actualizarMensaje } = useMensajes(seleccionada?.id ?? null);
   const etapasVenta = useEtapasVenta(usuario?.empresa_id);
   // Negocios por número (SígueloCRM): en cada chat, solo las respuestas y reglas del negocio de ese número.
   const negocios = useNegocios(usuario?.empresa_id);
@@ -431,6 +431,7 @@ export default function Bandeja() {
       seleccionada={seleccionada}
       usuario={usuario}
       mensajes={mensajes}
+      origenes={origenes}
       respuestasRapidas={soloDelNegocio(respuestasRapidas, negocios.respuestasDeNegocio, negocioDelChat)}
       respuestasAutomaticas={soloDelNegocio(respuestasAutomaticas, negocios.reglasDeNegocio, negocioDelChat)}
       etapasVenta={etapasVenta}

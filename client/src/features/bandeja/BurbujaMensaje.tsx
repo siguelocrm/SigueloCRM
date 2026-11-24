@@ -1,7 +1,39 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import { AlertTriangle, CheckCheck, FileText } from 'lucide-react';
+import { AlertTriangle, Bell, Bot, CalendarClock, CheckCheck, Clock, FileText, Megaphone, PenLine, Repeat, Smartphone, Sparkles, Zap, type LucideIcon } from 'lucide-react';
 import { formatoHora, formatoWhatsApp } from './utils';
 import type { Mensaje } from '../../lib/tipos';
+import type { OrigenMensaje } from './hooks/useMensajes';
+
+// SígueloCRM: de dónde salió el mensaje, en chiquito dentro de la burbuja.
+const IA: Record<string, string> = {
+  ia_respuesta: 'IA',
+  ia_respuesta_rapida: 'IA · Respuesta rápida',
+  ia_grupo: 'IA · Invitación al grupo',
+  ia_pase: 'IA · Pase a otra sucursal',
+  ia_qr: 'IA · QR de pago',
+  ia_pago: 'Inscripción (pago)',
+  ia_bot: 'IA activó el bot',
+};
+export function etiquetaOrigen(o: OrigenMensaje | undefined): { Icono: LucideIcon; texto: string } | null {
+  if (!o) return null;
+  const con = (base: string) => (o.detalle ? `${base} · ${o.detalle}` : base);
+  switch (o.origen) {
+    case 'seguimiento': return { Icono: Repeat, texto: con('Seguimiento') };
+    case 'cita': return { Icono: CalendarClock, texto: con('Cita') };
+    case 'masivo': return { Icono: Megaphone, texto: con('Masivo') };
+    case 'bot': return { Icono: Bot, texto: con('Bot') };
+    case 'programado': return { Icono: Clock, texto: 'Programado' };
+    case 'telefono': return { Icono: Smartphone, texto: 'Desde el teléfono' };
+    case 'automatico': return { Icono: Zap, texto: con('Automático') };
+    case 'persona': return { Icono: PenLine, texto: o.detalle || 'Escrito en el CRM' };
+    case 'ia_aviso': return { Icono: Bell, texto: 'Aviso' };
+  }
+  if (o.origen.startsWith('ia_')) {
+    const base = IA[o.origen] || 'IA';
+    return { Icono: Sparkles, texto: o.origen === 'ia_respuesta_rapida' && o.detalle ? `${base}: ${o.detalle}` : base };
+  }
+  return null;
+}
 
 // Un mensaje largo (plantillas, mensajes masivos) se recorta a ~8 líneas con
 // un degradado y "Ver más".
@@ -40,10 +72,11 @@ function TextoColapsable({ texto, fondo }: { texto: string; fondo: string }) {
   );
 }
 
-export default function BurbujaMensaje({ m }: { m: Mensaje }) {
+export default function BurbujaMensaje({ m, origen }: { m: Mensaje; origen?: OrigenMensaje }) {
   const esAgente = m.remitente === 'agente';
   const fallo = esAgente && m.estado_entrega === 'error';
   const fondo = fallo ? 'var(--bad-soft)' : esAgente ? 'var(--bubble-out)' : 'var(--bubble-in)';
+  const etiqueta = esAgente ? etiquetaOrigen(origen) : null;
   return (
     <div
       className={`flex flex-col ${esAgente ? 'self-end' : 'self-start'}`}
@@ -79,6 +112,12 @@ export default function BurbujaMensaje({ m }: { m: Mensaje }) {
       )}
       {m.tipo === 'texto' && <TextoColapsable texto={m.contenido || ''} fondo={fondo} />}
       <span className="flex items-center justify-end gap-1 mt-0.5 text-[11.5px]" style={{ color: fallo ? 'var(--bad)' : 'var(--fg-3)', fontVariantNumeric: 'tabular-nums' }}>
+        {etiqueta && (
+          <span className="mr-auto pr-3 flex items-center gap-1 min-w-0 text-[11px]" title={etiqueta.texto}>
+            <etiqueta.Icono size={11} className="shrink-0" />
+            <span className="truncate" style={{ maxWidth: 260 }}>{etiqueta.texto}</span>
+          </span>
+        )}
         {fallo ? (
           <>
             <AlertTriangle size={12} />

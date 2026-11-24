@@ -2205,3 +2205,53 @@ as $$
 $$;
 revoke execute on function siguelo_bandeja_conteos(uuid) from public, anon;
 grant execute on function siguelo_bandeja_conteos(uuid) to authenticated, service_role;
+
+-- ---------- 49. De dónde salió cada mensaje ----------
+-- En el chat, debajo de cada mensaje tuyo, una etiqueta chiquita: seguimiento (qué etapa y qué
+-- recordatorio), masivo (cuál), IA, bot, programado, escrito por quién o desde el teléfono.
+-- Seguimiento, masivos y la IA ya guardaban qué mensaje mandaron; lo demás se anota aquí.
+create table if not exists siguelo_mensaje_origen (
+  mensaje_id uuid primary key references mensajes (id) on delete cascade,
+  origen text not null,  -- bot | programado | telefono | automatico
+  detalle text,
+  creado_en timestamptz not null default now()
+);
+alter table siguelo_mensaje_origen enable row level security;
+-- Sin políticas: solo el servidor escribe; la página lo lee con siguelo_origenes.
+
+drop function if exists siguelo_origenes(uuid);
+create or replace function siguelo_origenes(p_conversacion uuid)
+returns table (mensaje_id uuid, origen text, detalle text)
+language sql stable security definer
+set search_path = public
+as $$
+  with chat as (
+    select c.id from conversaciones c
+    join lineas_whatsapp l on l.id = c.linea_id
+    where c.id = p_conversacion
+      and l.empresa_id = (select u.empresa_id from usuario_actual() u)
+      and siguelo_ve_linea(c.linea_id)
+  ),
+  m as (
+    select m.id, m.agente_id from mensajes m join chat on chat.id = m.conversacion_id where m.remitente = 'agente'
+  )
+  select distinct on (m.id) m.id, x.origen, x.detalle
+  from m
+  join lateral (
+    select 1 as p, case when q.tipo = 'cita' then 'cita' else 'seguimiento' end as origen, q.nombre as detalle
+      from siguelo_cola q where q.mensaje_id = m.id
+    union all
+    select 2, 'masivo', ms.nombre from siguelo_masivo_envios e join siguelo_masivos ms on ms.id = e.masivo_id where e.mensaje_id = m.id
+    union all
+    select 3, 'ia_' || s.origen, rr.titulo from siguelo_ia_salida s
+      left join respuestas_rapidas rr on s.origen = 'respuesta_rapida' and rr.id::text = s.referencia
+      where s.mensaje_id = m.id
+    union all
+    select 4, o.origen, o.detalle from siguelo_mensaje_origen o where o.mensaje_id = m.id
+    union all
+    select 5, 'persona', u.nombre from usuarios u where u.id = m.agente_id
+  ) x on true
+  order by m.id, x.p;
+$$;
+revoke execute on function siguelo_origenes(uuid) from public, anon;
+grant execute on function siguelo_origenes(uuid) to authenticated, service_role;

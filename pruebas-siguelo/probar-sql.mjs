@@ -368,4 +368,38 @@ console.log('✓ límites por cuenta: 1 número y 1 negocio por defecto; ampliar
   assert.equal((await como(V, `select count(*)::int n from siguelo_bandeja(p_linea => $1)`, [L4])).rows[0].n, 0, 'un usuario sin ese número (o inactivo) no ve nada');
   console.log(`✓ bandeja con 3000 chats: la página en ${msPagina} ms y los números en ${msConteos} ms (en la prueba)`);
 }
+// ---------- 49. De dónde salió cada mensaje ----------
+{
+  const L5 = (await uno(`insert into lineas_whatsapp (empresa_id, nombre, numero) values ($1, 'L-Origen', '598') returning id`, [club])).id;
+  const cv = (await uno(`insert into conversaciones (linea_id, contacto_telefono) values ($1, '59165000001') returning id`, [L5])).id;
+  const k = (await uno(`insert into contactos (empresa_id, telefono, nombre) values ($1, '59165000001', 'Origen') returning id`, [club])).id;
+  const msj = async (texto, agente = null, rem = 'agente') => (await uno(`insert into mensajes (conversacion_id, remitente, contenido, agente_id) values ($1, $2, $3, $4) returning id`, [cv, rem, texto, agente])).id;
+  const [mSeg, mMas, mIa, mRr, mBot, mProg, mTel, mYo, mNada, mCli] = [
+    await msj('seguimiento'), await msj('masivo'), await msj('ia'), await msj('rr'), await msj('bot'),
+    await msj('programado', P), await msj('teléfono'), await msj('escrito', P), await msj('viejo'), await msj('hola', null, 'cliente'),
+  ];
+  await db.query(`insert into siguelo_cola (empresa_id, contacto_id, conversacion_id, linea_id, telefono, tipo, paso, token, nombre, vence, estado, mensaje_id)
+    values ($1, $2, $3, $4, '59165000001', 'react', 0, 'o', 'Primer Contacto · Reactivación 1', now(), 'enviado', $5)`, [club, k, cv, L5, mSeg]);
+  const mas = (await uno(`insert into siguelo_masivos (empresa_id, nombre, linea_id) values ($1, 'Vacaciones útiles', $2) returning id`, [club, L5])).id;
+  await db.query(`insert into siguelo_masivo_envios (masivo_id, empresa_id, telefono, estado, mensaje_id) values ($1, $2, '59165000001', 'enviado', $3)`, [mas, club, mMas]);
+  const rr = (await uno(`insert into respuestas_rapidas (empresa_id, titulo, contenido) values ($1, 'Precios', 'x') returning id`, [club])).id;
+  await db.query(`insert into siguelo_ia_salida (empresa_id, linea_id, telefono, origen, contenido, mensaje_id) values ($1, $2, '59165000001', 'respuesta', 'ia', $3)`, [club, L5, mIa]);
+  await db.query(`insert into siguelo_ia_salida (empresa_id, linea_id, telefono, origen, referencia, contenido, mensaje_id) values ($1, $2, '59165000001', 'respuesta_rapida', $3, 'rr', $4)`, [club, L5, rr, mRr]);
+  await db.query(`insert into siguelo_mensaje_origen (mensaje_id, origen) values ($1, 'bot'), ($2, 'programado'), ($3, 'telefono')`, [mBot, mProg, mTel]);
+  const o = Object.fromEntries((await como(P, `select * from siguelo_origenes($1)`, [cv])).rows.map((x) => [x.mensaje_id, `${x.origen}|${x.detalle ?? ''}`]));
+  assert.equal(o[mSeg], 'seguimiento|Primer Contacto · Reactivación 1');
+  assert.equal(o[mMas], 'masivo|Vacaciones útiles');
+  assert.equal(o[mIa], 'ia_respuesta|');
+  assert.equal(o[mRr], 'ia_respuesta_rapida|Precios');
+  assert.equal(o[mBot], 'bot|');
+  assert.equal(o[mProg], 'programado|', 'un programado dice "Programado" aunque lo haya creado una persona');
+  assert.equal(o[mTel], 'telefono|');
+  assert.equal(o[mYo], 'persona|Dueño principal');
+  assert.equal(o[mNada], undefined, 'sin datos: sin etiqueta');
+  assert.equal(o[mCli], undefined, 'los del cliente no llevan etiqueta');
+  assert.equal((await como(D, `select count(*)::int n from siguelo_origenes($1)`, [cv])).rows[0].n, 0, 'sin ese número, nada');
+  assert.equal((await como(P, `select * from siguelo_mensaje_origen`)).rows.length, 0, 'la tabla la lee solo el servidor (la página usa siguelo_origenes)');
+  await assert.rejects(como(P, `insert into siguelo_mensaje_origen (mensaje_id, origen) values ($1, 'bot')`, [mNada]), /row-level security/, 'y solo el servidor escribe');
+  console.log('✓ de dónde salió cada mensaje: seguimiento, masivo, IA, respuesta rápida, bot, programado, teléfono y quién lo escribió');
+}
 console.log('\nTodo OK');

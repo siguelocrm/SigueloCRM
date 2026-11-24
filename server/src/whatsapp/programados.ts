@@ -3,6 +3,7 @@ import type { MensajeProgramadoRow } from '../types/dominio.js';
 import { obtenerSesion } from './sesiones.js';
 import { marcarEnviadoPorCRM } from './mensajes-enviados-por-crm.js';
 import { enviarConReintento, esConexionCaida } from '../siguelo/reintento.js';
+import { marcarOrigen } from '../siguelo/origen.js';
 import { construirContenidoWA } from './contenido.js';
 
 const CADA_MS = 60_000;
@@ -66,7 +67,7 @@ async function procesarVencidos(): Promise<void> {
       const resultado = await enviarConReintento(m.linea_id, sesion.sock, jid, await construirContenidoWA({ tipo: m.tipo, texto: m.contenido, media_url: m.media_url, mimetype: m.mimetype }));
       if (resultado?.key?.id) marcarEnviadoPorCRM(resultado.key.id);
 
-      await supabase.from('mensajes').insert({
+      const { data: guardado } = await supabase.from('mensajes').insert({
         conversacion_id: m.conversacion_id,
         remitente: 'agente',
         agente_id: m.creado_por,
@@ -74,7 +75,8 @@ async function procesarVencidos(): Promise<void> {
         contenido: m.contenido,
         media_url: m.tipo === 'texto' ? null : m.media_url,
         whatsapp_id: resultado?.key?.id || null,
-      });
+      }).select('id').maybeSingle();
+      await marcarOrigen(guardado?.id, 'programado'); // SígueloCRM: etiqueta en el chat
       await marcar(m.id, { estado: 'enviado', enviado_en: new Date().toISOString() });
       console.log(`[${m.linea_id}] ⏰ Mensaje programado enviado a ${m.telefono}`);
     } catch (err) {

@@ -6,6 +6,7 @@ import { continuarFlujo, iniciarFlujo } from './flujo.js';
 import { aplicarVariables, palabraQueCoincide } from './coincidencia.js';
 import { reglasDelNumero } from '../siguelo/negocios.js';
 import { conTarjetaDeGrupo } from '../siguelo/linkDeGrupo.js';
+import { marcarOrigen } from '../siguelo/origen.js';
 import { marcarEnviadoPorCRM } from './mensajes-enviados-por-crm.js';
 
 const espera = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -207,7 +208,7 @@ export async function enviarPaso(
   // SígueloCRM: marcado como enviado por el CRM (no se duplica y la IA sabe que lo mandó el bot).
   if (resultado?.key?.id) marcarEnviadoPorCRM(resultado.key.id);
 
-  await supabase.from('mensajes').insert({
+  const { data: guardado } = await supabase.from('mensajes').insert({
     conversacion_id: conversacionId,
     remitente: 'agente',
     agente_id: null,
@@ -215,5 +216,7 @@ export async function enviarPaso(
     contenido: paso.tipo === 'texto' && paso.contenido ? aplicarVariables(paso.contenido, variables) : paso.contenido,
     media_url: paso.tipo !== 'texto' ? paso.media_url : null,
     whatsapp_id: resultado?.key?.id || null,
-  });
+  }).select('id').maybeSingle();
+  // SígueloCRM: en el chat se ve que lo mandó el bot.
+  await marcarOrigen(guardado?.id, 'bot');
 }

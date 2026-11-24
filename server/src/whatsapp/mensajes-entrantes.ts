@@ -6,6 +6,7 @@ import { obtenerEmpresaIdDeLinea } from './empresa.js';
 import { buscarContactoPorLid, registrarLidDeContacto } from './contactos.js';
 import { intentarResponderAutomaticamente } from './bot-automatico.js';
 import { guardarOrigenDeAnuncio } from './origen-anuncio.js';
+import { marcarOrigen } from '../siguelo/origen.js';
 import { mensajeNuevo } from '../siguelo/eventos.js';
 
 interface ResultadoDeteccion {
@@ -279,7 +280,7 @@ export async function procesarMensajeSaliente(msg: WAMessage, lineaId: string): 
 
   const conversacion = await buscarOCrearConversacion(lineaId, telefono);
 
-  const { error: errorMensaje } = await supabase.from('mensajes').insert({
+  const { data: guardado, error: errorMensaje } = await supabase.from('mensajes').insert({
     conversacion_id: conversacion.id,
     remitente: 'agente',
     agente_id: null,
@@ -287,7 +288,8 @@ export async function procesarMensajeSaliente(msg: WAMessage, lineaId: string): 
     contenido: texto,
     media_url: mediaUrl,
     whatsapp_id: msg.key.id || null,
-  });
+  }).select('id').maybeSingle();
+  await marcarOrigen(guardado?.id, 'telefono'); // SígueloCRM: en el chat se ve "desde el teléfono"
 
   if (errorMensaje) {
     console.error('Error guardando mensaje saliente (desde el teléfono):', errorMensaje.message);

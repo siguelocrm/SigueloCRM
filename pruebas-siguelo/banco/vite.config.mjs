@@ -25,6 +25,18 @@ const VIRTUALES = {
     import ResponderIA from './features/bandeja/ResponderIA';
     import Agencia from './features/agencia/Agencia';
     import ListaConversaciones from './features/bandeja/ListaConversaciones';
+    import BurbujaMensaje from './features/bandeja/BurbujaMensaje';
+    const ejemplos = [
+      ['cliente', 'Hola, ¿cuánto cuesta el curso de ajedrez para niños?', null],
+      ['agente', '¡Hola! 😊 El curso para niños cuesta Bs 250 al mes. ¿Te paso los horarios?', { origen: 'ia_respuesta', detalle: null }],
+      ['agente', 'Hola Rodrigo 👋 ¿Pudiste ver mi mensaje?', { origen: 'seguimiento', detalle: 'Primer Contacto · Reactivación 1' }],
+      ['agente', 'Este verano abrimos las vacaciones útiles de ajedrez en El Alto. ¿Te paso los horarios?', { origen: 'masivo', detalle: 'Vacaciones útiles enero' }],
+      ['agente', 'Te paso los precios y horarios 👇', { origen: 'ia_respuesta_rapida', detalle: 'Precios' }],
+      ['agente', '¡Bienvenido a Infinity Chess! ♟️', { origen: 'bot', detalle: null }],
+      ['agente', 'Mañana te espero a las 16:00', { origen: 'telefono', detalle: null }],
+      ['agente', 'Listo, ya te inscribí', { origen: 'persona', detalle: 'Gus' }],
+      ['agente', 'Ok', { origen: 'programado', detalle: null }],
+    ];
     import { useConversaciones } from './features/bandeja/hooks/useConversaciones';
     import { createElement } from 'react';
     // en minúscula: así React Refresh no lo toma como componente del archivo virtual
@@ -35,7 +47,7 @@ const VIRTUALES = {
     const q = new URLSearchParams(location.search);
     if (q.get('tema') === 'claro') document.documentElement.dataset.theme = 'light';
     const vista = q.get('vista');
-    const Pagina = vista === 'bandeja' ? createElement(bancoBandeja) : vista === 'negocios' ? <Negocios /> : vista === 'embudo' ? <Pipeline onAbrirChat={() => {}} /> : vista === 'ia' ? <IA onAbrirChat={(t) => { window.__chat = t; }} /> : vista === 'inscripciones' ? <Inscripciones onAbrirChat={(t) => { window.__chat = t; }} /> : vista === 'usuarios' ? <UsuariosSiguelo /> : vista === 'redes' ? <Redes /> : vista === 'masivos' ? <Masivos /> : vista === 'agencia' ? <Agencia /> : vista === 'responder' ? <div style={{ width: 520, margin: 24, padding: 14, background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12 }}><div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0"><div className="inline-flex shrink-0 rounded-[10px] p-0.5 text-[13px]" style={{ background: 'var(--surface-2)', border: '1px solid var(--line)' }}><span className="rounded-lg px-3 py-[3px] font-semibold" style={{ background: 'var(--surface)' }}>Responder</span><span className="px-3 py-[3px]">Nota interna</span></div><ResponderIA seleccionada={{ id: 'cv9', linea_id: 'l1', contacto_telefono: '59170000055', contacto_nombre: 'Leo', estado: 'abierto', agente_asignado_id: null, ultima_actividad: '' }} mensajes={[{ id: 'm1', conversacion_id: 'cv9', remitente: 'cliente', agente_id: null, tipo: 'audio', contenido: null, media_url: null, creado_en: new Date(Date.now() - 5 * 60000).toISOString(), whatsapp_id: null, estado_entrega: 'entregado' }]} contactoId="c9" /></div></div> : <Seguimiento />;
+    const Pagina = vista === 'burbujas' ? <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 24, width: 720 }}>{ejemplos.map(([r, t, o], i) => <BurbujaMensaje key={i} m={{ id: 'm' + i, conversacion_id: 'c', remitente: r, agente_id: null, tipo: 'texto', contenido: t, media_url: null, creado_en: new Date().toISOString(), whatsapp_id: null, estado_entrega: 'enviado' }} origen={o || undefined} />)}</div> : vista === 'bandeja' ? createElement(bancoBandeja) : vista === 'negocios' ? <Negocios /> : vista === 'embudo' ? <Pipeline onAbrirChat={() => {}} /> : vista === 'ia' ? <IA onAbrirChat={(t) => { window.__chat = t; }} /> : vista === 'inscripciones' ? <Inscripciones onAbrirChat={(t) => { window.__chat = t; }} /> : vista === 'usuarios' ? <UsuariosSiguelo /> : vista === 'redes' ? <Redes /> : vista === 'masivos' ? <Masivos /> : vista === 'agencia' ? <Agencia /> : vista === 'responder' ? <div style={{ width: 520, margin: 24, padding: 14, background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12 }}><div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0"><div className="inline-flex shrink-0 rounded-[10px] p-0.5 text-[13px]" style={{ background: 'var(--surface-2)', border: '1px solid var(--line)' }}><span className="rounded-lg px-3 py-[3px] font-semibold" style={{ background: 'var(--surface)' }}>Responder</span><span className="px-3 py-[3px]">Nota interna</span></div><ResponderIA seleccionada={{ id: 'cv9', linea_id: 'l1', contacto_telefono: '59170000055', contacto_nombre: 'Leo', estado: 'abierto', agente_asignado_id: null, ultima_actividad: '' }} mensajes={[{ id: 'm1', conversacion_id: 'cv9', remitente: 'cliente', agente_id: null, tipo: 'audio', contenido: null, media_url: null, creado_en: new Date(Date.now() - 5 * 60000).toISOString(), whatsapp_id: null, estado_entrega: 'entregado' }]} contactoId="c9" /></div></div> : <Seguimiento />;
     createRoot(document.getElementById('root')).render(
       <ToastProvider><div style={{ height: '100dvh', display: 'flex', background: 'var(--bg)', fontFamily: 'var(--fuente-sans)' }}>{Pagina}</div></ToastProvider>
     );`,

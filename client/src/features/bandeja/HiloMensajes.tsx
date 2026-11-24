@@ -7,12 +7,14 @@ import BurbujaMensaje from './BurbujaMensaje';
 import { useCambioEtapa } from '../pipeline/useCambioEtapa';
 import Compositor from './Compositor';
 import { BloqueProgramados } from './ProgramarMensaje';
+import type { OrigenMensaje } from './hooks/useMensajes';
 import type { Conversacion, EstadoConversacion, EtapaVenta, Mensaje, RespuestaAutomatica, RespuestaRapida, Usuario } from '../../lib/tipos';
 
 interface HiloMensajesProps {
   seleccionada: Conversacion;
   usuario: Usuario;
   mensajes: Mensaje[];
+  origenes?: Record<string, OrigenMensaje>;
   respuestasRapidas: RespuestaRapida[];
   respuestasAutomaticas: RespuestaAutomatica[];
   etapasVenta: EtapaVenta[];
@@ -47,6 +49,7 @@ export default function HiloMensajes({
   seleccionada,
   usuario,
   mensajes,
+  origenes,
   respuestasRapidas,
   respuestasAutomaticas,
   etapasVenta,
@@ -231,7 +234,7 @@ export default function HiloMensajes({
                   {etiquetaDia(m.creado_en)}
                 </span>
               )}
-              <BurbujaMensaje m={m} />
+              <BurbujaMensaje m={m} origen={origenes?.[m.id]} />
             </Fragment>
           );
         })}

@@ -272,6 +272,12 @@ npm test
   800 ms) y los números de las pestañas se recuentan cada 8 s como mucho. "Hoy" usa `misEsperando`. Sin la sección 48
   (PGRST202) funciona como antes (`modoAntiguo`, recarga juntada cada 3 s). Lista estilo WhatsApp Web (`formatoFechaLista`).
   Pruebas: `probar-sql.mjs` (sección 48) y `npm run banco` → `?vista=bandeja`.
+- **De dónde salió cada mensaje** (sección 49, `siguelo_origenes`, `siguelo/origen.ts`, `BurbujaMensaje.tsx`): debajo de cada
+  mensaje nuestro, en chiquito: Seguimiento · etapa y paso (siguelo_cola.mensaje_id), Cita, Masivo · nombre
+  (siguelo_masivo_envios), IA / respuesta rápida / QR / grupo / pase / inscripción (siguelo_ia_salida), Bot, Programado,
+  Desde el teléfono, Automático (`siguelo_mensaje_origen`, lo escribe el servidor con `marcarOrigen`) o el nombre de quien
+  lo escribió (agente_id). La página lo pide al abrir un chat y 2,5 s después de cada mensaje nuevo. Sin la sección 49,
+  sin etiquetas. Pruebas: `probar-sql.mjs` y `npm run banco` → `?vista=burbujas`.
 - **Links de grupo con tarjeta** (`siguelo/linkDeGrupo.ts`): un texto con un link `chat.whatsapp.com/…` sale en el mismo
   mensaje (el link sigue en el texto) con la tarjeta del grupo (`linkPreview`: nombre y participantes con
   `groupGetInviteInfo`, foto con `profilePictureUrl` + `extractImageThumb`; guardada 6 h por link, 10 min si WhatsApp no
