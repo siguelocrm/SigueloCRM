@@ -434,4 +434,14 @@ console.log('✓ límites por cuenta: 1 número y 1 negocio por defecto; ampliar
   assert.ok(!todos.includes(Lb), 'con muchos pendientes en otro número, este no aparecía');
   console.log('✓ la IA puede pedir los chats por leer de un solo número');
 }
+// ---------- 52. Agregar un número nuevo desde la página ----------
+{
+  // Como la página: sin pedir la fila de vuelta.
+  await como(P, `insert into lineas_whatsapp (empresa_id, nombre, numero, estado) values ($1, 'Zona Sur', '', 'desconectado')`, [club]);
+  assert.equal((await como(P, `select id from lineas_whatsapp where nombre = 'Zona Sur'`)).rows.length, 1, 'el dueño principal agrega un número y lo ve');
+  await assert.rejects(como(D, `insert into lineas_whatsapp (empresa_id, nombre, numero, estado) values ($1, 'Otro', '', 'desconectado')`, [club]), /row-level security/, 'un dueño con solo algunos números no agrega');
+  await assert.rejects(como(V, `insert into lineas_whatsapp (empresa_id, nombre, numero, estado) values ($1, 'Otro', '', 'desconectado')`, [club]), /row-level security/, 'un vendedor no agrega');
+  await assert.rejects(como(P, `insert into lineas_whatsapp (empresa_id, nombre, numero, estado) values ($1, 'En otra cuenta', '', 'desconectado')`, [otra]), /row-level security/, 'ni en otra cuenta');
+  console.log('✓ el dueño agrega un número nuevo (antes la regla lo rechazaba siempre); los demás no');
+}
 console.log('\nTodo OK');

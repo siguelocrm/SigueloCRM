@@ -2341,3 +2341,17 @@ as $$
 $$;
 revoke execute on function siguelo_ia_por_leer(uuid, integer, uuid) from public, anon, authenticated;
 grant execute on function siguelo_ia_por_leer(uuid, integer, uuid) to service_role;
+
+-- ---------- 52. Agregar un número nuevo ----------
+-- La regla de los números ("lineas_admin") pide que el número ya exista en tu cuenta
+-- (siguelo_ve_linea): un número nuevo todavía no existe, así que nunca dejaba agregarlo
+-- ("new row violates row-level security policy for table lineas_whatsapp"). Para agregar: un dueño
+-- que ve todos los números de su cuenta (el dueño principal, o "todos los números"), en su cuenta.
+-- El límite de números del plan (sección 42) sigue igual.
+drop policy if exists "lineas_agregar" on lineas_whatsapp;
+create policy "lineas_agregar" on lineas_whatsapp for insert
+  with check (
+    (select rol from usuario_actual()) = 'dueno'
+    and empresa_id = (select empresa_id from usuario_actual())
+    and siguelo_ve_todo()
+  );
