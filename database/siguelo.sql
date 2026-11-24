@@ -2046,3 +2046,130 @@ create index if not exists siguelo_cola_cerrado_idx on siguelo_cola (empresa_id,
 -- tiene, usa los generales), y pausar solo ese número (por ejemplo si WhatsApp lo restringió).
 -- {"<linea_id>": {"maximo_diario": 100, "pausa_min_seg": 60, "pausa_max_seg": 180, "pausado": true}}
 alter table siguelo_ajustes add column if not exists por_numero jsonb not null default '{}'::jsonb;
+
+-- ---------- 48. Bandeja por partes ----------
+-- La Bandeja pedía todos los chats y todos sus mensajes de una vez: Supabase corta en 1000 filas,
+-- así que mostraba "1000" chats (había más) y casi todos "Sin mensajes". Y lo volvía a pedir
+-- todo cada vez que se movía cualquier chat (con un masivo en marcha, en cada envío).
+-- Ahora la página pide de a 100 chats, ya filtrados (pestaña, número, búsqueda, etiqueta, sin
+-- leer, sin responder), cada uno con su último mensaje, cuántos sin leer tiene, la ficha del
+-- contacto y sus etiquetas; y cuando un chat cambia, pide solo ese (p_ids).
+-- Es "security invoker": cada uno ve solo los chats de sus números (los mismos permisos de siempre).
+create index if not exists conversaciones_actividad_idx on conversaciones (ultima_actividad desc);
+create index if not exists mensajes_conv_remitente_idx on mensajes (conversacion_id, remitente, creado_en desc);
+
+drop function if exists siguelo_bandeja(text, uuid, text, uuid, boolean, boolean, boolean, uuid[], int, int);
+create or replace function siguelo_bandeja(
+  p_pestana text default 'todos',      -- todos | mios | sin_asignar | por_vencer | resueltos
+  p_linea uuid default null,
+  p_busqueda text default null,
+  p_etiqueta uuid default null,
+  p_sin_leer boolean default false,
+  p_sin_responder boolean default false,
+  p_antiguos boolean default false,    -- primero los que esperan respuesta hace más
+  p_ids uuid[] default null,           -- solo estos chats (si todavía entran en el filtro)
+  p_limite int default 100,
+  p_desde int default 0
+)
+returns table (
+  id uuid, linea_id uuid, contacto_telefono text, contacto_nombre text, estado estado_conversacion,
+  agente_asignado_id uuid, ultima_actividad timestamptz, creado_en timestamptz,
+  ultimo_contenido text, ultimo_tipo tipo_mensaje, ultimo_creado_en timestamptz,
+  ultimo_remitente remitente_mensaje, ultimo_estado_entrega estado_entrega_mensaje,
+  pendientes int, ultimo_cliente timestamptz,
+  contacto_id uuid, temperatura temperatura_contacto, probabilidad_cierre smallint,
+  valor_estimado numeric, producto_interes text, etiquetas jsonb
+)
+language sql stable
+set search_path = public
+as $$
+  with filtro as (
+    select nullif(trim(coalesce(p_busqueda, '')), '') as texto,
+           nullif(regexp_replace(coalesce(p_busqueda, ''), '\D', '', 'g'), '') as digitos
+  ),
+  base as (
+    select c.*, l.empresa_id
+    from conversaciones c
+    join lineas_whatsapp l on l.id = c.linea_id
+    cross join filtro f
+    where (p_ids is null or c.id = any (p_ids))
+      and (p_linea is null or c.linea_id = p_linea)
+      and (case when p_pestana = 'resueltos' then c.estado = 'cerrado' else c.estado <> 'cerrado' end)
+      and (p_pestana <> 'mios' or c.agente_asignado_id = auth.uid())
+      and (p_pestana <> 'sin_asignar' or c.agente_asignado_id is null)
+      and (f.texto is null
+        or c.contacto_nombre ilike '%' || f.texto || '%'
+        or (f.digitos is not null and c.contacto_telefono like '%' || f.digitos || '%')
+        or exists (select 1 from contactos k where k.empresa_id = l.empresa_id and k.telefono = c.contacto_telefono and k.nombre ilike '%' || f.texto || '%'))
+  )
+  select
+    b.id, b.linea_id, b.contacto_telefono, b.contacto_nombre, b.estado, b.agente_asignado_id, b.ultima_actividad, b.creado_en,
+    u.contenido, u.tipo, u.creado_en, u.remitente, u.estado_entrega,
+    coalesce(p.n, 0)::int, uc.t,
+    ct.id, ct.temperatura, ct.probabilidad_cierre, ct.valor_estimado, ct.producto_interes,
+    coalesce(et.lista, '[]'::jsonb)
+  from base b
+  left join lateral (
+    select m.contenido, m.tipo, m.creado_en, m.remitente, m.estado_entrega
+    from mensajes m where m.conversacion_id = b.id order by m.creado_en desc limit 1
+  ) u on true
+  left join lateral (select max(m.creado_en) as t from mensajes m where m.conversacion_id = b.id and m.remitente = 'cliente') uc on true
+  left join lateral (select max(m.creado_en) as t from mensajes m where m.conversacion_id = b.id and m.remitente = 'agente') ua on true
+  -- Sin leer: los del cliente desde nuestra última respuesta (hasta 99).
+  left join lateral (
+    select count(*) as n from (
+      select 1 from mensajes m
+      where m.conversacion_id = b.id and m.remitente = 'cliente' and m.creado_en > coalesce(ua.t, '-infinity'::timestamptz)
+      limit 99
+    ) x
+  ) p on true
+  left join contactos ct on ct.empresa_id = b.empresa_id and ct.telefono = b.contacto_telefono
+  left join lateral (
+    select jsonb_agg(jsonb_build_object('id', e.id, 'nombre', e.nombre, 'color', e.color) order by e.nombre) as lista
+    from contacto_etiquetas ce join etiquetas_whatsapp e on e.id = ce.etiqueta_id
+    where ce.contacto_id = ct.id and not e.eliminada
+  ) et on true
+  where (not p_sin_leer or p.n > 0)
+    and (not p_sin_responder or u.remitente = 'cliente')
+    -- Por vencer: WhatsApp deja responder con texto libre hasta 24 h después; quedan menos de 4 h.
+    and (p_pestana <> 'por_vencer' or (uc.t > now() - interval '24 hours' and uc.t <= now() - interval '20 hours'))
+    and (p_etiqueta is null or exists (select 1 from contacto_etiquetas ce where ce.contacto_id = ct.id and ce.etiqueta_id = p_etiqueta))
+  order by
+    case when p_pestana = 'por_vencer' then uc.t end asc nulls last,
+    case when p_antiguos and u.remitente = 'cliente' then 0 else 1 end,
+    case when p_antiguos and u.remitente = 'cliente' then u.creado_en end asc nulls last,
+    b.ultima_actividad desc,
+    b.id
+  limit greatest(1, least(coalesce(p_limite, 100), 500)) offset greatest(0, coalesce(p_desde, 0));
+$$;
+revoke execute on function siguelo_bandeja(text, uuid, text, uuid, boolean, boolean, boolean, uuid[], int, int) from public, anon;
+grant execute on function siguelo_bandeja(text, uuid, text, uuid, boolean, boolean, boolean, uuid[], int, int) to authenticated, service_role;
+
+-- Los números de las pestañas y el globo de "esperando respuesta", contados en la base (sin tope de 1000).
+drop function if exists siguelo_bandeja_conteos(uuid);
+create or replace function siguelo_bandeja_conteos(p_linea uuid default null)
+returns jsonb
+language sql stable
+set search_path = public
+as $$
+  with b as (
+    select c.id, c.agente_asignado_id from conversaciones c
+    where c.estado <> 'cerrado' and (p_linea is null or c.linea_id = p_linea)
+  ),
+  x as (
+    select b.agente_asignado_id,
+      (select m.remitente from mensajes m where m.conversacion_id = b.id order by m.creado_en desc limit 1) as ultimo,
+      (select max(m.creado_en) from mensajes m where m.conversacion_id = b.id and m.remitente = 'cliente') as uc
+    from b
+  )
+  select jsonb_build_object(
+    'todos', count(*),
+    'mios', count(*) filter (where agente_asignado_id = auth.uid()),
+    'sin_asignar', count(*) filter (where agente_asignado_id is null),
+    'por_vencer', count(*) filter (where uc > now() - interval '24 hours' and uc <= now() - interval '20 hours'),
+    'sin_responder', count(*) filter (where ultimo = 'cliente'),
+    'mios_sin_responder', count(*) filter (where ultimo = 'cliente' and agente_asignado_id = auth.uid())
+  ) from x;
+$$;
+revoke execute on function siguelo_bandeja_conteos(uuid) from public, anon;
+grant execute on function siguelo_bandeja_conteos(uuid) to authenticated, service_role;

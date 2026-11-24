@@ -10,6 +10,22 @@ export function formatoHora(fechaIso: string | null | undefined): string {
   return fecha.toLocaleDateString('es-BO', { day: '2-digit', month: '2-digit' });
 }
 
+// SígueloCRM: la hora en la lista de chats, como WhatsApp: hoy la hora, "Ayer", el día de la
+// semana si fue esta semana, y si no la fecha.
+export function formatoFechaLista(fechaIso: string | null | undefined, ahora = new Date()): string {
+  if (!fechaIso) return '';
+  const fecha = new Date(fechaIso);
+  const dia = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dias = Math.round((dia(ahora) - dia(fecha)) / 86_400_000);
+  if (dias <= 0) return fecha.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' });
+  if (dias === 1) return 'Ayer';
+  if (dias < 7) {
+    const d = fecha.toLocaleDateString('es-BO', { weekday: 'long' });
+    return d.charAt(0).toUpperCase() + d.slice(1);
+  }
+  return fecha.toLocaleDateString('es-BO', { day: '2-digit', month: '2-digit', year: '2-digit' });
+}
+
 /**
  * Interpreta el formato tipo WhatsApp (*negrita*, _cursiva_, ~tachado~) y
  * preserva los saltos de línea, para que el texto se vea en el panel como

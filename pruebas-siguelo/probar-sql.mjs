@@ -280,4 +280,70 @@ await db.query(`update siguelo_cuentas set max_negocios = null where empresa_id 
 await db.query(`insert into siguelo_negocios (empresa_id, nombre) values ($1, 'Otro'), ($1, 'Otro más')`, [otra]);
 await db.query(`insert into lineas_whatsapp (empresa_id, nombre, numero) values ($1, 'L-Club-extra', '595')`, [empresa]);
 console.log('✓ límites por cuenta: 1 número y 1 negocio por defecto; ampliarlos o "sin límite" funciona; tus cuentas no tienen límite');
+// ---------- 48. Bandeja por partes ----------
+{
+  const L3 = (await uno(`insert into lineas_whatsapp (empresa_id, nombre, numero) values ($1, 'L-Bandeja', '596') returning id`, [club])).id;
+  const chat = async (tel, nombre, horas, extra = {}) =>
+    (await uno(`insert into conversaciones (linea_id, contacto_telefono, contacto_nombre, ultima_actividad, estado, agente_asignado_id) values ($1, $2, $3, now() - ($4 || ' hours')::interval, $5, $6) returning id`,
+      [L3, tel, nombre, horas, extra.estado || 'abierto', extra.agente || null])).id;
+  const m = (cv, rem, horas, contenido = 'x', tipo = 'texto') =>
+    db.query(`insert into mensajes (conversacion_id, remitente, contenido, tipo, creado_en) values ($1, $2, $3, $4, now() - ($5 || ' minutes')::interval)`, [cv, rem, contenido, tipo, Math.round(horas * 60)]);
+  // Ana: escribió 2 veces después de nuestra respuesta (2 sin leer). Beto: le respondimos. Caro: por vencer (22 h).
+  const ana = await chat('59160000001', 'Ana Flores', 1);
+  await m(ana, 'cliente', 5); await m(ana, 'agente', 4); await m(ana, 'cliente', 2, 'hola'); await m(ana, 'cliente', 1, '¿precio?');
+  const beto = await chat('59160000002', 'Beto', 2, { agente: P });
+  await m(beto, 'cliente', 3); await m(beto, 'agente', 2, 'te paso la info', 'texto');
+  const caro = await chat('59160000003', 'Caro', 22);
+  await m(caro, 'cliente', 22, null, 'audio');
+  const cerrado = await chat('59160000004', 'Dani', 30, { estado: 'cerrado' });
+  await m(cerrado, 'cliente', 30);
+  for (let i = 0; i < 12; i++) await chat(`5916100000${String(i).padStart(2, '0')}`, `Masivo ${i}`, 40 + i);
+  // Ficha y etiqueta de Ana.
+  const kAna = (await uno(`insert into contactos (empresa_id, telefono, nombre, temperatura) values ($1, '59160000001', 'Ana Flores', 'caliente') returning id`, [club])).id;
+  const et = (await uno(`insert into etiquetas_whatsapp (linea_id, whatsapp_id, nombre, color) values ($1, 'e1', 'Interesados', 3) returning id`, [L3])).id;
+  await db.query(`insert into contacto_etiquetas (contacto_id, etiqueta_id) values ($1, $2)`, [kAna, et]);
+
+  const B = (uid, args = '') => como(uid, `select * from siguelo_bandeja(p_linea => $1${args})`, [L3]).then((x) => x.rows);
+  const todos = await B(P);
+  assert.equal(todos.length, 15, 'los abiertos de ese número (sin el cerrado)');
+  assert.deepEqual(todos.slice(0, 3).map((x) => x.id), [ana, beto, caro], 'el más reciente arriba');
+  const a = todos[0];
+  assert.equal(a.ultimo_contenido, '¿precio?');
+  assert.equal(a.ultimo_remitente, 'cliente');
+  assert.equal(a.pendientes, 2, 'sin leer: los del cliente desde nuestra respuesta');
+  assert.equal(a.contacto_id, kAna);
+  assert.equal(a.temperatura, 'caliente');
+  assert.deepEqual(a.etiquetas.map((e) => e.nombre), ['Interesados']);
+  assert.equal(todos[1].pendientes, 0);
+  assert.equal(todos[2].ultimo_tipo, 'audio');
+  assert.equal(todos[3].ultimo_contenido, null, 'chat sin mensajes');
+  console.log('✓ bandeja: el más reciente arriba, con su último mensaje, sin leer, ficha y etiquetas');
+
+  const ids = async (uid, args) => (await B(uid, args)).map((x) => x.id);
+  assert.deepEqual(await ids(P, `, p_pestana => 'mios'`), [beto], 'mis chats');
+  assert.equal((await ids(P, `, p_pestana => 'sin_asignar'`)).length, 14);
+  assert.deepEqual(await ids(P, `, p_pestana => 'por_vencer'`), [caro], 'por vencer: quedan menos de 4 h de las 24');
+  assert.deepEqual(await ids(P, `, p_pestana => 'resueltos'`), [cerrado]);
+  assert.deepEqual(await ids(P, `, p_sin_leer => true`), [ana, caro]);
+  assert.deepEqual(await ids(P, `, p_sin_responder => true, p_antiguos => true`), [caro, ana], 'primero el que espera hace más');
+  assert.deepEqual(await ids(P, `, p_busqueda => 'flores'`), [ana], 'busca por nombre');
+  assert.deepEqual(await ids(P, `, p_busqueda => '60000003'`), [caro], 'busca por número');
+  assert.deepEqual(await ids(P, `, p_busqueda => 'zzz'`), [], 'un texto sin números no trae todo');
+  assert.deepEqual(await ids(P, `, p_etiqueta => '${et}'`), [ana], 'por etiqueta');
+  assert.deepEqual(await ids(P, `, p_ids => array['${beto}', '${cerrado}']::uuid[]`), [beto], 'solo esos chats, si entran en el filtro');
+  const pag1 = await ids(P, `, p_limite => 10`);
+  const pag2 = await ids(P, `, p_limite => 10, p_desde => 10`);
+  assert.equal(pag1.length, 10); assert.equal(pag2.length, 5);
+  assert.equal(new Set([...pag1, ...pag2]).size, 15, 'por partes, sin repetir');
+  console.log('✓ bandeja: pestañas, sin leer, sin responder, búsqueda, etiqueta, chats sueltos y por partes');
+
+  assert.deepEqual(await B(D), [], 'el dueño de negocio sin ese número no ve esos chats');
+  const c = (await como(P, `select siguelo_bandeja_conteos($1) c`, [L3])).rows[0].c;
+  assert.deepEqual(c, { todos: 15, mios: 1, sin_asignar: 14, por_vencer: 1, sin_responder: 2, mios_sin_responder: 0 });
+  assert.equal((await como(D, `select siguelo_bandeja_conteos($1) c`, [L3])).rows[0].c.todos, 0);
+  await db.exec('set role anon');
+  await assert.rejects(db.query(`select siguelo_bandeja_conteos()`), /permission denied/, 'sin sesión no se puede');
+  await db.exec('reset role');
+  console.log('✓ bandeja: los números de las pestañas, contados en la base y con los mismos permisos');
+}
 console.log('\nTodo OK');

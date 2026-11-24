@@ -264,6 +264,14 @@ npm test
 - **Respuestas rápidas con varios mensajes** (sección 44, `respuestas_rapidas.partes`): la IA y el chat mandan el primero
   y los que siguen en orden. El asistente también ve números, respuestas rápidas (y en qué sucursales), bot y extras de
   cada negocio.
+- **Bandeja por partes** (sección 48, `siguelo_bandeja` y `siguelo_bandeja_conteos`, `bandeja/hooks/useConversaciones.ts`):
+  antes la página pedía todos los chats y todos sus mensajes (Supabase corta en 1000: se veían "1000" chats y casi todos
+  "Sin mensajes") y lo volvía a pedir todo en cada cambio de cualquier chat (con un masivo, en cada envío: mucho Egress).
+  Ahora pide de a 100, ya filtrados en la base (pestaña, número, búsqueda, etiqueta, sin leer, sin responder, más antiguos
+  primero), con el último mensaje, sin leer, ficha y etiquetas; los cambios en vivo piden solo esos chats (`p_ids`, juntados
+  800 ms) y los números de las pestañas se recuentan cada 8 s como mucho. "Hoy" usa `misEsperando`. Sin la sección 48
+  (PGRST202) funciona como antes (`modoAntiguo`, recarga juntada cada 3 s). Lista estilo WhatsApp Web (`formatoFechaLista`).
+  Pruebas: `probar-sql.mjs` (sección 48) y `npm run banco` → `?vista=bandeja`.
 - **Links de grupo con tarjeta** (`siguelo/linkDeGrupo.ts`): un texto con un link `chat.whatsapp.com/…` sale en el mismo
   mensaje (el link sigue en el texto) con la tarjeta del grupo (`linkPreview`: nombre y participantes con
   `groupGetInviteInfo`, foto con `profilePictureUrl` + `extractImageThumb`; guardada 6 h por link, 10 min si WhatsApp no

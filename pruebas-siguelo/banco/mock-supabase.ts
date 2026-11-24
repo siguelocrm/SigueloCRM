@@ -185,6 +185,28 @@ Pulsa "Aplicar" para hacerlo.`, acciones: [{ tipo: 'secuencia', descripcion: 'Re
   siguelo_contador: [{ empresa_id: E, linea_id: 'l1', fecha: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/La_Paz' }).format(new Date()), enviados: 4 }],
 };
 
+// La Bandeja (siguelo_bandeja, sección 48): chats de ejemplo como los devuelve la base.
+const min = (m: number) => iso(ahora - m * 60000);
+const chat = (id: string, nombre: string | null, tel: string, linea: string, m: number, ultimo: [string | null, string, string], extra: Fila = {}) => ({
+  id, linea_id: linea, contacto_telefono: tel, contacto_nombre: nombre, estado: 'abierto', agente_asignado_id: null, ultima_actividad: min(m), creado_en: min(m + 600),
+  ultimo_contenido: ultimo[0], ultimo_tipo: ultimo[1], ultimo_creado_en: min(m), ultimo_remitente: ultimo[2], ultimo_estado_entrega: 'enviado',
+  pendientes: 0, ultimo_cliente: ultimo[2] === 'cliente' ? min(m) : min(m + 30), contacto_id: `k-${id}`, temperatura: null, probabilidad_cierre: null,
+  valor_estimado: null, producto_interes: null, etiquetas: [], ...extra,
+});
+const bandeja: Fila[] = [
+  chat('b1', 'Rodrigo Mamani', '59177700001', 'l2', 2, ['¿Hasta qué hora puedo inscribir a mi hijo?', 'texto', 'cliente'], { pendientes: 2, temperatura: 'caliente' }),
+  chat('b2', 'Carla Vargas', '59160700002', 'l3', 9, ['Hola Carla 👋 Te paso los horarios del curso de verano: lunes, miércoles y viernes de 9:00 a 10:30', 'texto', 'agente']),
+  chat('b3', null, '59164400003', 'l1', 25, ['¿Cuánto cuesta el curso para niños de 7 años?', 'audio', 'cliente'], { pendientes: 1 }),
+  chat('b4', 'Orlando Arias', '59177900004', 'l3', 48, ['Comprobante de pago', 'imagen', 'cliente'], { pendientes: 1, etiquetas: [{ id: 'et2', nombre: 'Interesados verano', color: 3 }] }),
+  chat('b5', 'Jenny Quispe', '59171200005', 'l1', 95, ['¡Gracias! Nos vemos el sábado 🙌', 'texto', 'cliente']),
+  chat('b6', 'Luis Choque', '59172300006', 'l2', 60 * 5, ['Hola Luis 👋 Este verano abrimos las vacaciones útiles de ajedrez en El Alto. ¿Te paso los horarios?', 'texto', 'agente'], { ultimo_estado_entrega: 'error' }),
+  chat('b7', 'Ana Rojas', '59170000001', 'l1', 60 * 20, ['Ya les mandé el comprobante', 'texto', 'cliente'], { etiquetas: [{ id: 'et1', nombre: 'Clientes 2025', color: 1 }] }),
+  chat('b8', 'Bruno', '59170000002', 'l2', 60 * 30, ['Ficha de inscripción.pdf', 'pdf', 'agente']),
+  chat('b9', 'Familia Gutiérrez', '59176500009', 'l3', 60 * 60, ['Perfecto, nos vemos el lunes a las 16:30', 'texto', 'cliente']),
+  chat('b10', 'María López', '59173400010', 'l1', 60 * 24 * 9, ['¿Tienen clases online?', 'texto', 'cliente']),
+];
+const conteoBandeja = { todos: 1874, mios: 12, sin_asignar: 1862, por_vencer: 3, sin_responder: 41, mios_sin_responder: 2 };
+
 (window as any).__ops = [];
 
 class Consulta {
@@ -209,6 +231,7 @@ class Consulta {
   lte(c: string, v: any) { this.filtros.push((f) => f[c] <= v); return this; }
   lt(c: string, v: any) { this.filtros.push((f) => f[c] < v); return this; }
   gt(c: string, v: any) { this.filtros.push((f) => f[c] > v); return this; }
+  like(c: string, v: string) { this.filtros.push((f) => String(f[c] ?? '').startsWith(v.replace(/%$/, ''))); return this; }
   is(c: string, v: any) { this.filtros.push((f) => (f[c] ?? null) === v); return this; }
   not(c: string, _op: string, v: any) { this.filtros.push((f) => (f[c] ?? null) !== v); return this; }
   order(c: string, o: { ascending?: boolean } = {}) { this.orden.push([c, o.ascending !== false]); return this; }
@@ -250,6 +273,13 @@ class Consulta {
 
 export const supabase = {
   from: (t: string) => new Consulta(t),
+  rpc: async (f: string, a: any = {}) => {
+    if (f === 'siguelo_bandeja_conteos') return { data: conteoBandeja, error: null };
+    if (f !== 'siguelo_bandeja') return { data: null, error: { code: 'PGRST202', message: f } };
+    let filas = bandeja.filter((x) => (!a.p_linea || x.linea_id === a.p_linea) && (!a.p_ids || a.p_ids.includes(x.id)) && (!a.p_sin_leer || x.pendientes > 0) && (!a.p_sin_responder || x.ultimo_remitente === 'cliente') && (a.p_pestana !== 'resueltos'));
+    if (a.p_busqueda) filas = filas.filter((x) => String(x.contacto_nombre || '').toLowerCase().includes(String(a.p_busqueda).toLowerCase()));
+    return { data: filas.slice(a.p_desde || 0, (a.p_desde || 0) + (a.p_limite || 100)), error: null };
+  },
   channel: () => { const c: any = { on: () => c, subscribe: () => c }; return c; },
   removeChannel: () => undefined,
   auth: { getSession: async () => ({ data: { session: null } }) },

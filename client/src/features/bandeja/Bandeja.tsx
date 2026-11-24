@@ -11,7 +11,7 @@ import { IDS_NAV_MOBILE, SECCIONES } from './constantes';
 import { useConversaciones } from './hooks/useConversaciones';
 import { useMensajes } from './hooks/useMensajes';
 import { useEtapasVenta } from './hooks/useEtapasVenta';
-import ListaConversaciones, { activarFiltroSinResponder, minutosEsperando } from './ListaConversaciones';
+import ListaConversaciones, { activarFiltroSinResponder } from './ListaConversaciones';
 import MenuLateral from './MenuLateral';
 import PaletaComandos from './PaletaComandos';
 import HiloMensajes from './HiloMensajes';
@@ -135,13 +135,17 @@ export default function Bandeja() {
     if (!usuario) return;
     const canal = supabase
       .channel(`conversaciones-y-mensajes-${Math.random()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversaciones' }, () => conv.recargar())
+      // SígueloCRM: solo se vuelve a pedir el chat que cambió (antes, toda la lista).
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversaciones' }, (payload) => {
+        const fila = (payload.eventType === 'DELETE' ? payload.old : payload.new) as { id?: string };
+        if (fila?.id) conv.alCambiarConversacion(fila.id, payload.eventType === 'DELETE');
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'respuestas_rapidas' }, async () => {
         const { data } = await supabase.from('respuestas_rapidas').select('*').order('titulo').returns<RespuestaRapida[]>();
         setRespuestasRapidas(data || []);
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensajes' }, (payload: RealtimePostgresInsertPayload<Mensaje>) => {
-        conv.recargar();
+        conv.alCambiarConversacion(payload.new.conversacion_id);
         if (payload.new.remitente === 'cliente') reproducirSonidoNotificacion();
         if (seleccionada && payload.new.conversacion_id === seleccionada.id) {
           agregarMensaje(payload.new);
@@ -167,9 +171,10 @@ export default function Bandeja() {
 
   // Salta desde el embudo (u otra sección) directo al chat de WhatsApp de
   // ese contacto, si ya existe una conversación para él.
-  const abrirChatDeContacto = (telefono: string) => {
+  const abrirChatDeContacto = async (telefono: string) => {
     const tel = telefono.split('@')[0];
-    const conversacion = conv.conversaciones.find((c) => c.contacto_telefono.split('@')[0] === tel);
+    // SígueloCRM: la lista trae de a 100 chats; si no está entre los cargados, se busca.
+    const conversacion = conv.conversaciones.find((c) => c.contacto_telefono.split('@')[0] === tel) ?? (await conv.buscarConversacion(tel));
     if (!conversacion) {
       toast('Este contacto todavía no tiene una conversación de WhatsApp.', 'info');
       return;
@@ -210,7 +215,7 @@ export default function Bandeja() {
     if (seccion === 'conexiones') return <Conexiones />;
     if (seccion === 'dashboard') return <Dashboard />;
     if (seccion === 'reportes') return <Reportes />;
-    if (seccion === 'hoy') return <Hoy conversaciones={conv.conversaciones} ultimosMensajes={conv.ultimosMensajes} onResponderAhora={() => { activarFiltroSinResponder(usuario.id); irA('chats'); }} onAbrirConversacion={abrirConversacion} onAbrirChat={abrirChatDeContacto} />;
+    if (seccion === 'hoy') return <Hoy conversaciones={conv.misEsperando} ultimosMensajes={conv.ultimosMensajes} onResponderAhora={() => { activarFiltroSinResponder(usuario.id); irA('chats'); }} onAbrirConversacion={abrirConversacion} onAbrirChat={abrirChatDeContacto} />;
     if (seccion === 'mi-empresa') return <MiEmpresa />;
     if (seccion === 'configuracion') return <Configuracion />;
     if (seccion === 'programados') return <Programados />;
@@ -238,8 +243,7 @@ export default function Bandeja() {
   const cambiarTema = () => setTemaClaro(alternarTema() === 'claro');
 
   // Chats abiertos esperando respuesta: globo rojo en "Bandeja".
-  const ahora = Date.now();
-  const esperando = conv.conversaciones.filter((c) => minutosEsperando(c, conv.ultimosMensajes[c.id], ahora) !== null).length;
+  const esperando = conv.conteos.sin_responder;
   const insignias: Record<string, number> = { chats: esperando };
   const lineasActivas = conv.lineas.filter((l) => l.estado === 'activo').length;
 
@@ -403,6 +407,14 @@ export default function Bandeja() {
       contactoPorTelefono={conv.contactoPorTelefono}
       pendientes={conv.pendientes}
       ultimoDelCliente={conv.ultimoDelCliente}
+      consulta={conv.consulta}
+      onConsulta={conv.setConsulta}
+      conteos={conv.conteos}
+      etiquetasDisponibles={conv.etiquetasDisponibles}
+      hayMas={conv.hayMas}
+      cargando={conv.cargando}
+      cargandoMas={conv.cargandoMas}
+      onCargarMas={conv.cargarMas}
       esVendedor={esVendedor}
       miId={usuario.id}
       seleccionadaId={esMovil ? null : seleccionada?.id ?? null}
