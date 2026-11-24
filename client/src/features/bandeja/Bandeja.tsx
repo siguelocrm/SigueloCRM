@@ -415,6 +415,7 @@ export default function Bandeja() {
       cargando={conv.cargando}
       cargandoMas={conv.cargandoMas}
       onCargarMas={conv.cargarMas}
+      aviso={conv.aviso}
       esVendedor={esVendedor}
       miId={usuario.id}
       seleccionadaId={esMovil ? null : seleccionada?.id ?? null}

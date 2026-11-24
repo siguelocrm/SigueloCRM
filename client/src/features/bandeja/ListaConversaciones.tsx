@@ -29,6 +29,7 @@ interface ListaConversacionesProps {
   cargando: boolean;
   cargandoMas: boolean;
   onCargarMas: () => void;
+  aviso?: string;
 }
 
 // WhatsApp deja responder con texto libre hasta 24 h después del último mensaje
@@ -112,6 +113,7 @@ export default function ListaConversaciones({
   cargando,
   cargandoMas,
   onCargarMas,
+  aviso,
 }: ListaConversacionesProps) {
   const claveFiltros = claveDe(miId);
   const cambiarFiltros = (cambio: Partial<Guardado>) => {
@@ -344,6 +346,7 @@ export default function ListaConversaciones({
       style={compacta ? { width: 380, borderRight: '1px solid var(--line)', backgroundColor: 'color-mix(in srgb, var(--surface) 60%, transparent)' } : undefined}
     >
       {encabezado}
+      {aviso && <div className="mx-4 mb-2 rounded-lg px-3 py-2 text-[12px]" style={{ backgroundColor: 'var(--warn-soft)', color: 'var(--warn)' }}>{aviso}</div>}
       <div ref={contenedor} onScroll={alDesplazar} className="flex-1 overflow-y-auto min-h-0">
         {cargando && lista.length === 0 && <div className="text-center text-[13px] py-10 px-6" style={{ color: 'var(--fg-3)' }}>Cargando chats…</div>}
         {!cargando && lista.length === 0 && <div className="text-center text-[13px] py-10 px-6" style={{ color: 'var(--fg-3)' }}>{hayFiltros ? 'Ningún chat coincide con la búsqueda o los filtros.' : vacio[pestana]}</div>}

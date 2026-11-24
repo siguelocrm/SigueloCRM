@@ -345,5 +345,27 @@ console.log('✓ límites por cuenta: 1 número y 1 negocio por defecto; ampliar
   await assert.rejects(db.query(`select siguelo_bandeja_conteos()`), /permission denied/, 'sin sesión no se puede');
   await db.exec('reset role');
   console.log('✓ bandeja: los números de las pestañas, contados en la base y con los mismos permisos');
+
+  // Con miles de chats (antes pasaba el tiempo máximo de Supabase y la lista salía vacía).
+  const L4 = (await uno(`insert into lineas_whatsapp (empresa_id, nombre, numero) values ($1, 'L-Muchos', '597') returning id`, [club])).id;
+  await db.query(`insert into conversaciones (linea_id, contacto_telefono, contacto_nombre, ultima_actividad)
+    select $1, '5917' || lpad(g::text, 7, '0'), 'Cliente ' || g, now() - (g || ' minutes')::interval from generate_series(1, 3000) g`, [L4]);
+  await db.query(`insert into mensajes (conversacion_id, remitente, contenido, creado_en)
+    select c.id, r, 'hola', c.ultima_actividad - (k || ' minutes')::interval
+    from conversaciones c cross join (values ('cliente'::remitente_mensaje, 3), ('agente', 2), ('cliente', 1)) v(r, k) where c.linea_id = $1`, [L4]);
+  let t0 = Date.now();
+  const pag = (await como(P, `select * from siguelo_bandeja(p_linea => $1)`, [L4])).rows;
+  const msPagina = Date.now() - t0;
+  assert.equal(pag.length, 100);
+  assert.equal(pag[0].contacto_nombre, 'Cliente 1');
+  assert.equal(pag[0].pendientes, 1);
+  t0 = Date.now();
+  const cuenta = (await como(P, `select siguelo_bandeja_conteos($1) c`, [L4])).rows[0].c;
+  const msConteos = Date.now() - t0;
+  assert.equal(cuenta.todos, 3000);
+  assert.equal(cuenta.sin_responder, 3000);
+  assert.ok(msPagina < 3000, `la página tardó ${msPagina} ms`);
+  assert.equal((await como(V, `select count(*)::int n from siguelo_bandeja(p_linea => $1)`, [L4])).rows[0].n, 0, 'un usuario sin ese número (o inactivo) no ve nada');
+  console.log(`✓ bandeja con 3000 chats: la página en ${msPagina} ms y los números en ${msConteos} ms (en la prueba)`);
 }
 console.log('\nTodo OK');

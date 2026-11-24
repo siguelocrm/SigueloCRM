@@ -149,6 +149,8 @@ export function useConversaciones(usuario: Usuario | null) {
   const [etiquetasDisponibles, setEtiquetasDisponibles] = useState<EtiquetaWhatsapp[]>([]);
   // Modo "antes": todos los chats en la página (sin la sección 48).
   const [modoAntiguo, setModoAntiguo] = useState(false);
+  // Si la lista rápida falla (por ejemplo, Supabase tardó demasiado), se ve el motivo y se usa la de antes.
+  const [aviso, setAviso] = useState('');
   const [todasAntiguo, setTodasAntiguo] = useState<Fila[]>([]);
   const [ahora, setAhora] = useState(() => Date.now());
 
@@ -238,8 +240,11 @@ export function useConversaciones(usuario: Usuario | null) {
   const pedir = useCallback(async (q: ConsultaBandeja, extra: { p_ids?: string[]; p_limite?: number; p_desde?: number; p_pestana?: Pestana; p_sin_responder?: boolean; p_antiguos?: boolean } = {}) => {
     const { data, error } = await supabase.rpc('siguelo_bandeja', { ...argumentos(q), p_limite: POR_PAGINA, ...extra });
     if (error) {
-      if (faltaFuncion(error)) setModoAntiguo(true);
-      else console.error(error);
+      if (!faltaFuncion(error)) {
+        console.error(error);
+        setAviso(`La lista rápida de chats no respondió (${error.message || error.code}). Se muestra como antes, puede tardar más.`);
+      }
+      setModoAntiguo(true);
       return null;
     }
     return ((data || []) as Fila[]).map((f) => ({ ...f, etiquetas: f.etiquetas || [] }));
@@ -456,6 +461,7 @@ export function useConversaciones(usuario: Usuario | null) {
     cargarMas,
     etiquetasDisponibles,
     modoAntiguo,
+    aviso,
     recargar: cargarPrimera,
     alCambiarConversacion,
     buscarConversacion,
