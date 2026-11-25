@@ -7,7 +7,7 @@ import { aplicarVariables, palabraQueCoincide } from './coincidencia.js';
 import { reglasDelNumero } from '../siguelo/negocios.js';
 import { conTarjetaDeGrupo } from '../siguelo/linkDeGrupo.js';
 import { marcarOrigen } from '../siguelo/origen.js';
-import { marcarEnviadoPorCRM } from './mensajes-enviados-por-crm.js';
+import { marcarBienvenida, marcarEnviadoPorCRM } from './mensajes-enviados-por-crm.js';
 
 const espera = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -46,6 +46,9 @@ export async function intentarResponderAutomaticamente(
   if (!regla) return;
   if (regla.tipo !== 'flujo' && regla.pasos.length === 0) return;
   if (regla.tipo === 'flujo' && !regla.flujo) return;
+  // SígueloCRM: la bienvenida (primer mensaje, o primero del día). La IA no le agrega otro mensaje encima.
+  const bienvenida = regla.disparador === 'primer_mensaje' || regla.disparador === 'primer_mensaje_del_dia';
+  if (bienvenida) marcarBienvenida(conversacionId);
 
   // La demora no debe frenar el procesamiento de otros mensajes entrantes
   // (ver mensajes-entrantes.ts, que llama a esta función sin esperarla) —
@@ -57,7 +60,7 @@ export async function intentarResponderAutomaticamente(
     return;
   }
 
-  await enviarPasos(sock, lineaId, conversacionId, telefono, regla.pasos, empresaId);
+  await enviarPasos(sock, lineaId, conversacionId, telefono, regla.pasos, empresaId, bienvenida);
 }
 
 // Manda los pasos de una respuesta automática (texto/imagen/PDF/espera), en
@@ -71,6 +74,7 @@ export async function enviarPasos(
   telefono: string,
   pasos: PasoRespuestaAutomatica[],
   empresaId?: string,
+  bienvenida = false,
 ): Promise<void> {
   const variables = await variablesDelContacto(lineaId, telefono, empresaId);
   const jid = telefono.includes('@') ? telefono : `${telefono}@s.whatsapp.net`;
@@ -84,7 +88,8 @@ export async function enviarPasos(
       return;
     }
     try {
-      await enviarPaso(sock, jid, conversacionId, paso, variables);
+      await enviarPaso(sock, jid, conversacionId, paso, variables, bienvenida);
+      if (bienvenida) marcarBienvenida(conversacionId);
     } catch (err) {
       console.error(`[${lineaId}] Error enviando paso de respuesta automática:`, (err as Error).message);
     }
@@ -185,6 +190,7 @@ export async function enviarPaso(
   conversacionId: string,
   paso: PasoRespuestaAutomatica,
   variables: Record<string, string>,
+  bienvenida = false,
 ): Promise<void> {
   if (paso.tipo === 'espera') {
     if (paso.duracion_segundos && paso.duracion_segundos > 0) await espera(paso.duracion_segundos * 1000);
@@ -218,5 +224,5 @@ export async function enviarPaso(
     whatsapp_id: resultado?.key?.id || null,
   }).select('id').maybeSingle();
   // SígueloCRM: en el chat se ve que lo mandó el bot.
-  await marcarOrigen(guardado?.id, 'bot');
+  await marcarOrigen(guardado?.id, 'bot', bienvenida ? 'bienvenida' : null);
 }

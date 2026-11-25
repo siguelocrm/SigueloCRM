@@ -15,7 +15,7 @@ import { desempaquetar, empaquetar, linkDeMapa } from './ubicacion.js';
 import { crearPregunta, leerDueno } from './dueno.js';
 import { textoParaIA, transcribirAudios } from './audios.js';
 import { agendarReunion, duracionDe, huecosLibres, reunionDe, reunionesActivas, textoReunion, type Hueco } from './reuniones.js';
-import { fueEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
+import { bienvenidaHasta, fueEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js';
 import type { CursoRow, EtapaVentaRow, IaRow, LecturaRow, NegocioRow, PorLeerRow, SalidaRow, TipoAviso } from '../tipos.js';
 import { cortar, recortarTexto } from '../textos.js';
 
@@ -88,6 +88,33 @@ async function botsDisponibles(empresaId: string, lineaId: string, conversacionI
 async function flujoEsperando(conversacionId: string): Promise<boolean> {
   const { data } = await db.from('bot_sesiones').select('actualizado_en').eq('conversacion_id', conversacionId).maybeSingle();
   return !!data && Date.now() - ms(data.actualizado_en) < 24 * HORA;
+}
+
+// ¿El bot de bienvenida respondió el último mensaje del cliente? (El cliente no volvió a escribir después
+// de la bienvenida: 5 s de margen por si manda dos mensajes seguidos.) Se mira lo que sabe el servidor
+// (al momento, incluso durante la demora del bot) y, después de un reinicio, lo guardado (sección 49).
+const MARGEN_BIENVENIDA_MS = 5_000;
+async function bienvenidaDespues(conversacionId: string, ultimoCliente: string): Promise<boolean> {
+  const cliente = ms(ultimoCliente);
+  const enMemoria = bienvenidaHasta(conversacionId);
+  if (enMemoria !== null) return cliente <= enMemoria + MARGEN_BIENVENIDA_MS;
+  const { data: delBot } = await db
+    .from('mensajes')
+    .select('id, creado_en')
+    .eq('conversacion_id', conversacionId)
+    .eq('remitente', 'agente')
+    .gte('creado_en', new Date(cliente - 10 * MIN).toISOString())
+    .order('creado_en', { ascending: false })
+    .limit(10);
+  if (!delBot?.length) return false;
+  const { data: origen, error } = await (db as unknown as { from: (t: string) => { select: (c: string) => { in: (c: string, v: string[]) => { eq: (c: string, v: string) => PromiseLike<{ data: { mensaje_id: string }[] | null; error: unknown }> } } } })
+    .from('siguelo_mensaje_origen')
+    .select('mensaje_id')
+    .in('mensaje_id', delBot.map((m) => m.id))
+    .eq('detalle', 'bienvenida');
+  if (error || !origen?.length) return false;
+  const ultima = Math.max(...delBot.filter((m) => origen.some((o) => o.mensaje_id === m.id)).map((m) => ms(m.creado_en)));
+  return cliente <= ultima + MARGEN_BIENVENIDA_MS;
 }
 
 // Lo que ya se le mandó (o está por mandarse) a este cliente: cada respuesta rápida y cada grupo, una sola vez.
@@ -479,6 +506,9 @@ async function leer(c: Config, fila: PorLeerRow, forzado = false, atrasado = fal
     // si un flujo del bot espera su respuesta, contesta el bot.
     if (await pagoEnCurso(fila.conversacion_id)) return sinResponder('tiene un pago o inscripción en curso (de eso se encargan los pagos)');
     if (await flujoEsperando(fila.conversacion_id)) return sinResponder('un flujo del bot está esperando su respuesta (contesta el bot)');
+    // El bot de bienvenida acaba de responder su primer mensaje: no se le agrega otro encima. Cuando el
+    // cliente vuelva a escribir (después de la bienvenida), la IA sigue la conversación.
+    if (!atrasado && (await bienvenidaDespues(fila.conversacion_id, fila.ultimo_cliente))) return sinResponder('el bot de bienvenida le acaba de responder; la IA sigue cuando el cliente vuelva a escribir');
   }
 
   const [{ data: contacto }, { data: mensajes }, enviadas] = await Promise.all([

@@ -272,6 +272,12 @@ npm test
   800 ms) y los números de las pestañas se recuentan cada 8 s como mucho. "Hoy" usa `misEsperando`. Sin la sección 48
   (PGRST202) funciona como antes (`modoAntiguo`, recarga juntada cada 3 s). Lista estilo WhatsApp Web (`formatoFechaLista`).
   Pruebas: `probar-sql.mjs` (sección 48) y `npm run banco` → `?vista=bandeja`.
+- **La IA no responde encima de la bienvenida del bot**: si el bot eligió una regla de "primer mensaje" o "primer mensaje del
+  día", `marcarBienvenida(conversacionId)` (whatsapp/mensajes-enviados-por-crm.ts) lo anota al elegirla (antes de su demora) y
+  en cada paso, y sus mensajes quedan con origen `bot · bienvenida` (sección 49). La IA (`bienvenidaDespues` en lector.ts) no
+  responde si el último mensaje del cliente es de antes del último paso de la bienvenida (+5 s); cuando el cliente vuelve a
+  escribir, sigue normal. "Responder con IA" y "ponerse al día" no se frenan por esto. Otros envíos del bot (palabras clave)
+  no cambian: la IA igual responde la pregunta.
 - **"Déjame consultarlo" + seguir la conversación** (`ia/contexto.ts` campo `seguir`, `gestionarRespuesta` en lector.ts,
   `redactar` en dueno.ts): si la IA no sabe algo (modo "espera"), manda el texto de espera + "Mientras tanto, ¿…?" (algo de la
   ficha relacionado con lo que conversan). Si el "déjame consultarlo" salió hace < 2 min, manda solo el "mientras tanto". Cuando

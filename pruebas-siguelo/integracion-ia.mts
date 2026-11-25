@@ -406,7 +406,48 @@ responder = (l) => {
 await leerPendientes(await config());
 await salida();
 assert.equal(enviados.filter((e) => e.jid.startsWith('59170000033')).at(-1)?.texto, 'La cadena cuesta 120 Bs 😊');
-paso('si el bot contesta primero (bienvenida), la IA igual responde la pregunta del cliente');
+paso('si otro envío automático del bot (no la bienvenida) contesta primero, la IA igual responde la pregunta del cliente');
+
+// ---------- El bot de BIENVENIDA (primer mensaje) ya respondió: la IA no agrega otro mensaje encima ----------
+const { marcarBienvenida } = await import(new URL('../server/src/whatsapp/mensajes-enviados-por-crm.ts', import.meta.url).href);
+const deTel = (t: string) => enviados.filter((e) => e.jid.startsWith(t)).map((e) => e.texto);
+const valeria = await chat(L1, '59170000043', 'Vale');
+await escribe(valeria.conv, '¡Hola! Quiero más información');
+marcarBienvenida(valeria.conv); // el bot eligió la bienvenida (puede tener demora antes de mandarla)
+avanzar(1_000);
+await pg.query(`insert into mensajes (conversacion_id, remitente, agente_id, contenido, creado_en) values ($1, 'agente', null, 'Hola, gracias por escribir a Infinity Chess ♟️ ¿Qué edad tiene tu hijo?', $2)`, [valeria.conv, iso(reloj.ahora)]);
+marcarBienvenida(valeria.conv); // último paso de la bienvenida
+avanzar(MIN);
+responder = () => ({ resumen: 'Quiere información', puede_responder: true, respuesta: '¡Hola! Soy Sofía, ¿qué curso te interesa?' });
+await leerPendientes(await config());
+await salida();
+assert.equal(deTel('59170000043').length, 0, 'la IA no manda nada encima de la bienvenida');
+const porQueBienvenida = await uno(`select texto from siguelo_registro where texto like '%bienvenida%' order by creado_en desc limit 1`);
+assert.ok(porQueBienvenida, 'queda anotado por qué no respondió');
+// El cliente contesta la pregunta de la bienvenida: la IA sigue la conversación.
+await escribe(valeria.conv, 'Tiene 8 años');
+avanzar(MIN);
+responder = () => ({ resumen: 'Hijo de 8 años', puede_responder: true, respuesta: '¡Genial! Para 8 años tenemos el curso inicial 😊' });
+await leerPendientes(await config());
+await salida();
+assert.equal(deTel('59170000043').at(-1), '¡Genial! Para 8 años tenemos el curso inicial 😊');
+// Después de un reinicio del servidor (sin lo que tenía en memoria): lo guardado de la bienvenida (sección 49).
+const tito = await chat(L1, '59170000044', 'Tito');
+await escribe(tito.conv, 'Hola, info por favor');
+avanzar(1_000);
+const mBienv = (await uno(`insert into mensajes (conversacion_id, remitente, agente_id, contenido, creado_en) values ($1, 'agente', null, 'Hola, gracias por escribir ♟️', $2) returning id`, [tito.conv, iso(reloj.ahora)])).id;
+await pg.query(`insert into siguelo_mensaje_origen (mensaje_id, origen, detalle) values ($1, 'bot', 'bienvenida')`, [mBienv]);
+avanzar(MIN);
+responder = () => ({ resumen: 'Pide info', puede_responder: true, respuesta: 'Soy Sofía 😊' });
+await leerPendientes(await config());
+await salida();
+assert.equal(deTel('59170000044').length, 0, 'tampoco después de un reinicio');
+// Con "Responder con IA" (lo pides tú) responde igual.
+const forz = await responderConversacion(await config(), tito.conv);
+assert.ok(forz.ok, forz.mensaje);
+await salida();
+assert.equal(deTel('59170000044').at(-1), 'Soy Sofía 😊');
+paso('si el bot de bienvenida ya respondió el primer mensaje, la IA no agrega otro encima; sigue cuando el cliente contesta');
 
 // ---------- Cuando no responde, queda anotado por qué ----------
 const L4 = await linea('Sin negocio');
