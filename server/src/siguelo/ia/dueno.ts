@@ -37,14 +37,19 @@ export async function crearPregunta(
 
 // El mensaje para el cliente con lo que dijo el dueño (si la IA falla, va lo que escribiste tal cual).
 // Sin código ("verificar"), primero se revisa que tu mensaje de verdad responda la pregunta (no un "hola").
-async function redactar(c: Config, negocio: string, pregunta: string, respuesta: string, verificar: boolean): Promise<string | null> {
+// Retoma la pregunta con naturalidad ("Justo me confirmaron sobre lo que me preguntaste de…") y tiene en
+// cuenta lo que se habló mientras tanto (la IA siguió la conversación).
+async function redactar(c: Config, negocio: string, pregunta: string, respuesta: string, verificar: boolean, conversacion = ''): Promise<string | null> {
   const e = c.ia.estilo;
   const r = await llamar(c, [
     {
       role: 'system',
-      content: `Eres el asistente de WhatsApp de "${negocio}". Un cliente necesitaba algo que solo el dueño podía responder (una pregunta, un pedido, un reclamo o un pago); el dueño te dijo qué responderle. Escribe el mensaje para el cliente con eso, sin inventar nada más, como si lo hubieras consultado. Tono ${e?.tono || 'amable'}, ${e?.trato === 'usted' ? 'trata de usted' : 'tutea'}, ${e?.emojis === 'no' ? 'sin emojis' : 'pocos emojis'}, corto. Responde SOLO con JSON: {${verificar ? '"es_respuesta": true o false (false si el mensaje del dueño NO responde lo que preguntó el cliente: un saludo, un "ok", otra cosa), ' : ''}"respuesta": "texto para el cliente"}`,
+      content: `Eres el asistente de WhatsApp de "${negocio}". Un cliente necesitaba algo que solo el dueño podía responder (una pregunta, un pedido, un reclamo o un pago); le dijiste que lo ibas a consultar y el dueño te dijo qué responderle. Escribe el mensaje para el cliente con eso, sin inventar nada más.
+- Empieza retomando su pregunta con naturalidad, como quien acaba de averiguarlo (por ejemplo: "¡Justo me confirmaron sobre lo que me preguntaste de los horarios del sábado! …"). Nombra el tema en pocas palabras para que entienda a qué te refieres.
+- Si después de su pregunta la conversación siguió con otra cosa, primero dale esta respuesta y, si corresponde, retoma en una frase corta lo que venían hablando. No repitas lo que ya se le dijo.
+Tono ${e?.tono || 'amable'}, ${e?.trato === 'usted' ? 'trata de usted' : 'tutea'}, ${e?.emojis === 'no' ? 'sin emojis' : 'pocos emojis'}, corto. Responde SOLO con JSON: {${verificar ? '"es_respuesta": true o false (false si el mensaje del dueño NO responde lo que preguntó el cliente: un saludo, un "ok", otra cosa), ' : ''}"respuesta": "texto para el cliente"}`,
     },
-    { role: 'user', content: `Lo que preguntó el cliente: ${pregunta}\nRespuesta del dueño: ${respuesta}` },
+    { role: 'user', content: `Lo que preguntó el cliente: ${pregunta}\nRespuesta del dueño: ${respuesta}${conversacion ? `\n\nLo último de la conversación (lo más reciente abajo):\n${conversacion}` : ''}` },
   ]);
   if (verificar && (!r.ok || r.json.es_respuesta !== true)) return null;
   const texto = r.ok && typeof r.json.respuesta === 'string' ? r.json.respuesta.trim() : '';
@@ -99,7 +104,16 @@ async function usarRespuesta(c: Config, lineaDueno: string, texto: string, telDu
   if (!p || !respuesta) return false;
 
   const { data: negocio } = p.negocio_id ? await db.from('siguelo_negocios').select('nombre').eq('id', p.negocio_id).maybeSingle() : { data: null };
-  const mensaje = await redactar(c, negocio?.nombre ?? 'el negocio', p.pregunta, respuesta, !cod);
+  // Lo último del chat, para que la respuesta encaje con lo que se habló mientras tanto.
+  const { data: ultimos } = p.conversacion_id
+    ? await db.from('mensajes').select('remitente, contenido').eq('conversacion_id', p.conversacion_id).order('creado_en', { ascending: false }).limit(8)
+    : { data: null };
+  const conversacion = (ultimos || [])
+    .filter((m) => (m.contenido || '').trim())
+    .reverse()
+    .map((m) => `${m.remitente === 'cliente' ? 'Cliente' : 'Negocio'}: ${recortar(String(m.contenido), 300)}`)
+    .join('\n');
+  const mensaje = await redactar(c, negocio?.nombre ?? 'el negocio', p.pregunta, respuesta, !cod, conversacion);
   if (!mensaje) return false; // sin código y no era la respuesta: puede ser una pregunta para el asistente
   if (p.conversacion_id) {
     await db.from('siguelo_ia_salida').insert({

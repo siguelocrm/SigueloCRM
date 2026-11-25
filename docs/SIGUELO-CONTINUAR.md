@@ -272,6 +272,10 @@ npm test
   800 ms) y los números de las pestañas se recuentan cada 8 s como mucho. "Hoy" usa `misEsperando`. Sin la sección 48
   (PGRST202) funciona como antes (`modoAntiguo`, recarga juntada cada 3 s). Lista estilo WhatsApp Web (`formatoFechaLista`).
   Pruebas: `probar-sql.mjs` (sección 48) y `npm run banco` → `?vista=bandeja`.
+- **"Déjame consultarlo" + seguir la conversación** (`ia/contexto.ts` campo `seguir`, `gestionarRespuesta` en lector.ts,
+  `redactar` en dueno.ts): si la IA no sabe algo (modo "espera"), manda el texto de espera + "Mientras tanto, ¿…?" (algo de la
+  ficha relacionado con lo que conversan). Si el "déjame consultarlo" salió hace < 2 min, manda solo el "mientras tanto". Cuando
+  el dueño responde con el código, la IA retoma la pregunta ("Justo me confirmaron sobre…") con los últimos 8 mensajes del chat.
 - **La IA lee cada número por separado** (sección 51, `siguelo/candados.ts`): antes había un solo candado de lectura para
   todo el CRM (un chat a la vez, de cualquier número) y "Responder con IA" se rendía a los 10 s. Ahora `lectorDe(lineaId)` da
   un candado por número: números distintos leen a la vez; el botón espera su turno hasta 1 min; "ponerse al día" cede el paso

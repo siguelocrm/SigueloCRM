@@ -52,6 +52,8 @@ export type ResultadoIA = {
   // La IA dijo que no puede responder (le falta un dato): se trata como "necesita al dueño".
   no_pudo: boolean;
   respuesta: string;
+  // Si no sabe algo (necesita al dueño): una pregunta para seguir la conversación mientras tanto.
+  seguir: string;
   respuestas_rapidas: string[];
   grupo: string | null;
   pase: { negocio_id: string; mensaje: string; nota: string } | null;
@@ -166,6 +168,7 @@ export function armarMensajes(d: DatosContexto, conRespuesta: boolean): { mensaj
       ? [
           '"puede_responder": true/false',
           '"respuesta": "texto para enviar al cliente, o \\"\\""',
+          '"seguir": "si necesita_al_dueno es true: una pregunta corta para seguir la conversación mientras tanto, que empiece con \\"Mientras tanto,\\"; si no, \\"\\""',
           ...(respuestas ? ['"respuestas_rapidas": ["ids de respuestas rápidas para mandar después de tu respuesta"]'] : []),
           ...(grupos ? ['"grupo": "id del grupo al que ACEPTÓ unirse, o null"'] : []),
           ...(otros ? ['"pase": null o { "negocio_id": "id", "mensaje": "primer mensaje que le escribirá esa sucursal", "nota": "contexto corto para el equipo" }'] : []),
@@ -235,6 +238,7 @@ RESPUESTA AL CLIENTE ("puede_responder" y "respuesta"):
 - Escribe lo que el negocio le enviaría ahora por WhatsApp, contestando sus últimos mensajes y teniendo en cuenta toda la conversación.
 - Usa SOLO la ficha del negocio y lo que ya se dijo. Si falta un dato (precio, disponibilidad, un producto que no figura, un caso particular), NO lo inventes: "puede_responder": false, "respuesta": "" y "necesita_al_dueno": true.
 - Si el cliente hace una pregunta, siempre contéstala o, si no tienes el dato, marca "necesita_al_dueno": true. Nunca la dejes sin nada.
+- Cuando marques "necesita_al_dueno": true, en "seguir" escribe UNA pregunta corta para que la conversación siga mientras el dueño responde: ofrécele algo que SÍ está en la ficha y que tenga que ver con lo que conversan (por ejemplo, pasarle los horarios, los precios o confirmar para quién es). Empieza con "Mientras tanto,". No prometas nada sobre lo que no sabes. Si no hay nada útil que ofrecer, "seguir": "".
 - Si pregunta dónde queda o cómo llegar: dale la dirección de la ficha (y manda la ubicación en el mapa si está en la lista de ubicaciones). Si la ficha no tiene la dirección, "necesita_al_dueno": true.
 - Las notas de voz llegan como "[nota de voz] lo que dijo": respóndelas igual que un mensaje escrito (no digas que es un audio). Si dice "[nota de voz que no se pudo escuchar]", pídele con amabilidad que te lo escriba.
 - Si el cliente no espera respuesta (solo dijo "ok" o "gracias" al final), "respuesta": "" o una despedida muy corta. Si no quiere más mensajes, "respuesta": "".
@@ -340,6 +344,7 @@ export function validarResultado(j: Record<string, unknown>, ids: ReturnType<typ
     puede_responder: conRespuesta && j.puede_responder !== false && !!respuesta,
     no_pudo: conRespuesta && j.puede_responder === false,
     respuesta,
+    seguir: conRespuesta ? cortar(String(j.seguir ?? '').trim(), 400) : '',
     respuestas_rapidas: conRespuesta && Array.isArray(j.respuestas_rapidas)
       ? [...new Set(j.respuestas_rapidas.map((x) => real(ids.respuestas, x)).filter((x): x is string => !!x))].slice(0, 2)
       : [],

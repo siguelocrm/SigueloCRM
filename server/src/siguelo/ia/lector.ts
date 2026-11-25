@@ -229,9 +229,14 @@ async function gestionarRespuesta(x: Contexto, r: ResultadoIA): Promise<string> 
   let espera = false;
   // Si la IA dice que no puede responder, es lo mismo que "no sabe": va el "déjame consultarlo" y te avisa.
   const noSabe = r.necesita_al_dueno || r.no_pudo;
+  // Y no deja la conversación ahí: "Mientras tanto, ¿quieres que te pase los horarios?" (para que siga).
+  const seguir = !texto && noSabe && (x.forzado || c.ia.si_no_sabe === 'espera') ? r.seguir.trim() : '';
   if (!texto && noSabe && c.ia.texto_espera.trim() && (x.forzado || (c.ia.si_no_sabe === 'espera' && Date.now() - ms(x.lectura.espera_enviada) > ESPERA_REPETIR_MS))) {
-    texto = c.ia.texto_espera.trim();
+    texto = seguir ? `${c.ia.texto_espera.trim()} ${seguir}` : c.ia.texto_espera.trim();
     espera = true;
+  } else if (!texto && seguir) {
+    // El "déjame consultarlo" ya salió hace poco: no se repite, pero la conversación sigue.
+    texto = seguir;
   }
   const ac = c.ia.acciones;
   const respuestas = ac.respuestas_rapidas ? x.respuestas.filter((rr) => r.respuestas_rapidas.includes(rr.id)) : [];

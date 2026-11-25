@@ -537,6 +537,51 @@ await salida();
 assert.equal(enviados.filter((e) => e.jid.startsWith('59170000039')).at(-1)?.texto, 'Sí, aceptamos tarjeta y QR 😊');
 paso('te pregunta por WhatsApp con un código; tu respuesta le llega al cliente y la aprende para responderle a los demás');
 
+// ---------- "Déjame consultarlo" + mientras tanto sigue la conversación; tu respuesta retoma la pregunta ----------
+await pg.query(`update siguelo_ia_preguntas set estado = 'respondida'`);
+const lu = await chat(L1, '59170000040', 'Lu');
+await escribe(lu.conv, '¿Tienen clases los domingos?');
+avanzar(MIN);
+responder = (l) => {
+  assert.match(l.sistema, /"seguir"/, 'la IA sabe que puede seguir la conversación');
+  return { resumen: 'Pregunta por los domingos', puede_responder: false, respuesta: '', necesita_al_dueno: true, motivo: 'Pregunta si hay clases los domingos', aviso: 'pregunta', seguir: 'Mientras tanto, ¿quieres que te pase los horarios de la semana?' };
+};
+await leerPendientes(await config());
+await salida();
+const deLu = () => enviados.filter((e) => e.jid.startsWith('59170000040')).map((e) => e.texto);
+assert.equal(deLu().at(-1), 'Déjame consultarlo y te respondo en un momento 🙏 Mientras tanto, ¿quieres que te pase los horarios de la semana?', 'déjame consultarlo, y la conversación sigue');
+const codigoLu = /R(\d+) tu respuesta/.exec(enviados.filter((e) => e.jid.startsWith('59179999999')).at(-1)!.texto)?.[1];
+assert.ok(codigoLu);
+// Lu sigue la conversación: la IA le responde normal.
+await escribe(lu.conv, 'Sí, pásame los horarios');
+avanzar(MIN);
+responder = () => ({ resumen: 'Pide horarios', puede_responder: true, respuesta: 'Lunes a viernes de 15:00 a 19:00 ⏰' });
+await leerPendientes(await config());
+await salida();
+assert.equal(deLu().at(-1), 'Lunes a viernes de 15:00 a 19:00 ⏰');
+// Otra pregunta que no sabe, al rato: no repite el "déjame consultarlo", pero no la deja sin nada.
+await escribe(lu.conv, '¿Y hay descuento por hermanos?');
+avanzar(MIN);
+// El "déjame consultarlo" salió hace menos de 2 minutos.
+await pg.query(`update siguelo_ia_lecturas set espera_enviada = $2 where conversacion_id = $1`, [lu.conv, new Date(Date.now() - 30_000).toISOString()]);
+responder = () => ({ resumen: 'Pregunta descuento', puede_responder: false, respuesta: '', necesita_al_dueno: true, motivo: 'Pregunta por descuento de hermanos', aviso: 'pregunta', seguir: 'Mientras tanto, ¿para cuántos niños sería?' });
+await leerPendientes(await config());
+await salida();
+assert.equal(deLu().at(-1), 'Mientras tanto, ¿para cuántos niños sería?', 'sin repetir el "déjame consultarlo" de hace un momento');
+// Respondes con el código: la IA retoma la pregunta y tiene en cuenta lo que se habló mientras tanto.
+await escribe(dueno.conv, `R${codigoLu} Sí, los domingos de 10 a 12`);
+avanzar(MIN);
+responder = (l) => {
+  assert.match(l.sistema, /Justo me confirmaron/, 'retoma la pregunta con naturalidad');
+  assert.match(l.usuario, /Lo que preguntó el cliente: ¿Tienen clases los domingos\?/);
+  assert.match(l.usuario, /Lo último de la conversación[\s\S]*Cliente: Sí, pásame los horarios[\s\S]*Cliente: ¿Y hay descuento por hermanos\?/, 'con lo que se habló mientras tanto');
+  return { respuesta: '¡Justo me confirmaron lo de los domingos! Sí, hay clases de 10 a 12 😊' };
+};
+await leerPendientes(await config());
+await salida();
+assert.equal(deLu().at(-1), '¡Justo me confirmaron lo de los domingos! Sí, hay clases de 10 a 12 😊');
+paso('"déjame consultarlo" + "mientras tanto…" para seguir la conversación; al responderle tú, la IA retoma la pregunta');
+
 // ---------- Cada negocio con su número de avisos; todo aviso trae código (y solo las preguntas se aprenden) ----------
 await pg.query(`update siguelo_negocios set avisos_telefono = '59178888888' where id = $1`, [nQuilla]);
 await pg.query(`update siguelo_ia set avisos = jsonb_set(avisos, '{tipos}', '{"pregunta": true, "humano": true, "molesto": true, "compro": true}'::jsonb) where empresa_id = $1`, [empresa]);
