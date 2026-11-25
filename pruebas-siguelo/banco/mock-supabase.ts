@@ -276,6 +276,8 @@ export const supabase = {
   rpc: async (f: string, a: any = {}) => {
     if (f === 'siguelo_bandeja_conteos') return { data: conteoBandeja, error: null };
     if (f !== 'siguelo_bandeja') return { data: null, error: { code: 'PGRST202', message: f } };
+    // Prueba: ?red=1 simula que la primera vez no hay conexión con Supabase.
+    if (new URLSearchParams(location.search).get('red') && !(window as any).__falloRed) { (window as any).__falloRed = true; return { data: null, error: { message: 'TypeError: Failed to fetch' } }; }
     let filas = bandeja.filter((x) => (!a.p_linea || x.linea_id === a.p_linea) && (!a.p_ids || a.p_ids.includes(x.id)) && (!a.p_sin_leer || x.pendientes > 0) && (!a.p_sin_responder || x.ultimo_remitente === 'cliente') && (a.p_pestana !== 'resueltos'));
     if (a.p_busqueda) filas = filas.filter((x) => String(x.contacto_nombre || '').toLowerCase().includes(String(a.p_busqueda).toLowerCase()));
     return { data: filas.slice(a.p_desde || 0, (a.p_desde || 0) + (a.p_limite || 100)), error: null };

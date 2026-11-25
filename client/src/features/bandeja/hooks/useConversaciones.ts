@@ -135,7 +135,9 @@ const argumentos = (q: ConsultaBandeja) => ({
 });
 
 // ¿La sección 48 no está pegada? (PostgREST no encuentra la función)
-const faltaFuncion = (e: { code?: string; message?: string } | null) => !!e && (e.code === 'PGRST202' || /siguelo_bandeja/.test(e.message || ''));
+const faltaFuncion = (e: { code?: string; message?: string } | null) => !!e && (e.code === 'PGRST202' || /Could not find the function/.test(e.message || ''));
+// No se pudo hablar con Supabase (sin internet, o Supabase no respondió): no es un error de la consulta.
+const esDeRed = (e: { message?: string } | null) => !!e && /failed to fetch|networkerror|load failed|network request failed/i.test(e.message || '');
 
 export function useConversaciones(usuario: Usuario | null) {
   const [lineas, setLineas] = useState<LineaWhatsapp[]>([]);
@@ -151,6 +153,17 @@ export function useConversaciones(usuario: Usuario | null) {
   const [modoAntiguo, setModoAntiguo] = useState(false);
   // Si la lista rápida falla (por ejemplo, Supabase tardó demasiado), se ve el motivo y se usa la de antes.
   const [aviso, setAviso] = useState('');
+  // Cada vez que sube, se vuelve a pedir la lista (para reintentar después de un fallo).
+  const [intento, setIntento] = useState(0);
+  const reintento = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reintentar = useCallback((ms: number) => {
+    if (reintento.current) return;
+    reintento.current = setTimeout(() => {
+      reintento.current = null;
+      setModoAntiguo(false);
+      setIntento((n) => n + 1);
+    }, ms);
+  }, []);
   const [todasAntiguo, setTodasAntiguo] = useState<Fila[]>([]);
   const [ahora, setAhora] = useState(() => Date.now());
 
@@ -240,15 +253,26 @@ export function useConversaciones(usuario: Usuario | null) {
   const pedir = useCallback(async (q: ConsultaBandeja, extra: { p_ids?: string[]; p_limite?: number; p_desde?: number; p_pestana?: Pestana; p_sin_responder?: boolean; p_antiguos?: boolean } = {}) => {
     const { data, error } = await supabase.rpc('siguelo_bandeja', { ...argumentos(q), p_limite: POR_PAGINA, ...extra });
     if (error) {
-      if (!faltaFuncion(error)) {
-        console.error(error);
-        setAviso(`La lista rápida de chats no respondió (${error.message || error.code}). Se muestra como antes, puede tardar más.`);
+      // Sin la sección 48: la lista de antes, sin aviso.
+      if (faltaFuncion(error)) {
+        setModoAntiguo(true);
+        return null;
       }
+      console.error(error);
+      // Sin conexión con Supabase: se deja la lista como está y se vuelve a intentar sola.
+      if (esDeRed(error)) {
+        setAviso('No se pudo conectar con la base de datos (Supabase o internet). Se vuelve a intentar sola en unos segundos…');
+        reintentar(15_000);
+        return null;
+      }
+      // Otro error (por ejemplo, Supabase tardó demasiado): la lista de antes por un rato, y se vuelve a probar la rápida.
+      setAviso(`La lista rápida de chats no respondió (${error.message || error.code}). Mientras tanto se muestra como antes; se vuelve a probar en 3 minutos.`);
       setModoAntiguo(true);
+      reintentar(180_000);
       return null;
     }
     return ((data || []) as Fila[]).map((f) => ({ ...f, etiquetas: f.etiquetas || [] }));
-  }, []);
+  }, [reintentar]);
 
   const cargarConteos = useCallback(async () => {
     if (modoRef.current) return;
@@ -269,6 +293,7 @@ export function useConversaciones(usuario: Usuario | null) {
     if (n !== pedido.current) return; // llegó otra consulta mientras tanto
     setCargando(false);
     if (!lista) return;
+    setAviso(''); // la lista rápida volvió
     setFilas(lista);
     setHayMas(lista.length === POR_PAGINA);
     asegurarContactos(lista);
@@ -355,12 +380,12 @@ export function useConversaciones(usuario: Usuario | null) {
     if (!usuario) return;
     cargarPrimera();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [usuario?.id, consulta, modoAntiguo]);
+  }, [usuario?.id, consulta, modoAntiguo, intento]);
   useEffect(() => {
     if (!usuario) return;
     cargarConteos();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [usuario?.id, consulta.linea, modoAntiguo]);
+  }, [usuario?.id, consulta.linea, modoAntiguo, intento]);
 
   useEffect(() => {
     if (!usuario) return;
