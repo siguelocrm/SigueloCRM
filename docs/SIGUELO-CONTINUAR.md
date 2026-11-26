@@ -272,6 +272,14 @@ npm test
   800 ms) y los números de las pestañas se recuentan cada 8 s como mucho. "Hoy" usa `misEsperando`. Sin la sección 48
   (PGRST202) funciona como antes (`modoAntiguo`, recarga juntada cada 3 s). Lista estilo WhatsApp Web (`formatoFechaLista`).
   Pruebas: `probar-sql.mjs` (sección 48) y `npm run banco` → `?vista=bandeja`.
+- **ID interno de WhatsApp (LID)** (`whatsapp/destino.ts`, sección 53): si un mensaje llega con `@lid` y no se sabe el
+  número real, `contacto_telefono` queda con el LID (14-15 dígitos). Antes todos los envíos armaban `LID@s.whatsapp.net`
+  (un número que no existe): WhatsApp aceptaba y no llegaba (y los masivos decían "no tiene WhatsApp"). Ahora todos los
+  envíos usan `jidDestino(sock, telefono)`: número real con `signalRepository.lidMapping.getPNForLID`, si no `onWhatsApp`
+  (¿teléfono largo de verdad?), si no `LID@lid`. Lo nuestro con `estado_entrega = 'error'` no cuenta como respuesta (alDia y
+  `clienteUltimo`). `siguelo_marcar_no_entregados(hora del arreglo)` (una sola vez) marca lo viejo como no entregado y
+  devuelve a la fila los envíos de masivos en marcha que fallaron por eso. En la Bandeja se ve "Sin número · ID de WhatsApp …1234".
+  Pruebas: `integracion-destino.mts` y `probar-sql.mjs`.
 - **La IA no responde encima de la bienvenida del bot**: si el bot eligió una regla de "primer mensaje" o "primer mensaje del
   día", `marcarBienvenida(conversacionId)` (whatsapp/mensajes-enviados-por-crm.ts) lo anota al elegirla (antes de su demora) y
   en cada paso, y sus mensajes quedan con origen `bot · bienvenida` (sección 49). La IA (`bienvenidaDespues` en lector.ts) no

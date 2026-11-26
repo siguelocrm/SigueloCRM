@@ -513,7 +513,7 @@ async function leer(c: Config, fila: PorLeerRow, forzado = false, atrasado = fal
 
   const [{ data: contacto }, { data: mensajes }, enviadas] = await Promise.all([
     fila.contacto_id ? db.from('contactos').select('id, nombre, etapa_id, etapa_actualizada_en').eq('id', fila.contacto_id).maybeSingle() : Promise.resolve({ data: null }),
-    db.from('mensajes').select('id, remitente, agente_id, tipo, contenido, media_url, creado_en, whatsapp_id').eq('conversacion_id', fila.conversacion_id).order('creado_en', { ascending: false }).limit(30),
+    db.from('mensajes').select('id, remitente, agente_id, tipo, contenido, media_url, creado_en, whatsapp_id, estado_entrega').eq('conversacion_id', fila.conversacion_id).order('creado_en', { ascending: false }).limit(30),
     referenciasEnviadas(fila.contacto_id, fila.conversacion_id),
   ]);
   const lista = (mensajes || []).reverse();
@@ -607,7 +607,8 @@ async function leer(c: Config, fila: PorLeerRow, forzado = false, atrasado = fal
     cursos,
     bots,
     // El cliente fue el último en escribir, sin contar los mensajes automáticos (bot, seguimiento, IA).
-    clienteUltimo: [...lista].reverse().find((m) => m.remitente === 'cliente' || !automaticos.has(m.id))?.remitente === 'cliente',
+    // Lo nuestro que no se entregó no cuenta como respuesta.
+    clienteUltimo: [...lista].reverse().find((m) => m.remitente === 'cliente' || (!automaticos.has(m.id) && m.estado_entrega !== 'error'))?.remitente === 'cliente',
     preguntaCliente: (() => {
       // Sus últimos mensajes seguidos (después de nuestra última respuesta).
       const ultimos: string[] = [];

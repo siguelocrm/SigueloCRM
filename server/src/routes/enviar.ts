@@ -5,6 +5,7 @@ import { TIPOS_ENVIABLES, construirContenidoWA } from '../whatsapp/contenido.js'
 import { marcarEnviadoPorCRM } from '../whatsapp/mensajes-enviados-por-crm.js';
 import { supabase } from '../supabase/client.js';
 import { conTarjetaDeGrupo } from '../siguelo/linkDeGrupo.js';
+import { jidDestino } from '../whatsapp/destino.js';
 import { conNumero } from '../siguelo/usuarios/proteger.js';
 
 export const enviarRouter = Router();
@@ -41,7 +42,7 @@ enviarRouter.post('/enviar', ...conNumero((req) => req.body?.linea_id), async (r
   }
 
   try {
-    const jid = telefono.includes('@') ? telefono : `${telefono}@s.whatsapp.net`;
+    const jid = await jidDestino(sesion.sock, telefono); // SígueloCRM: el ID interno de WhatsApp (LID) también llega
 
     if (!(TIPOS_ENVIABLES as readonly string[]).includes(tipo)) return res.status(400).json({ error: 'Tipo no soportado' });
     // SígueloCRM: un texto con link de grupo sale con la tarjeta del grupo (en el mismo mensaje).

@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Pruebas de SígueloCRM (seguimiento, negocios, IA, pagos, asistente y sistema del club, redes, mensajes masivos y aula virtual) con un Postgres en memoria, WhatsApp, OpenAI y club falsos. Nunca tocan tu Supabase ni mandan mensajes.",
   "scripts": {
-    "test": "npm run calculo && npm run sql && npm run seguimiento && npm run ia && npm run pagos && npm run asistente && npm run club && npm run usuarios && npm run redes && npm run masivos && npm run aula && npm run agencia && npm run datos && npm run historial && npm run grupo && npm run candados",
+    "test": "npm run calculo && npm run sql && npm run seguimiento && npm run ia && npm run pagos && npm run asistente && npm run club && npm run usuarios && npm run redes && npm run masivos && npm run aula && npm run agencia && npm run datos && npm run historial && npm run grupo && npm run candados && npm run destino",
     "calculo": "tsx calculo.test.mts",
     "sql": "node probar-sql.mjs",
     "seguimiento": "node --import tsx --import ./hooks.mjs integracion.mts",
@@ -21,7 +21,8 @@
     "datos": "node --import tsx --import ./hooks.mjs integracion-datos.mts",
     "historial": "node --import tsx --import ./hooks.mjs integracion-historial.mts",
     "grupo": "node --import tsx --import ./hooks.mjs integracion-grupo.mts",
-    "candados": "tsx integracion-candados.mts"
+    "candados": "tsx integracion-candados.mts",
+    "destino": "node --import tsx --import ./hooks.mjs integracion-destino.mts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.2.17",

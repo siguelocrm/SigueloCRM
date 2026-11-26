@@ -2355,3 +2355,56 @@ create policy "lineas_agregar" on lineas_whatsapp for insert
     and empresa_id = (select empresa_id from usuario_actual())
     and siguelo_ve_todo()
   );
+
+-- ---------- 53. Mensajes que no llegaron (ID interno de WhatsApp) ----------
+-- WhatsApp identifica cada vez más chats con un ID interno ("LID", 14 o 15 dígitos) en vez del número.
+-- Si el CRM no sabía el número real, guardaba ese ID como teléfono y le respondía a un número que no
+-- existe: WhatsApp aceptaba el envío pero no le llegaba a nadie. El servidor ya lo arregló (manda al ID
+-- interno). Esta función, que se llama UNA vez con la hora del arreglo:
+--  - marca como "no se entregó" lo que el CRM mandó a esos chats antes de esa hora (en el chat sale en
+--    rojo, y "Chats que quedaron sin respuesta" los vuelve a mostrar para responderlos);
+--  - vuelve a poner en la fila los envíos de masivos en marcha que fallaron por eso ("no tiene WhatsApp").
+-- No toca lo que escribiste desde el teléfono (eso sí llegaba).
+create or replace function siguelo_marcar_no_entregados(p_hasta timestamptz)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_mensajes int;
+  v_masivos int;
+begin
+  update mensajes m
+     set estado_entrega = 'error',
+         error_entrega = 'No llegó: se mandó al ID interno de WhatsApp como si fuera un teléfono (ya está arreglado).'
+    from conversaciones c
+   where c.id = m.conversacion_id
+     and c.contacto_telefono ~ '^[0-9]{14,15}$'
+     and m.remitente = 'agente'
+     and m.estado_entrega = 'enviado'
+     and m.creado_en < p_hasta
+     and (
+       m.agente_id is not null
+       or exists (select 1 from siguelo_cola q where q.mensaje_id = m.id)
+       or exists (select 1 from siguelo_masivo_envios x where x.mensaje_id = m.id)
+       or exists (select 1 from siguelo_ia_salida s where s.mensaje_id = m.id)
+       or exists (select 1 from siguelo_mensaje_origen o where o.mensaje_id = m.id and o.origen <> 'telefono')
+     );
+  get diagnostics v_mensajes = row_count;
+
+  update siguelo_masivo_envios e
+     set estado = 'pendiente', motivo = null
+    from siguelo_masivos ms
+   where ms.id = e.masivo_id
+     and ms.estado in ('programado', 'enviando', 'pausado')
+     and e.estado = 'error'
+     and e.telefono ~ '^[0-9]{14,15}$'
+     and coalesce(e.motivo, '') ilike '%whatsapp%';
+  get diagnostics v_masivos = row_count;
+
+  return jsonb_build_object('mensajes_no_entregados', v_mensajes, 'masivos_a_la_fila', v_masivos);
+end;
+$$;
+revoke execute on function siguelo_marcar_no_entregados(timestamptz) from public, anon, authenticated;
+grant execute on function siguelo_marcar_no_entregados(timestamptz) to service_role;

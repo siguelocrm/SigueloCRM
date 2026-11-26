@@ -2,6 +2,7 @@ import type { WASocket } from '@whiskeysockets/baileys';
 import { supabase } from '../supabase/client.js';
 import type { FlujoBot, NodoFlujo, PasoRespuestaAutomatica } from '../types/dominio.js';
 import { palabraQueCoincide } from './coincidencia.js';
+import { jidDestino } from './destino.js';
 import { enviarPaso, variablesDelContacto } from './bot-automatico.js';
 
 // Un cliente que no contesta una pregunta en este tiempo deja de estar "dentro"
@@ -59,7 +60,7 @@ async function recorrer(
   flujo: FlujoBot,
   inicio: NodoFlujo | null,
 ): Promise<void> {
-  const jid = telefono.includes('@') ? telefono : `${telefono}@s.whatsapp.net`;
+  const jid = await jidDestino(sock, telefono); // SígueloCRM: el ID interno de WhatsApp (LID) también llega
   const variables = await variablesDelContacto(lineaId, telefono, empresaId);
   let nodo = inicio;
   let enviados = 0;

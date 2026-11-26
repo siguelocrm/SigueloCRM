@@ -8,6 +8,7 @@ import { marcarEnviadoPorCRM } from '../../whatsapp/mensajes-enviados-por-crm.js
 import type { FiltroMasivo, MasivoEnvioRow, MasivoRow } from '../tipos.js';
 import { adaptarParaCliente } from './adaptar.js';
 import { conLimite, enviarConReintento, esConexionCaida, limites } from '../reintento.js';
+import { jidDestino, pareceLid } from '../../whatsapp/destino.js';
 import { cuentasBloqueadas } from '../agencia/bloqueo.js';
 
 // Mensajes masivos (SígueloCRM): un mensaje a muchos contactos desde un número,
@@ -152,6 +153,8 @@ export function contenidoMasivo(m: Pick<MasivoRow, 'media_tipo' | 'media_url' | 
 async function tieneWhatsapp(sock: unknown, telefono: string): Promise<boolean> {
   const s = sock as { onWhatsApp?: (...jids: string[]) => Promise<{ exists: unknown }[] | undefined> };
   if (typeof s.onWhatsApp !== 'function') return true;
+  // Un ID interno de WhatsApp (LID) no es un teléfono: no se pregunta (diría que "no tiene WhatsApp"). Se manda a ese ID.
+  if (pareceLid(telefono.replace(/\D/g, ''))) return true;
   try {
     const r = await conLimite(s.onWhatsApp(`${telefono}@s.whatsapp.net`), limites.consultaMs, 'WhatsApp no respondió si el número existe');
     if (!Array.isArray(r)) return true;
@@ -267,7 +270,7 @@ async function enviarUno(m: MasivoRow, ahora: number): Promise<void> {
     const chatId = grupo ? null : await chatDe(m.linea_id, siguiente.telefono, siguiente.nombre);
     // "Que la IA adapte el mensaje": fiel al original, con lo que este cliente ya contó (si falla, va el original).
     if (m.adaptar && !grupo && elegido.texto) elegido.texto = await adaptarParaCliente(m.empresa_id, contactoId, chatId, siguiente.nombre, elegido.texto).catch(() => elegido.texto);
-    const jid = grupo ? siguiente.telefono : `${siguiente.telefono}@s.whatsapp.net`;
+    const jid = grupo ? siguiente.telefono : await jidDestino(sesion.sock, siguiente.telefono);
     const resultado = await enviarConReintento(m.linea_id, sesion.sock, jid, contenidoMasivo(m, elegido.texto));
     const whatsappId = resultado?.key?.id || null;
     if (whatsappId) marcarEnviadoPorCRM(whatsappId);

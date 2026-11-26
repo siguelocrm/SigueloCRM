@@ -68,6 +68,9 @@ export function esNombreGenerico(nombre: string | null | undefined): boolean {
 export function formatoTelefono(telefono: string): string {
   const d = telefono.split('@')[0].replace(/\D/g, '');
   if (d.startsWith('591') && d.length === 11) return `+591 ${d.slice(3)}`;
+  // SígueloCRM: un ID interno de WhatsApp ("LID", 14-15 dígitos), no un número: WhatsApp no nos dio el
+  // número de esa persona (pasa mucho con la gente que llega por anuncios). Los mensajes igual le llegan.
+  if (/^\d{14,15}$/.test(d) && !d.startsWith('591')) return `Sin número · ID de WhatsApp …${d.slice(-4)}`;
   return d ? `+${d}` : telefono;
 }
 

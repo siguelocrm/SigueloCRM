@@ -562,6 +562,8 @@ export type SigueloDatabase = {
         media_url: string | null;
         whatsapp_id: string | null;
         creado_en: string;
+        estado_entrega?: 'enviado' | 'error';
+        error_entrega?: string | null;
       }>;
       motivos_perdida: Tabla<{ id: string; empresa_id: string; nombre: string }>;
       oportunidades: Tabla<{

@@ -4,6 +4,7 @@ import { obtenerSesion } from './sesiones.js';
 import { marcarEnviadoPorCRM } from './mensajes-enviados-por-crm.js';
 import { enviarConReintento, esConexionCaida } from '../siguelo/reintento.js';
 import { marcarOrigen } from '../siguelo/origen.js';
+import { jidDestino } from './destino.js';
 import { construirContenidoWA } from './contenido.js';
 
 const CADA_MS = 60_000;
@@ -63,7 +64,7 @@ async function procesarVencidos(): Promise<void> {
         continue;
       }
 
-      const jid = m.telefono.includes('@') ? m.telefono : `${m.telefono}@s.whatsapp.net`;
+      const jid = await jidDestino(sesion.sock, m.telefono); // SígueloCRM: el ID interno de WhatsApp (LID) también llega
       const resultado = await enviarConReintento(m.linea_id, sesion.sock, jid, await construirContenidoWA({ tipo: m.tipo, texto: m.contenido, media_url: m.media_url, mimetype: m.mimetype }));
       if (resultado?.key?.id) marcarEnviadoPorCRM(resultado.key.id);
 

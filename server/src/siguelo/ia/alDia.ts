@@ -24,10 +24,12 @@ export async function chatsSinRespuesta(empresaId: string, lineaId: string | nul
   for (let i = 0; i < chats.length; i += 10) {
     const grupo = chats.slice(i, i + 10);
     const ultimos = await Promise.all(
-      grupo.map((cv) => db.from('mensajes').select('remitente, creado_en').eq('conversacion_id', cv.id).order('creado_en', { ascending: false }).limit(1).maybeSingle()),
+      grupo.map((cv) => db.from('mensajes').select('remitente, creado_en, estado_entrega').eq('conversacion_id', cv.id).order('creado_en', { ascending: false }).limit(5)),
     );
     grupo.forEach((cv, j) => {
-      const m = ultimos[j].data;
+      // Un mensaje nuestro que no se entregó (por ejemplo, mandado al ID interno de WhatsApp como si fuera un
+      // teléfono) no cuenta como respuesta: el cliente sigue esperando.
+      const m = (ultimos[j].data || []).find((x) => !(x.remitente === 'agente' && x.estado_entrega === 'error'));
       if (m?.remitente === 'cliente' && new Date(m.creado_en).getTime() >= Date.now() - VENTANA_AL_DIA_MS) {
         lista.push({ conversacion_id: cv.id, linea_id: cv.linea_id, telefono: cv.contacto_telefono, nombre: cv.contacto_nombre, ultimo: m.creado_en });
       }

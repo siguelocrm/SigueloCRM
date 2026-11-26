@@ -10,6 +10,7 @@ import { obtenerSesion } from '../whatsapp/sesiones.js';
 import { construirContenidoWA } from '../whatsapp/contenido.js';
 import { marcarEnviadoPorCRM } from '../whatsapp/mensajes-enviados-por-crm.js';
 import { enviarConReintento, esConexionCaida } from './reintento.js';
+import { jidDestino } from '../whatsapp/destino.js';
 import type { AjustesRow, ColaRow, EstadoCola, SeguimientoRow } from './tipos.js';
 
 // Cola de envío: el más antiguo primero, respetando el horario, una pausa al
@@ -216,7 +217,7 @@ async function intentar(item: ColaRow, aj: AjustesRow, franja: Franja, ahora: nu
   const texto = agregarPie(adaptado ? adaptado.texto : elegido.texto, aj.pie, contacto.nombre, variables);
 
   try {
-    const jid = item.telefono.includes('@') ? item.telefono : `${item.telefono}@s.whatsapp.net`;
+    const jid = await jidDestino(sesion.sock, item.telefono);
     const resultado = await enviarConReintento(item.linea_id, sesion.sock, jid, await construirContenidoWA({ tipo: 'texto', texto }));
     const whatsappId = resultado?.key?.id || null;
     if (whatsappId) marcarEnviadoPorCRM(whatsappId);
@@ -286,7 +287,7 @@ async function intentarCita(item: ColaRow, aj: AjustesRow, franja: Franja, ahora
   if (!reclamado?.length) return 'sigue';
   const e = estadoLinea(aj, item.linea_id);
   try {
-    const jid = item.telefono.includes('@') ? item.telefono : `${item.telefono}@s.whatsapp.net`;
+    const jid = await jidDestino(sesion.sock, item.telefono);
     const resultado = await enviarConReintento(item.linea_id, sesion.sock, jid, { text: elegido.texto });
     const whatsappId = resultado?.key?.id || null;
     if (whatsappId) marcarEnviadoPorCRM(whatsappId);

@@ -10,6 +10,7 @@ import { enviarPasos } from '../../whatsapp/bot-automatico.js';
 import { iniciarFlujo } from '../../whatsapp/flujo.js';
 import type { IaRow, SalidaRow } from '../tipos.js';
 import { enviarConReintento, esConexionCaida } from '../reintento.js';
+import { jidDestino } from '../../whatsapp/destino.js';
 import { recortarTexto } from '../textos.js';
 
 // Envía lo que decidió la IA (lector.ts): sus respuestas, las respuestas
@@ -23,7 +24,6 @@ const LINEA_CAIDA_MAX_MS = 30 * MIN; // una respuesta que no pudo salir en este 
 const MAX_POR_AVISO = 10;
 const proximoPorLinea = new Map<string, number>();
 const ms = (iso: string | null | undefined) => (iso ? new Date(iso).getTime() || 0 : 0);
-const jidDe = (telefono: string) => (telefono.includes('@') ? telefono : `${telefono}@s.whatsapp.net`);
 
 async function cerrar(ids: string[], cambios: Partial<SalidaRow>): Promise<void> {
   if (ids.length) await db.from('siguelo_ia_salida').update({ ...cambios, cerrado_en: new Date().toISOString() }).in('id', ids);
@@ -109,7 +109,7 @@ async function enviarAlCliente(c: Config, it: SalidaRow): Promise<void> {
     const contenido = lugar
       ? await contenidoUbicacion(lugar.ubicacion, lugar.nombre, lugar.direccion)
       : await construirContenidoWA({ tipo: it.tipo, texto: it.contenido, media_url: it.media_url, mimetype: it.mimetype });
-    const resultado = await enviarConReintento(it.linea_id, sesion.sock, jidDe(it.telefono), contenido);
+    const resultado = await enviarConReintento(it.linea_id, sesion.sock, await jidDestino(sesion.sock, it.telefono), contenido);
     const whatsappId = resultado?.key?.id || null;
     if (whatsappId) marcarEnviadoPorCRM(whatsappId);
     const { data: mensaje } = await db
@@ -183,7 +183,7 @@ export async function enviarAvisoPrueba(empresaId: string, telefonoCrudo: string
   const s = await salidaParaAviso(empresaId, lineaId, telefono);
   if ('error' in s) return { ok: false, mensaje: `No se pudo: ${s.error}.` };
   try {
-    const r = await s.sock.sendMessage(jidDe(telefono), { text: '🔔 *SígueloCRM*\n• Este es un aviso de prueba. Así te llegarán los avisos de la IA, de los pagos y de las redes. ✅' });
+    const r = await s.sock.sendMessage(await jidDestino(s.sock, telefono), { text: '🔔 *SígueloCRM*\n• Este es un aviso de prueba. Así te llegarán los avisos de la IA, de los pagos y de las redes. ✅' });
     if (r?.key?.id) marcarEnviadoPorCRM(r.key.id);
     const { data: l } = await db.from('lineas_whatsapp').select('nombre').eq('id', s.lineaId).maybeSingle();
     return { ok: true, numero: telefono, desde: l?.nombre || 'un número del CRM' };
@@ -231,7 +231,7 @@ async function enviarAvisos(c: Config, primero: SalidaRow): Promise<void> {
   const ids = lote.map((x) => x.id);
   const loteId = randomUUID();
   try {
-    const resultado = await enviarConReintento(sesion.lineaId, sesion.sock, jidDe(telefono), { text: texto });
+    const resultado = await enviarConReintento(sesion.lineaId, sesion.sock, await jidDestino(sesion.sock, telefono), { text: texto });
     if (resultado?.key?.id) marcarEnviadoPorCRM(resultado.key.id);
     await cerrar(ids, { estado: 'enviado', lote: loteId, whatsapp_id: resultado?.key?.id || null });
   } catch (err) {

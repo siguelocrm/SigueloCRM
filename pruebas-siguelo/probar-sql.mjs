@@ -444,4 +444,32 @@ console.log('✓ límites por cuenta: 1 número y 1 negocio por defecto; ampliar
   await assert.rejects(como(P, `insert into lineas_whatsapp (empresa_id, nombre, numero, estado) values ($1, 'En otra cuenta', '', 'desconectado')`, [otra]), /row-level security/, 'ni en otra cuenta');
   console.log('✓ el dueño agrega un número nuevo (antes la regla lo rechazaba siempre); los demás no');
 }
+// ---------- 53. Lo que se mandó al ID interno de WhatsApp como si fuera un teléfono ----------
+{
+  const L7 = (await uno(`insert into lineas_whatsapp (empresa_id, nombre, numero) values ($1, 'L-LID', '601') returning id`, [club])).id;
+  const cvLid = (await uno(`insert into conversaciones (linea_id, contacto_telefono) values ($1, '278683399024812') returning id`, [L7])).id;
+  const cvNormal = (await uno(`insert into conversaciones (linea_id, contacto_telefono) values ($1, '59170000077') returning id`, [L7])).id;
+  const m = async (cv, extra = {}) => (await uno(`insert into mensajes (conversacion_id, remitente, contenido, agente_id, creado_en) values ($1, $2, 'x', $3, $4) returning id`, [cv, extra.rem || 'agente', extra.agente || null, extra.cuando || new Date(Date.now() - 3600_000).toISOString()])).id;
+  const mIa = await m(cvLid);
+  await db.query(`insert into siguelo_ia_salida (empresa_id, linea_id, telefono, origen, contenido, mensaje_id) values ($1, $2, '278683399024812', 'respuesta', 'x', $3)`, [club, L7, mIa]);
+  const mManual = await m(cvLid, { agente: P });
+  const mTel = await m(cvLid);
+  await db.query(`insert into siguelo_mensaje_origen (mensaje_id, origen) values ($1, 'telefono')`, [mTel]);
+  const mDespues = await m(cvLid, { cuando: new Date(Date.now() + 3600_000).toISOString() });
+  await db.query(`insert into siguelo_ia_salida (empresa_id, linea_id, telefono, origen, contenido, mensaje_id) values ($1, $2, '278683399024812', 'respuesta', 'x', $3)`, [club, L7, mDespues]);
+  const mNormal = await m(cvNormal, { agente: P });
+  const mas = (await uno(`insert into siguelo_masivos (empresa_id, nombre, linea_id, estado) values ($1, 'Promo', $2, 'enviando') returning id`, [club, L7])).id;
+  await db.query(`insert into siguelo_masivo_envios (masivo_id, empresa_id, telefono, estado, motivo) values ($1, $2, '252359812849697', 'error', 'Ese número no tiene WhatsApp'), ($1, $2, '59170000078', 'error', 'Ese número no tiene WhatsApp')`, [mas, club]);
+  const r = (await db.query(`select siguelo_marcar_no_entregados(now()) r`)).rows[0].r;
+  assert.deepEqual(r, { mensajes_no_entregados: 2, masivos_a_la_fila: 1 });
+  const estado = async (id) => (await uno(`select estado_entrega from mensajes where id = $1`, [id])).estado_entrega;
+  assert.equal(await estado(mIa), 'error', 'lo que mandó la IA a ese ID no llegó');
+  assert.equal(await estado(mManual), 'error', 'lo que escribiste en el CRM tampoco');
+  assert.equal(await estado(mTel), 'enviado', 'lo escrito desde el teléfono sí llegaba');
+  assert.equal(await estado(mDespues), 'enviado', 'lo de después del arreglo no se toca');
+  assert.equal(await estado(mNormal), 'enviado', 'un chat con número normal no se toca');
+  assert.deepEqual((await db.query(`select telefono, estado from siguelo_masivo_envios where masivo_id = $1 order by telefono`, [mas])).rows, [{ telefono: '252359812849697', estado: 'pendiente' }, { telefono: '59170000078', estado: 'error' }], 'el masivo vuelve a intentar solo los del ID interno');
+  await assert.rejects(como(P, `select siguelo_marcar_no_entregados(now())`), /permission denied/, 'la página no la puede llamar');
+  console.log('✓ lo que se mandó al ID interno de WhatsApp queda como "no se entregó" (no lo del teléfono) y el masivo lo reintenta');
+}
 console.log('\nTodo OK');

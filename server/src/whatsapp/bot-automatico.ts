@@ -7,6 +7,7 @@ import { aplicarVariables, palabraQueCoincide } from './coincidencia.js';
 import { reglasDelNumero } from '../siguelo/negocios.js';
 import { conTarjetaDeGrupo } from '../siguelo/linkDeGrupo.js';
 import { marcarOrigen } from '../siguelo/origen.js';
+import { jidDestino } from './destino.js';
 import { marcarBienvenida, marcarEnviadoPorCRM } from './mensajes-enviados-por-crm.js';
 
 const espera = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -77,7 +78,7 @@ export async function enviarPasos(
   bienvenida = false,
 ): Promise<void> {
   const variables = await variablesDelContacto(lineaId, telefono, empresaId);
-  const jid = telefono.includes('@') ? telefono : `${telefono}@s.whatsapp.net`;
+  const jid = await jidDestino(sock, telefono); // SígueloCRM: el ID interno de WhatsApp (LID) también llega
   const inicio = new Date().toISOString();
 
   for (const [indice, paso] of pasos.entries()) {
